@@ -78,7 +78,7 @@ Qt UI
   -> PlayerApplicationService
   -> MusicReaderRegistry / MusicXmlReader / MusicDocument
   -> PlaybackModel / PlaybackContext / PlaybackEventsRenderer
-  -> PlaybackController / PlaybackSession / PlaybackEventIndex
+  -> PlaybackController / PlaybackSession / PlaybackEventScheduler / PlaybackEventMap
   -> ThreadedPlaybackAudioService
   -> FluidSynthAudioService / SoundProfileRepository
   -> FluidSynthEngine / FluidSynth audio driver
@@ -93,6 +93,8 @@ Qt UI
 - tie 合并、staccato、accent、tenuto、ghost articulation、dynamic/hairpin/pedal。
 - ProgramChange、ControlChange、PitchBend、ChannelPressure 和 instrument change。
 - 每轨道 PlaybackStateSnapshot，用于 seek 时恢复音色、控制器和跨目标位置的长音。
+- mainStream/offStream 分离，并由独立 `PlaybackEventScheduler` 负责跨轨道时间游标。
+- FluidSynth 后端在可用时使用原生 sequencer 的绝对毫秒事件队列，并反馈后端时钟用于 transport 校准。
 - playback thread 与 audio service thread。
 - `ProjectAudioSettings` JSON 持久化。
 

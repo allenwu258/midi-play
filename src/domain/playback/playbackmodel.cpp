@@ -11,11 +11,13 @@ void buildStateSnapshots(PlaybackData& data)
     QVector<ChannelState> channels(16);
     QHash<int, QVector<ActiveNoteState>> active;
     qint64 nextSnapshotUs = 0;
+    int processedEvents = 0;
     constexpr qint64 snapshotIntervalUs = 1'000'000;
 
     auto appendSnapshot = [&](qint64 timestampUs) {
         PlaybackStateSnapshot snapshot;
         snapshot.timestampUs = timestampUs;
+        snapshot.eventIndex = processedEvents;
         for (int channel = 0; channel < channels.size(); ++channel) {
             snapshot.channels.insert(channel, channels[channel]);
         }
@@ -32,12 +34,16 @@ void buildStateSnapshots(PlaybackData& data)
         }
         const int channel = std::clamp(event.channel, 0, 15);
         if (event.kind == PlaybackEventKind::ProgramChange) {
+            channels[channel].initialized = true;
             channels[channel].program = event.program;
         } else if (event.kind == PlaybackEventKind::ControlChange) {
+            channels[channel].initialized = true;
             channels[channel].controllers.insert(event.controller, event.value);
         } else if (event.kind == PlaybackEventKind::PitchBend) {
+            channels[channel].initialized = true;
             channels[channel].pitchBend = event.value;
         } else if (event.kind == PlaybackEventKind::ChannelPressure) {
+            channels[channel].initialized = true;
             channels[channel].channelPressure = event.value;
         } else if (event.kind == PlaybackEventKind::NoteOn) {
             active[channel * 128 + event.pitch].push_back({channel, event.pitch, event.velocity,
@@ -49,6 +55,7 @@ void buildStateSnapshots(PlaybackData& data)
                 if (it->isEmpty()) active.erase(it);
             }
         }
+        ++processedEvents;
     }
     if (data.snapshots.isEmpty() || data.snapshots.back().timestampUs < nextSnapshotUs) {
         appendSnapshot(nextSnapshotUs);
@@ -97,6 +104,8 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 event.ghost = note->ghost;
                 event.voice = note->voice;
                 event.staff = note->staff;
+                event.marcato = note->marcato;
+                event.tremolo = note->tremolo;
                 data.events.push_back(event);
             }
             for (const auto& change : track.instrumentChanges) {
@@ -157,6 +166,10 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
             noteOffEvents.push_back(noteOff);
         }
         data.offEvents = noteOffEvents;
+        data.mainStream.assign(data.events);
+        data.mainStream.finalize();
+        data.offStream.assign(data.offEvents);
+        data.offStream.finalize();
         data.events += noteOffEvents;
         std::sort(data.events.begin(), data.events.end(), [](const auto& left, const auto& right) {
             if (left.timestampUs != right.timestampUs) {
@@ -170,6 +183,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
             return left.sequence < right.sequence;
         });
         data.index = std::make_shared<PlaybackEventIndex>(data.events);
+        data.offIndex = std::make_shared<PlaybackEventIndex>(data.offEvents);
         buildStateSnapshots(data);
         m_tracks.push_back(std::move(data));
         }

@@ -18,6 +18,9 @@ public:
     bool pause() override;
     bool stop() override;
     bool seek(qint64 positionUs) override;
+    bool setTransportPosition(qint64 positionUs) override;
+    qint64 clockPositionUs() const override;
+    bool supportsTimedEvents() const override;
     bool flush() override;
     void submit(const playback::PlaybackEvent& event) override;
     void submitOff(const playback::PlaybackEvent& event) override;

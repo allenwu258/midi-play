@@ -31,10 +31,19 @@ int main(int argc, char* argv[])
             return 1;
         }
         engine.start();
-        engine.noteOn(0, 60, 100);
-        QThread::msleep(800);
-        engine.noteOff(0, 60);
-        QTimer::singleShot(1'000, &app, &QCoreApplication::quit);
+        engine.setTransportPosition(0);
+        midi_play::playback::PlaybackEvent noteOn;
+        noteOn.timestampUs = 100'000;
+        noteOn.channel = 0;
+        noteOn.pitch = 60;
+        noteOn.velocity = 100;
+        noteOn.kind = midi_play::playback::PlaybackEventKind::NoteOn;
+        midi_play::playback::PlaybackEvent noteOff = noteOn;
+        noteOff.timestampUs = 900'000;
+        noteOff.kind = midi_play::playback::PlaybackEventKind::NoteOff;
+        engine.submit(noteOn);
+        engine.submit(noteOff);
+        QTimer::singleShot(1'500, &app, &QCoreApplication::quit);
         return app.exec();
     }
 

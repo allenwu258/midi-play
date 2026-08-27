@@ -13,7 +13,7 @@ PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> doc
     m_timer->setInterval(2);
     m_timer->setTimerType(Qt::PreciseTimer);
     connect(m_timer, &QTimer::timeout, this, &PlaybackSession::onTimer);
-    m_nextEvents.resize(m_playbackModel.tracks().size());
+    m_scheduler.setTracks(&m_playbackModel.tracks());
 }
 
 PlaybackSession::~PlaybackSession() = default;
@@ -46,6 +46,7 @@ void PlaybackSession::play()
         setState(State::Error);
         return;
     }
+    m_audioService->setTransportPosition(m_positionUs);
     if (m_state == State::Paused) {
         rebuildAudioState(m_positionUs);
     }
@@ -60,7 +61,8 @@ void PlaybackSession::pause()
     if (m_state != State::Playing) {
         return;
     }
-    m_positionUs = m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
+    const qint64 audioClockUs = m_audioService->clockPositionUs();
+    m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
     m_timer->stop();
     // Explicit note-off events are dispatched by this session. Flush them on
     // pause and reconstruct the exact state when play() resumes.
@@ -79,7 +81,7 @@ void PlaybackSession::stop()
     m_audioService->stop();
     m_positionUs = 0;
     m_clockBaseUs = 0;
-    std::fill(m_nextEvents.begin(), m_nextEvents.end(), 0);
+    m_scheduler.reset();
     emitPosition();
     setState(State::Stopped);
 }
@@ -97,6 +99,7 @@ void PlaybackSession::seek(qint64 microseconds)
     m_audioService->seek(microseconds);
     m_positionUs = std::clamp<qint64>(microseconds, 0, durationMicroseconds());
     m_clockBaseUs = m_positionUs;
+    m_audioService->setTransportPosition(m_positionUs);
     rebuildAudioState(m_positionUs);
     emitPosition();
     if (resume) {
@@ -109,20 +112,12 @@ void PlaybackSession::onTimer()
     if (m_state != State::Playing || !m_document) {
         return;
     }
-    m_positionUs = m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
+    const qint64 audioClockUs = m_audioService->clockPositionUs();
+    m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
     const qint64 now = m_positionUs;
-    for (int trackIndex = 0; trackIndex < m_playbackModel.tracks().size(); ++trackIndex) {
-        const auto& track = m_playbackModel.tracks()[trackIndex];
-        int eventIndex = m_nextEvents.value(trackIndex, 0);
-        for (; eventIndex < track.events.size(); ++eventIndex) {
-            const auto& event = track.events[eventIndex];
-            if (event.timestampUs > now) {
-                break;
-            }
-            m_audioService->submit(event);
-        }
-        m_nextEvents[trackIndex] = eventIndex;
-    }
+    const qint64 dispatchUntilUs = m_audioService->supportsTimedEvents() ? now + 30'000 : now;
+    m_scheduler.dispatchUntil(dispatchUntilUs,
+                              [this](const auto& event) { m_audioService->submit(event); });
     if (m_positionUs >= durationMicroseconds()) {
         stop();
         return;
@@ -132,18 +127,64 @@ void PlaybackSession::onTimer()
 
 void PlaybackSession::rebuildAudioState(qint64 targetUs)
 {
-    m_nextEvents.resize(m_playbackModel.tracks().size());
-    std::fill(m_nextEvents.begin(), m_nextEvents.end(), 0);
+    m_scheduler.seek(targetUs);
 
     QHash<int, QVector<PlaybackEvent>> activeNotes;
 
     for (int trackIndex = 0; trackIndex < m_playbackModel.tracks().size(); ++trackIndex) {
-        const auto& events = m_playbackModel.tracks()[trackIndex].events;
-        const int end = m_playbackModel.tracks()[trackIndex].index
-                            ? m_playbackModel.tracks()[trackIndex].index->lowerBound(targetUs)
+        const auto& track = m_playbackModel.tracks()[trackIndex];
+        const auto& events = track.events;
+        const int end = track.index
+                            ? track.index->lowerBound(targetUs)
                             : 0;
-        m_nextEvents[trackIndex] = end;
-        for (int i = 0; i < end; ++i) {
+        int start = 0;
+        const PlaybackStateSnapshot* snapshot = nullptr;
+        for (const auto& candidate : track.snapshots) {
+            if (candidate.timestampUs > targetUs) break;
+            snapshot = &candidate;
+        }
+        if (snapshot) {
+            start = std::min(snapshot->eventIndex, end);
+            for (auto channelIt = snapshot->channels.cbegin(); channelIt != snapshot->channels.cend(); ++channelIt) {
+                const int channel = channelIt.key();
+                const auto& state = channelIt.value();
+                if (!state.initialized) continue;
+                PlaybackEvent program;
+                program.channel = channel;
+                program.program = state.program;
+                program.kind = PlaybackEventKind::ProgramChange;
+                m_audioService->submit(program);
+                for (auto controllerIt = state.controllers.cbegin(); controllerIt != state.controllers.cend(); ++controllerIt) {
+                    PlaybackEvent control;
+                    control.channel = channel;
+                    control.controller = controllerIt.key();
+                    control.value = controllerIt.value();
+                    control.kind = PlaybackEventKind::ControlChange;
+                    m_audioService->submit(control);
+                }
+                PlaybackEvent bend;
+                bend.channel = channel;
+                bend.value = state.pitchBend;
+                bend.kind = PlaybackEventKind::PitchBend;
+                m_audioService->submit(bend);
+                PlaybackEvent pressure;
+                pressure.channel = channel;
+                pressure.value = state.channelPressure;
+                pressure.kind = PlaybackEventKind::ChannelPressure;
+                m_audioService->submit(pressure);
+            }
+            for (const auto& active : snapshot->activeNotes) {
+                PlaybackEvent resumed;
+                resumed.timestampUs = targetUs - 1;
+                resumed.durationUs = active.endTimestampUs - targetUs + 1;
+                resumed.channel = active.channel;
+                resumed.pitch = active.pitch;
+                resumed.velocity = active.velocity;
+                resumed.kind = PlaybackEventKind::NoteOn;
+                activeNotes[active.channel * 128 + active.pitch].push_back(resumed);
+            }
+        }
+        for (int i = start; i < end; ++i) {
             const auto& event = events[i];
             if (event.kind == PlaybackEventKind::NoteOn) {
                 activeNotes[event.channel * 128 + event.pitch].push_back(event);

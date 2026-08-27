@@ -12,15 +12,52 @@ PlaybackEventsRenderer::PlaybackEventsRenderer(std::shared_ptr<const PlaybackCon
 QVector<PlaybackEvent> PlaybackEventsRenderer::render(const PlaybackData& source) const
 {
     QVector<PlaybackEvent> result = source.events;
+    quint64 sequence = 0;
     for (auto& event : result) {
-        event.velocity = m_context->velocityAt(source.trackId, event.timestampUs, event.velocity);
-        if (event.staccato) {
-            event.durationUs = qMax<qint64>(1'000, event.durationUs * 0.5);
-        } else if (event.tenuto) {
-            event.durationUs = event.durationUs * 0.98;
+        event.sequence = sequence++;
+        if (event.kind != PlaybackEventKind::NoteOn) {
+            continue;
         }
-        if (event.accent) event.velocity = qMin(127, event.velocity + 18);
-        if (event.ghost) event.velocity = qMax(1, event.velocity / 2);
+        event.velocity = m_context->velocityAt(source.trackId, event.timestampUs, event.velocity);
+        double durationFactor = 1.0;
+        int velocityOffset = 0;
+        if (event.staccato) {
+            event.expression.articulations.push_back({ArticulationType::Staccato, 0.5, 1.0, 0});
+            durationFactor *= 0.5;
+        }
+        if (event.tenuto) {
+            event.expression.articulations.push_back({ArticulationType::Tenuto, 0.98, 1.0, 0});
+            durationFactor *= 0.98;
+        }
+        if (event.accent) {
+            event.expression.articulations.push_back({ArticulationType::Accent, 1.0, 1.0, 18});
+            velocityOffset += 18;
+        }
+        if (event.marcato) {
+            event.expression.articulations.push_back({ArticulationType::Marcato, 1.0, 1.0, 24});
+            velocityOffset += 24;
+        }
+        if (event.ghost) {
+            event.expression.articulations.push_back({ArticulationType::Ghost, 1.0, 0.5, 0});
+            event.velocity = qMax(1, event.velocity / 2);
+        }
+        event.durationUs = qMax<qint64>(1'000, static_cast<qint64>(event.durationUs * durationFactor));
+        event.velocity = qBound(1, event.velocity + velocityOffset, 127);
+        event.expression.expressionCurve = {
+            {0, static_cast<float>(event.velocity) / 127.0F},
+            {event.durationUs, static_cast<float>(event.velocity) / 127.0F}
+        };
+        if (event.tremolo) {
+            event.expression.articulations.push_back({ArticulationType::Tremolo, 1.0, 1.0, 0});
+            event.expression.expressionCurve.clear();
+            constexpr int kTremoloSteps = 8;
+            for (int step = 0; step <= kTremoloSteps; ++step) {
+                const qint64 offset = event.durationUs * step / kTremoloSteps;
+                const float level = (step % 2 == 0 ? 1.0F : 0.72F)
+                                  * static_cast<float>(event.velocity) / 127.0F;
+                event.expression.expressionCurve.push_back({offset, level});
+            }
+        }
     }
     std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
         return left.timestampUs < right.timestampUs;

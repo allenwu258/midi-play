@@ -16,9 +16,28 @@ public:
     virtual bool pause() = 0;
     virtual bool stop() = 0;
     virtual bool seek(qint64 positionUs) = 0;
+    virtual bool setTransportPosition(qint64 positionUs)
+    {
+        Q_UNUSED(positionUs)
+        return true;
+    }
+    virtual qint64 clockPositionUs() const { return -1; }
+    virtual bool supportsTimedEvents() const { return false; }
     virtual bool flush() = 0;
     virtual void submit(const PlaybackEvent& event) = 0;
     virtual void submitOff(const PlaybackEvent& event) = 0;
+    virtual bool updateMainStream(const QString& trackId, const PlaybackEventMap& events)
+    {
+        Q_UNUSED(trackId)
+        Q_UNUSED(events)
+        return true;
+    }
+    virtual bool updateOffStream(const QString& trackId, const PlaybackEventMap& events)
+    {
+        Q_UNUSED(trackId)
+        Q_UNUSED(events)
+        return true;
+    }
 };
 
 } // namespace midi_play::playback

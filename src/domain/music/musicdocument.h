@@ -30,6 +30,8 @@ struct NoteEvent {
     bool accent = false;
     bool tenuto = false;
     bool ghost = false;
+    bool marcato = false;
+    bool tremolo = false;
 };
 
 struct Measure {

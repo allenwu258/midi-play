@@ -18,43 +18,18 @@ bool FluidSynthAudioService::start() { return m_engine->start(); }
 bool FluidSynthAudioService::pause() { return m_engine->pause(); }
 bool FluidSynthAudioService::stop() { return m_engine->stop(); }
 bool FluidSynthAudioService::seek(qint64 positionUs) { return m_engine->seek(positionUs); }
+bool FluidSynthAudioService::setTransportPosition(qint64 positionUs) { return m_engine->setTransportPosition(positionUs); }
+qint64 FluidSynthAudioService::clockPositionUs() const { return m_engine->clockPositionUs(); }
+bool FluidSynthAudioService::supportsTimedEvents() const { return m_engine->supportsTimedEvents(); }
 bool FluidSynthAudioService::flush() { return m_engine->flush(); }
 void FluidSynthAudioService::submit(const playback::PlaybackEvent& event)
 {
-    if (event.kind == playback::PlaybackEventKind::ProgramChange) {
-        m_engine->programChange(event.channel, event.program);
-        return;
-    }
-    if (event.kind == playback::PlaybackEventKind::ControlChange) {
-        m_engine->controlChange(event.channel, event.controller, event.value);
-        return;
-    }
-    if (event.kind == playback::PlaybackEventKind::PitchBend) {
-        m_engine->pitchBend(event.channel, event.value);
-        return;
-    }
-    if (event.kind == playback::PlaybackEventKind::ChannelPressure) {
-        m_engine->channelPressure(event.channel, event.value);
-        return;
-    }
-    if (event.kind == playback::PlaybackEventKind::AllNotesOff) {
-        m_engine->flush();
-        return;
-    }
-    if (event.kind == playback::PlaybackEventKind::NoteOff) {
-        m_engine->noteOff(event.channel, event.pitch);
-        return;
-    }
-    m_engine->noteOn(event.channel, event.pitch, event.velocity);
+    m_engine->submit(event);
 }
 
 void FluidSynthAudioService::submitOff(const playback::PlaybackEvent& event)
 {
-    if (event.kind == playback::PlaybackEventKind::AllNotesOff) {
-        m_engine->flush();
-        return;
-    }
-    m_engine->noteOff(event.channel, event.pitch);
+    m_engine->submit(event);
 }
 
 } // namespace midi_play::audio

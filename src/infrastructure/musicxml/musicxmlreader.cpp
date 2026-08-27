@@ -192,7 +192,8 @@ void parseDirection(QXmlStreamReader& xml, music::MusicDocument& document, music
 }
 
 void parseNotations(QXmlStreamReader& xml, bool& tieStart, bool& tieStop,
-                    bool& staccato, bool& accent, bool& tenuto)
+                    bool& staccato, bool& accent, bool& tenuto,
+                    bool& marcato, bool& tremolo)
 {
     while (xml.readNextStartElement()) {
         if (xml.name() == u"tied") {
@@ -205,6 +206,13 @@ void parseNotations(QXmlStreamReader& xml, bool& tieStart, bool& tieStop,
                 staccato = staccato || xml.name() == u"staccato";
                 accent = accent || xml.name() == u"accent";
                 tenuto = tenuto || xml.name() == u"tenuto";
+                marcato = marcato || xml.name() == u"strong-accent";
+                tremolo = tremolo || xml.name() == u"tremolo";
+                xml.skipCurrentElement();
+            }
+        } else if (xml.name() == u"ornaments") {
+            while (xml.readNextStartElement()) {
+                tremolo = tremolo || xml.name() == u"tremolo";
                 xml.skipCurrentElement();
             }
         } else {
@@ -259,6 +267,8 @@ void parseNote(QXmlStreamReader& xml, music::Track& track, music::Tick& cursor,
     bool staccato = false;
     bool accent = false;
     bool tenuto = false;
+    bool marcato = false;
+    bool tremolo = false;
     QString noteInstrumentId;
     if (xml.attributes().hasAttribute(u"dynamics")) {
         velocity = std::clamp(xml.attributes().value(u"dynamics").toInt(), 1, 127);
@@ -286,7 +296,7 @@ void parseNote(QXmlStreamReader& xml, music::Track& track, music::Tick& cursor,
             tieStop = tieStop || type == u"stop";
             xml.skipCurrentElement();
         } else if (xml.name() == u"notations") {
-            parseNotations(xml, tieStart, tieStop, staccato, accent, tenuto);
+            parseNotations(xml, tieStart, tieStop, staccato, accent, tenuto, marcato, tremolo);
         }
         else xml.skipCurrentElement();
     }
@@ -295,7 +305,7 @@ void parseNote(QXmlStreamReader& xml, music::Track& track, music::Tick& cursor,
     if (!isRest && !isGrace && (!step.isEmpty() || isUnpitched)) {
         track.notes.push_back({start, duration, std::clamp((octave + 1) * 12 + stepToPitch(step) + alter, 0, 127), velocity,
                                track.channel, defaultProgram, voice, staff, false, isGrace, tieStart, tieStop,
-                               staccato, accent, tenuto, false});
+                               staccato, accent, tenuto, false, marcato, tremolo});
         previousStart = start;
     }
     if (!isChord && !isGrace) cursor += duration;

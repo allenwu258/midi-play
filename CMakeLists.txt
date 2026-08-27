@@ -25,6 +25,8 @@ qt_add_executable(midi_play
     src/domain/playback/playbackcontext.cpp
     src/domain/playback/playbackeventsrenderer.h
     src/domain/playback/playbackeventsrenderer.cpp
+    src/domain/playback/playbackeventscheduler.h
+    src/domain/playback/playbackeventscheduler.cpp
     src/domain/playback/soundprofilerepository.h
     src/domain/playback/soundprofilerepository.cpp
     src/domain/playback/playbacksession.h

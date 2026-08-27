@@ -87,6 +87,33 @@ bool ThreadedPlaybackAudioService::seek(qint64 positionUs)
     return result;
 }
 
+bool ThreadedPlaybackAudioService::setTransportPosition(qint64 positionUs)
+{
+    bool result = false;
+    QMetaObject::invokeMethod(m_worker.get(), [this, &result, positionUs] {
+        result = m_worker->m_service->setTransportPosition(positionUs);
+    }, Qt::BlockingQueuedConnection);
+    return result;
+}
+
+qint64 ThreadedPlaybackAudioService::clockPositionUs() const
+{
+    qint64 result = -1;
+    QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
+        result = m_worker->m_service->clockPositionUs();
+    }, Qt::BlockingQueuedConnection);
+    return result;
+}
+
+bool ThreadedPlaybackAudioService::supportsTimedEvents() const
+{
+    bool result = false;
+    QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
+        result = m_worker->m_service->supportsTimedEvents();
+    }, Qt::BlockingQueuedConnection);
+    return result;
+}
+
 bool ThreadedPlaybackAudioService::flush()
 {
     bool result = false;
