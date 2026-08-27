@@ -10,8 +10,6 @@
 struct fluid_settings_t;
 struct fluid_synth_t;
 struct fluid_audio_driver_t;
-struct fluid_sequencer_t;
-struct fluid_event_t;
 
 namespace midi_play::audio {
 
@@ -47,12 +45,6 @@ private:
     fluid_settings_t* m_settings = nullptr;
     fluid_synth_t* m_synth = nullptr;
     fluid_audio_driver_t* m_driver = nullptr;
-    fluid_sequencer_t* m_sequencer = nullptr;
-    short m_sequencerDestination = -1;
-    unsigned int m_transportTick = 0;
-    unsigned int m_transportTickAtSet = 0;
-    qint64 m_transportPositionUs = 0;
-    bool m_useTimedSequencer = false;
     int m_soundFontId = -1;
     bool m_loaded = false;
 
@@ -72,22 +64,6 @@ private:
     using PitchBend = int (*)(fluid_synth_t*, int, int);
     using ChannelPressure = int (*)(fluid_synth_t*, int, int);
     using SystemReset = int (*)(fluid_synth_t*);
-    using NewSequencer = fluid_sequencer_t* (*)(int);
-    using DeleteSequencer = void (*)(fluid_sequencer_t*);
-    using RegisterSynth = short (*)(fluid_sequencer_t*, fluid_synth_t*);
-    using NewEvent = fluid_event_t* (*)();
-    using DeleteEvent = void (*)(fluid_event_t*);
-    using EventSetDest = void (*)(fluid_event_t*, short);
-    using EventNoteOn = void (*)(fluid_event_t*, int, short, short);
-    using EventNoteOff = void (*)(fluid_event_t*, int, short);
-    using EventAllNotesOff = void (*)(fluid_event_t*, int);
-    using EventProgramSelect = void (*)(fluid_event_t*, int, unsigned int, short, short);
-    using EventControlChange = void (*)(fluid_event_t*, int, short, int);
-    using EventPitchBend = void (*)(fluid_event_t*, int, int);
-    using EventChannelPressure = void (*)(fluid_event_t*, int, int);
-    using SequencerSendAt = int (*)(fluid_sequencer_t*, fluid_event_t*, unsigned int, int);
-    using SequencerGetTick = unsigned int (*)(fluid_sequencer_t*);
-    using SequencerRemoveEvents = void (*)(fluid_sequencer_t*, short, short, int);
 
     NewSettings m_newSettings = nullptr;
     DeleteSettings m_deleteSettings = nullptr;
@@ -105,22 +81,6 @@ private:
     PitchBend m_pitchBend = nullptr;
     ChannelPressure m_channelPressure = nullptr;
     SystemReset m_systemReset = nullptr;
-    NewSequencer m_newSequencer = nullptr;
-    DeleteSequencer m_deleteSequencer = nullptr;
-    RegisterSynth m_registerSynth = nullptr;
-    NewEvent m_newEvent = nullptr;
-    DeleteEvent m_deleteEvent = nullptr;
-    EventSetDest m_eventSetDest = nullptr;
-    EventNoteOn m_eventNoteOn = nullptr;
-    EventNoteOff m_eventNoteOff = nullptr;
-    EventAllNotesOff m_eventAllNotesOff = nullptr;
-    EventProgramSelect m_eventProgramSelect = nullptr;
-    EventControlChange m_eventControlChange = nullptr;
-    EventPitchBend m_eventPitchBend = nullptr;
-    EventChannelPressure m_eventChannelPressure = nullptr;
-    SequencerSendAt m_sequencerSendAt = nullptr;
-    SequencerGetTick m_sequencerGetTick = nullptr;
-    SequencerRemoveEvents m_sequencerRemoveEvents = nullptr;
 };
 
 } // namespace midi_play::audio

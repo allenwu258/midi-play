@@ -20,7 +20,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
     : QMainWindow(parent), m_service(service)
 {
     setWindowTitle(QStringLiteral("MIDI Play"));
-    resize(720, 260);
+    resize(720, 220);
     auto* central = new QWidget(this);
     auto* root = new QVBoxLayout(central);
     auto* files = new QFormLayout();

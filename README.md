@@ -94,7 +94,7 @@ Qt UI
 - ProgramChange、ControlChange、PitchBend、ChannelPressure 和 instrument change。
 - 每轨道 PlaybackStateSnapshot，用于 seek 时恢复音色、控制器和跨目标位置的长音。
 - mainStream/offStream 分离，并由独立 `PlaybackEventScheduler` 负责跨轨道时间游标。
-- FluidSynth 后端在可用时使用原生 sequencer 的绝对毫秒事件队列，并反馈后端时钟用于 transport 校准。
+- FluidSynth 后端使用其原生实时音频驱动；播放会话以软件单调时钟驱动事件窗口，并通过直接 MIDI API 提交事件。
 - playback thread 与 audio service thread。
 - `ProjectAudioSettings` JSON 持久化。
 

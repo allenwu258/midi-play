@@ -7,9 +7,7 @@
 namespace midi_play::playback {
 
 enum class PlaybackClockSource {
-    SoftwareMonotonic,
-    TimedSequencer,
-    AudioFrame
+    SoftwareMonotonic
 };
 
 class IPlaybackAudioService {

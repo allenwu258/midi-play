@@ -15,7 +15,7 @@ int main(int argc, char* argv[])
 {
     const QString bundledPlatforms = QDir(QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath()).filePath(QStringLiteral("platforms"));
     if (QDir(bundledPlatforms).exists()) {
-        qputenv("QT_QPA_PLATFORM_PLUGIN_PATH", bundledPlatforms.toUtf8());
+        QApplication::addLibraryPath(bundledPlatforms);
     }
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("MIDI Play"));

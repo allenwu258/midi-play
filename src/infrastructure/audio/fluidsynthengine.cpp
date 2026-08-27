@@ -1,6 +1,5 @@
 #include "fluidsynthengine.h"
 
-#include <QCoreApplication>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -19,9 +18,7 @@ FluidSynthEngine::~FluidSynthEngine()
 
 bool FluidSynthEngine::resolveSymbols(QString* error)
 {
-    if (m_library.isLoaded()) {
-        return true;
-    }
+    if (m_library.isLoaded()) return true;
 
 #ifdef Q_OS_WIN
     const QStringList candidates { QStringLiteral("fluidsynth"), QStringLiteral("libfluidsynth-3") };
@@ -33,9 +30,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
 
     for (const QString& candidate : candidates) {
         m_library.setFileName(candidate);
-        if (m_library.load()) {
-            break;
-        }
+        if (m_library.load()) break;
     }
     if (!m_library.isLoaded()) {
         if (error) {
@@ -62,28 +57,11 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_pitchBend = reinterpret_cast<PitchBend>(resolve("fluid_synth_pitch_bend"));
     m_channelPressure = reinterpret_cast<ChannelPressure>(resolve("fluid_synth_channel_pressure"));
     m_systemReset = reinterpret_cast<SystemReset>(resolve("fluid_synth_system_reset"));
-    m_newSequencer = reinterpret_cast<NewSequencer>(resolve("new_fluid_sequencer2"));
-    m_deleteSequencer = reinterpret_cast<DeleteSequencer>(resolve("delete_fluid_sequencer"));
-    m_registerSynth = reinterpret_cast<RegisterSynth>(resolve("fluid_sequencer_register_fluidsynth"));
-    m_newEvent = reinterpret_cast<NewEvent>(resolve("new_fluid_event"));
-    m_deleteEvent = reinterpret_cast<DeleteEvent>(resolve("delete_fluid_event"));
-    m_eventSetDest = reinterpret_cast<EventSetDest>(resolve("fluid_event_set_dest"));
-    m_eventNoteOn = reinterpret_cast<EventNoteOn>(resolve("fluid_event_noteon"));
-    m_eventNoteOff = reinterpret_cast<EventNoteOff>(resolve("fluid_event_noteoff"));
-    m_eventAllNotesOff = reinterpret_cast<EventAllNotesOff>(resolve("fluid_event_all_notes_off"));
-    m_eventProgramSelect = reinterpret_cast<EventProgramSelect>(resolve("fluid_event_program_select"));
-    m_eventControlChange = reinterpret_cast<EventControlChange>(resolve("fluid_event_control_change"));
-    m_eventPitchBend = reinterpret_cast<EventPitchBend>(resolve("fluid_event_pitch_bend"));
-    m_eventChannelPressure = reinterpret_cast<EventChannelPressure>(resolve("fluid_event_channel_pressure"));
-    m_sequencerSendAt = reinterpret_cast<SequencerSendAt>(resolve("fluid_sequencer_send_at"));
-    m_sequencerGetTick = reinterpret_cast<SequencerGetTick>(resolve("fluid_sequencer_get_tick"));
-    m_sequencerRemoveEvents = reinterpret_cast<SequencerRemoveEvents>(resolve("fluid_sequencer_remove_events"));
 
     if (!m_newSettings || !m_deleteSettings || !m_newSynth || !m_deleteSynth || !m_sfload
-        || !m_programSelect || !m_noteOn || !m_noteOff || !m_systemReset || !m_newAudioDriver || !m_deleteAudioDriver) {
-        if (error) {
-            *error = QStringLiteral("FluidSynth 动态库缺少必要 API");
-        }
+        || !m_programSelect || !m_noteOn || !m_noteOff || !m_systemReset
+        || !m_newAudioDriver || !m_deleteAudioDriver) {
+        if (error) *error = QStringLiteral("FluidSynth 动态库缺少必要 API");
         m_library.unload();
         return false;
     }
@@ -93,17 +71,15 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
 bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
 {
     release();
-    if (!resolveSymbols(error)) {
-        return false;
-    }
+    if (!resolveSymbols(error)) return false;
+
     m_settings = m_newSettings();
     if (!m_settings) {
         if (error) *error = QStringLiteral("无法创建 FluidSynth settings");
         return false;
     }
-    if (m_settingsSetNum) {
-        m_settingsSetNum(m_settings, "synth.gain", 0.8);
-    }
+    if (m_settingsSetNum) m_settingsSetNum(m_settings, "synth.gain", 0.8);
+
     m_synth = m_newSynth(m_settings);
     if (!m_synth) {
         if (error) *error = QStringLiteral("无法创建 FluidSynth synthesizer");
@@ -116,24 +92,14 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
         release();
         return false;
     }
+
+    // FluidSynth owns the realtime audio thread through its native driver.
     m_driver = m_newAudioDriver(m_settings, m_synth);
     if (!m_driver) {
         if (error) *error = QStringLiteral("无法创建 FluidSynth 音频驱动");
         release();
         return false;
     }
-    m_useTimedSequencer = qEnvironmentVariableIsSet("MIDI_PLAY_FLUID_TIMED_SEQUENCER");
-    if (m_useTimedSequencer && m_newSequencer && m_registerSynth && m_newEvent && m_deleteEvent
-        && m_eventSetDest && m_sequencerSendAt) {
-        m_sequencer = m_newSequencer(1);
-        if (m_sequencer) {
-            m_sequencerDestination = m_registerSynth(m_sequencer, m_synth);
-        }
-    }
-    m_transportTick = 0;
-    m_transportPositionUs = 0;
-    // The system-timer sequencer is deprecated by FluidSynth and is not
-    // reliable across all Windows audio-driver builds. It is opt-in.
     m_loaded = true;
     return true;
 }
@@ -156,139 +122,57 @@ bool FluidSynthEngine::start() { return m_loaded; }
 bool FluidSynthEngine::pause() { return m_loaded; }
 bool FluidSynthEngine::stop() { return flush(); }
 bool FluidSynthEngine::seek(qint64) { return flush(); }
-
-bool FluidSynthEngine::setTransportPosition(qint64 microseconds)
-{
-    if (!m_loaded) return false;
-    m_transportPositionUs = std::max<qint64>(0, microseconds);
-    if (m_sequencer && m_sequencerGetTick) {
-        m_transportTick = m_sequencerGetTick(m_sequencer);
-        m_transportTickAtSet = m_transportTick;
-    }
-    return true;
-}
-
-qint64 FluidSynthEngine::clockPositionUs() const
-{
-    if (!m_useTimedSequencer || !m_sequencer || !m_sequencerGetTick) return -1;
-    const unsigned int tick = m_sequencerGetTick(m_sequencer);
-    if (tick < m_transportTickAtSet) return m_transportPositionUs;
-    return m_transportPositionUs + static_cast<qint64>(tick - m_transportTickAtSet) * 1000;
-}
-
-bool FluidSynthEngine::supportsTimedEvents() const
-{
-    return m_useTimedSequencer && m_sequencer != nullptr;
-}
+bool FluidSynthEngine::setTransportPosition(qint64) { return m_loaded; }
+qint64 FluidSynthEngine::clockPositionUs() const { return -1; }
+bool FluidSynthEngine::supportsTimedEvents() const { return false; }
 
 bool FluidSynthEngine::flush()
 {
     if (!m_loaded) return false;
-    if (m_sequencer && m_sequencerRemoveEvents) {
-        m_sequencerRemoveEvents(m_sequencer, -1, m_sequencerDestination, -1);
-    }
     return m_systemReset && m_systemReset(m_synth) == 0;
 }
 
 void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
 {
     if (!m_loaded) return;
-    const auto dispatchImmediate = [this, &event] {
-        switch (event.kind) {
-        case playback::PlaybackEventKind::NoteOn: noteOn(event.channel, event.pitch, event.velocity); break;
-        case playback::PlaybackEventKind::NoteOff: noteOff(event.channel, event.pitch); break;
-        case playback::PlaybackEventKind::ProgramChange:
-            programChange(event.channel, event.program, event.bankMsb, event.bankLsb);
-            break;
-        case playback::PlaybackEventKind::ControlChange: controlChange(event.channel, event.controller, event.value); break;
-        case playback::PlaybackEventKind::PitchBend: pitchBend(event.channel, event.value); break;
-        case playback::PlaybackEventKind::ChannelPressure: channelPressure(event.channel, event.value); break;
-        case playback::PlaybackEventKind::NoteExpression:
-            switch (event.expressionType) {
-            case playback::NoteExpressionType::Pitch: pitchBend(event.channel, event.value); break;
-            case playback::NoteExpressionType::Pressure: channelPressure(event.channel, event.value); break;
-            case playback::NoteExpressionType::Timbre: controlChange(event.channel, 74, event.value); break;
-            case playback::NoteExpressionType::Volume: controlChange(event.channel, 11, event.value); break;
-            }
-            break;
-        case playback::PlaybackEventKind::AllNotesOff: flush(); break;
-        }
-    };
-    if (!m_useTimedSequencer || !m_sequencer || m_sequencerDestination < 0 || !m_newEvent || !m_deleteEvent
-        || !m_eventSetDest || !m_sequencerSendAt) {
-        dispatchImmediate();
-        return;
-    }
-
-    fluid_event_t* nativeEvent = m_newEvent();
-    if (!nativeEvent) return;
-    m_eventSetDest(nativeEvent, m_sequencerDestination);
     switch (event.kind) {
     case playback::PlaybackEventKind::NoteOn:
-        m_eventNoteOn(nativeEvent, event.channel % 16, static_cast<short>(event.pitch), static_cast<short>(event.velocity));
+        noteOn(event.channel, event.pitch, event.velocity);
         break;
     case playback::PlaybackEventKind::NoteOff:
-        m_eventNoteOff(nativeEvent, event.channel % 16, static_cast<short>(event.pitch));
+        noteOff(event.channel, event.pitch);
         break;
     case playback::PlaybackEventKind::ProgramChange:
-        m_eventProgramSelect(nativeEvent, event.channel % 16, static_cast<unsigned int>(m_soundFontId),
-                             static_cast<unsigned int>((std::clamp(event.bankMsb, 0, 127) << 7)
-                                                       | std::clamp(event.bankLsb, 0, 127)),
-                             static_cast<short>(event.program));
+        programChange(event.channel, event.program, event.bankMsb, event.bankLsb);
         break;
     case playback::PlaybackEventKind::ControlChange:
-        m_eventControlChange(nativeEvent, event.channel % 16, static_cast<short>(event.controller), event.value);
+        controlChange(event.channel, event.controller, event.value);
         break;
     case playback::PlaybackEventKind::PitchBend:
-        m_eventPitchBend(nativeEvent, event.channel % 16, event.value);
+        pitchBend(event.channel, event.value);
         break;
     case playback::PlaybackEventKind::ChannelPressure:
-        m_eventChannelPressure(nativeEvent, event.channel % 16, event.value);
+        channelPressure(event.channel, event.value);
         break;
     case playback::PlaybackEventKind::NoteExpression:
-        // FluidSynth's public sequencer API has no polyphonic expression
-        // primitive. Use the closest channel-level MIDI fallback while the
-        // event still retains its noteId for MPE-capable backends.
+        // FluidSynth exposes channel-level controls; apply the closest MIDI
+        // operation while preserving the richer domain event.
         switch (event.expressionType) {
-        case playback::NoteExpressionType::Pitch:
-            m_eventPitchBend(nativeEvent, event.channel % 16, event.value);
-            break;
-        case playback::NoteExpressionType::Pressure:
-            m_eventChannelPressure(nativeEvent, event.channel % 16, event.value);
-            break;
-        case playback::NoteExpressionType::Timbre:
-            m_eventControlChange(nativeEvent, event.channel % 16, 74, event.value);
-            break;
-        case playback::NoteExpressionType::Volume:
-            m_eventControlChange(nativeEvent, event.channel % 16, 11, event.value);
-            break;
+        case playback::NoteExpressionType::Pitch: pitchBend(event.channel, event.value); break;
+        case playback::NoteExpressionType::Pressure: channelPressure(event.channel, event.value); break;
+        case playback::NoteExpressionType::Timbre: controlChange(event.channel, 74, event.value); break;
+        case playback::NoteExpressionType::Volume: controlChange(event.channel, 11, event.value); break;
         }
         break;
     case playback::PlaybackEventKind::AllNotesOff:
-        m_eventAllNotesOff(nativeEvent, event.channel % 16);
+        flush();
         break;
-    }
-    const qint64 relativeUs = std::max<qint64>(0, event.timestampUs - m_transportPositionUs);
-    const unsigned int targetTick = m_transportTickAtSet
-                                  + static_cast<unsigned int>(relativeUs / 1000);
-    const unsigned int currentTick = m_sequencerGetTick ? m_sequencerGetTick(m_sequencer) : m_transportTickAtSet;
-    if (targetTick <= currentTick + 1) {
-        m_deleteEvent(nativeEvent);
-        dispatchImmediate();
-        return;
-    }
-    const int sendResult = m_sequencerSendAt(m_sequencer, nativeEvent, targetTick, 1);
-    m_deleteEvent(nativeEvent);
-    if (sendResult != 0) {
-        dispatchImmediate();
     }
 }
 
 void FluidSynthEngine::noteOn(int channel, int pitch, int velocity)
 {
-    if (m_loaded) {
-        m_noteOn(m_synth, channel % 16, pitch, velocity);
-    }
+    if (m_loaded && m_noteOn) m_noteOn(m_synth, channel % 16, pitch, velocity);
 }
 
 void FluidSynthEngine::noteOff(int channel, int pitch)
@@ -323,9 +207,6 @@ void FluidSynthEngine::channelPressure(int channel, int value)
 void FluidSynthEngine::release()
 {
     m_loaded = false;
-    if (m_sequencer && m_deleteSequencer) m_deleteSequencer(m_sequencer);
-    m_sequencer = nullptr;
-    m_sequencerDestination = -1;
     if (m_driver && m_deleteAudioDriver) m_deleteAudioDriver(m_driver);
     m_driver = nullptr;
     if (m_synth && m_deleteSynth) m_deleteSynth(m_synth);
