@@ -197,7 +197,9 @@ void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
         switch (event.kind) {
         case playback::PlaybackEventKind::NoteOn: noteOn(event.channel, event.pitch, event.velocity); break;
         case playback::PlaybackEventKind::NoteOff: noteOff(event.channel, event.pitch); break;
-        case playback::PlaybackEventKind::ProgramChange: programChange(event.channel, event.program); break;
+        case playback::PlaybackEventKind::ProgramChange:
+            programChange(event.channel, event.program, event.bankMsb, event.bankLsb);
+            break;
         case playback::PlaybackEventKind::ControlChange: controlChange(event.channel, event.controller, event.value); break;
         case playback::PlaybackEventKind::PitchBend: pitchBend(event.channel, event.value); break;
         case playback::PlaybackEventKind::ChannelPressure: channelPressure(event.channel, event.value); break;
@@ -221,7 +223,9 @@ void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
         m_eventNoteOff(nativeEvent, event.channel % 16, static_cast<short>(event.pitch));
         break;
     case playback::PlaybackEventKind::ProgramChange:
-        m_eventProgramSelect(nativeEvent, event.channel % 16, static_cast<unsigned int>(m_soundFontId), 0,
+        m_eventProgramSelect(nativeEvent, event.channel % 16, static_cast<unsigned int>(m_soundFontId),
+                             static_cast<unsigned int>((std::clamp(event.bankMsb, 0, 127) << 7)
+                                                       | std::clamp(event.bankLsb, 0, 127)),
                              static_cast<short>(event.program));
         break;
     case playback::PlaybackEventKind::ControlChange:
@@ -265,9 +269,13 @@ void FluidSynthEngine::noteOff(int channel, int pitch)
     if (m_loaded && m_noteOff) m_noteOff(m_synth, channel % 16, pitch);
 }
 
-void FluidSynthEngine::programChange(int channel, int program)
+void FluidSynthEngine::programChange(int channel, int program, int bankMsb, int bankLsb)
 {
-    if (m_loaded && m_programSelect) m_programSelect(m_synth, channel % 16, m_soundFontId, 0, program % 128);
+    if (m_loaded && m_programSelect) {
+        const unsigned int bank = static_cast<unsigned int>((std::clamp(bankMsb, 0, 127) << 7)
+                                                            | std::clamp(bankLsb, 0, 127));
+        m_programSelect(m_synth, channel % 16, m_soundFontId, bank, program % 128);
+    }
 }
 
 void FluidSynthEngine::controlChange(int channel, int controller, int value)

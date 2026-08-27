@@ -39,6 +39,11 @@ void buildStateSnapshots(PlaybackData& data)
         } else if (event.kind == PlaybackEventKind::ControlChange) {
             channels[channel].initialized = true;
             channels[channel].controllers.insert(event.controller, event.value);
+            if (event.controller == 0) {
+                channels[channel].bankMsb = std::clamp(event.value, 0, 127);
+            } else if (event.controller == 32) {
+                channels[channel].bankLsb = std::clamp(event.value, 0, 127);
+            }
         } else if (event.kind == PlaybackEventKind::PitchBend) {
             channels[channel].initialized = true;
             channels[channel].pitchBend = event.value;
@@ -111,9 +116,14 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
             for (const auto& change : track.instrumentChanges) {
                 if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (change.tick - segment.sourceStart);
-                data.events.push_back({m_document->playbackTickToMicroseconds(outputTick), 0, change.channel, 0, 0,
-                                       change.program, false, false, false, false, false, false,
-                                       PlaybackEventKind::ProgramChange});
+                PlaybackEvent program;
+                program.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
+                program.channel = change.channel;
+                program.program = change.program;
+                program.bankMsb = change.bankMsb;
+                program.bankLsb = change.bankLsb;
+                program.kind = PlaybackEventKind::ProgramChange;
+                data.events.push_back(program);
             }
             for (const auto& change : track.controlChanges) {
                 if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
@@ -175,11 +185,9 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
             if (left.timestampUs != right.timestampUs) {
                 return left.timestampUs < right.timestampUs;
             }
-            if (left.kind != right.kind) {
-                // At an identical timestamp, release a previous note before
-                // starting a new one on the same pitch/channel.
-                return left.kind == PlaybackEventKind::NoteOff;
-            }
+            const int leftPriority = playbackEventPriority(left);
+            const int rightPriority = playbackEventPriority(right);
+            if (leftPriority != rightPriority) return leftPriority < rightPriority;
             return left.sequence < right.sequence;
         });
         data.index = std::make_shared<PlaybackEventIndex>(data.events);

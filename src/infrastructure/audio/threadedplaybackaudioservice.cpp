@@ -131,4 +131,14 @@ void ThreadedPlaybackAudioService::submitOff(const playback::PlaybackEvent& even
     QMetaObject::invokeMethod(m_worker.get(), [this, event] { m_worker->m_service->submitOff(event); }, Qt::QueuedConnection);
 }
 
+void ThreadedPlaybackAudioService::submitBatch(const QVector<playback::PlaybackEvent>& events)
+{
+    if (events.isEmpty()) {
+        return;
+    }
+    QMetaObject::invokeMethod(m_worker.get(), [this, events] {
+        m_worker->m_service->submitBatch(events);
+    }, Qt::QueuedConnection);
+}
+
 } // namespace midi_play::audio

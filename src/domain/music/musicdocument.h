@@ -56,6 +56,8 @@ struct InstrumentChange {
     int channel = 0;
     int program = 0;
     QString sourceId;
+    int bankMsb = 0;
+    int bankLsb = 0;
 };
 
 struct ControlChange {

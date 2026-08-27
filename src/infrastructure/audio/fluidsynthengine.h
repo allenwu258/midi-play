@@ -34,7 +34,7 @@ public:
     void submit(const playback::PlaybackEvent& event);
     void noteOn(int channel, int pitch, int velocity);
     void noteOff(int channel, int pitch);
-    void programChange(int channel, int program);
+    void programChange(int channel, int program, int bankMsb = 0, int bankLsb = 0);
     void controlChange(int channel, int controller, int value);
     void pitchBend(int channel, int value);
     void channelPressure(int channel, int value);

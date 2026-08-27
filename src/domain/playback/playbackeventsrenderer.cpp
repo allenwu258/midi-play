@@ -60,7 +60,11 @@ QVector<PlaybackEvent> PlaybackEventsRenderer::render(const PlaybackData& source
         }
     }
     std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
-        return left.timestampUs < right.timestampUs;
+        if (left.timestampUs != right.timestampUs) return left.timestampUs < right.timestampUs;
+        const int leftPriority = playbackEventPriority(left);
+        const int rightPriority = playbackEventPriority(right);
+        if (leftPriority != rightPriority) return leftPriority < rightPriority;
+        return left.sequence < right.sequence;
     });
     QVector<PlaybackEvent> merged;
     merged.reserve(result.size());

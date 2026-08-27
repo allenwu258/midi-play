@@ -25,6 +25,7 @@ public:
     bool flush() override;
     void submit(const playback::PlaybackEvent& event) override;
     void submitOff(const playback::PlaybackEvent& event) override;
+    void submitBatch(const QVector<playback::PlaybackEvent>& events) override;
 
 private:
     class Worker;

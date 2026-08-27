@@ -63,6 +63,8 @@ musicxml::ReadResult MidiReader::read(const QString& path) const
         music::Tick tick = 0;
         quint8 runningStatus = 0;
         int currentProgram = 0;
+        int currentBankMsb = 0;
+        int currentBankLsb = 0;
         while (reader.pos < trackEnd) {
             tick += reader.vlq();
             quint8 status = reader.u8();
@@ -113,7 +115,8 @@ musicxml::ReadResult MidiReader::read(const QString& path) const
                 track.program = currentProgram;
                 track.channel = channel;
                 track.instrumentChanges.push_back({tick * music::MusicDocument::kPpq / division,
-                                                    channel, currentProgram, QString()});
+                                                    channel, currentProgram, QString(),
+                                                    currentBankMsb, currentBankLsb});
             } else if (command == 0x90 && second > 0) {
                 active[channel * 128 + first].push_back({tick, second});
             } else if (command == 0x80 || (command == 0x90 && second == 0)) {
@@ -130,6 +133,8 @@ musicxml::ReadResult MidiReader::read(const QString& path) const
             } else if (command == 0xb0) {
                 const music::Tick scaledTick = tick * music::MusicDocument::kPpq / division;
                 track.controlChanges.push_back({scaledTick, channel, first, second});
+                if (first == 0) currentBankMsb = second;
+                if (first == 32) currentBankLsb = second;
             } else if (command == 0xe0) {
                 const music::Tick scaledTick = tick * music::MusicDocument::kPpq / division;
                 track.pitchBendChanges.push_back({scaledTick, channel, (second << 7) | first});

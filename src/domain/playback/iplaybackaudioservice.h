@@ -26,6 +26,14 @@ public:
     virtual bool flush() = 0;
     virtual void submit(const PlaybackEvent& event) = 0;
     virtual void submitOff(const PlaybackEvent& event) = 0;
+    // The default keeps simple backends source-compatible while allowing
+    // realtime-capable implementations to amortize cross-thread dispatch.
+    virtual void submitBatch(const QVector<PlaybackEvent>& events)
+    {
+        for (const auto& event : events) {
+            submit(event);
+        }
+    }
     virtual bool updateMainStream(const QString& trackId, const PlaybackEventMap& events)
     {
         Q_UNUSED(trackId)

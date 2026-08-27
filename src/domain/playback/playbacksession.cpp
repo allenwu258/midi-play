@@ -116,8 +116,10 @@ void PlaybackSession::onTimer()
     m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
     const qint64 now = m_positionUs;
     const qint64 dispatchUntilUs = m_audioService->supportsTimedEvents() ? now + 30'000 : now;
-    m_scheduler.dispatchUntil(dispatchUntilUs,
-                              [this](const auto& event) { m_audioService->submit(event); });
+    const auto events = m_scheduler.collectUntil(dispatchUntilUs);
+    if (!events.isEmpty()) {
+        m_audioService->submitBatch(events);
+    }
     if (m_positionUs >= durationMicroseconds()) {
         stop();
         return;
@@ -130,6 +132,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
     m_scheduler.seek(targetUs);
 
     QHash<int, QVector<PlaybackEvent>> activeNotes;
+    QVector<PlaybackEvent> replayEvents;
 
     for (int trackIndex = 0; trackIndex < m_playbackModel.tracks().size(); ++trackIndex) {
         const auto& track = m_playbackModel.tracks()[trackIndex];
@@ -149,29 +152,50 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
                 const int channel = channelIt.key();
                 const auto& state = channelIt.value();
                 if (!state.initialized) continue;
+                // Bank Select is a two-controller message and must precede
+                // Program Change when restoring a channel after seek.
+                for (const int controller : {0, 32}) {
+                    if (!state.controllers.contains(controller)) continue;
+                    PlaybackEvent control;
+                    control.channel = channel;
+                    control.controller = controller;
+                    control.value = state.controllers.value(controller);
+                    control.kind = PlaybackEventKind::ControlChange;
+                    replayEvents.push_back(control);
+                }
                 PlaybackEvent program;
                 program.channel = channel;
                 program.program = state.program;
+                program.bankMsb = state.bankMsb;
+                program.bankLsb = state.bankLsb;
                 program.kind = PlaybackEventKind::ProgramChange;
-                m_audioService->submit(program);
+                replayEvents.push_back(program);
+                QVector<int> controllerKeys;
+                controllerKeys.reserve(state.controllers.size());
                 for (auto controllerIt = state.controllers.cbegin(); controllerIt != state.controllers.cend(); ++controllerIt) {
+                    if (controllerIt.key() != 0 && controllerIt.key() != 32) {
+                        controllerKeys.push_back(controllerIt.key());
+                    }
+                }
+                std::sort(controllerKeys.begin(), controllerKeys.end());
+                for (const int controller : controllerKeys) {
                     PlaybackEvent control;
                     control.channel = channel;
-                    control.controller = controllerIt.key();
-                    control.value = controllerIt.value();
+                    control.controller = controller;
+                    control.value = state.controllers.value(controller);
                     control.kind = PlaybackEventKind::ControlChange;
-                    m_audioService->submit(control);
+                    replayEvents.push_back(control);
                 }
                 PlaybackEvent bend;
                 bend.channel = channel;
                 bend.value = state.pitchBend;
                 bend.kind = PlaybackEventKind::PitchBend;
-                m_audioService->submit(bend);
+                replayEvents.push_back(bend);
                 PlaybackEvent pressure;
                 pressure.channel = channel;
                 pressure.value = state.channelPressure;
                 pressure.kind = PlaybackEventKind::ChannelPressure;
-                m_audioService->submit(pressure);
+                replayEvents.push_back(pressure);
             }
             for (const auto& active : snapshot->activeNotes) {
                 PlaybackEvent resumed;
@@ -197,7 +221,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             } else {
                 // Program, controller, pitch bend and pressure events form the
                 // device state that must be replayed after a seek.
-                m_audioService->submit(event);
+                replayEvents.push_back(event);
             }
         }
     }
@@ -211,8 +235,11 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             }
             resumed.timestampUs = targetUs;
             resumed.durationUs = endUs - targetUs;
-            m_audioService->submit(resumed);
+            replayEvents.push_back(resumed);
         }
+    }
+    if (!replayEvents.isEmpty()) {
+        m_audioService->submitBatch(replayEvents);
     }
 }
 

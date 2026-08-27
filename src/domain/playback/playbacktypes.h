@@ -99,10 +99,29 @@ struct PlaybackEvent {
     bool marcato = false;
     bool tremolo = false;
     NoteExpressionContext expression;
+    // MIDI Bank Select is represented separately from the 7-bit program.
+    // Keeping both bytes on the event makes seek/state replay lossless.
+    int bankMsb = 0;
+    int bankLsb = 0;
 
     bool isNoteOn() const { return kind == PlaybackEventKind::NoteOn; }
     bool isNoteOff() const { return kind == PlaybackEventKind::NoteOff; }
 };
+
+// Events sharing a timestamp must be delivered in protocol order. In
+// particular, Bank Select is part of the Program Change transaction and must
+// be observed by the synth before the program is selected.
+inline int playbackEventPriority(const PlaybackEvent& event)
+{
+    if (event.kind == PlaybackEventKind::NoteOff || event.kind == PlaybackEventKind::AllNotesOff) return 0;
+    if (event.kind == PlaybackEventKind::ControlChange
+        && (event.controller == 0 || event.controller == 32)) return 1;
+    if (event.kind == PlaybackEventKind::ProgramChange) return 2;
+    if (event.kind == PlaybackEventKind::ControlChange
+        || event.kind == PlaybackEventKind::PitchBend
+        || event.kind == PlaybackEventKind::ChannelPressure) return 3;
+    return 4;
+}
 
 class PlaybackEventMap final {
 public:
@@ -131,7 +150,9 @@ public:
     {
         std::sort(m_events.begin(), m_events.end(), [](const auto& left, const auto& right) {
             if (left.timestampUs != right.timestampUs) return left.timestampUs < right.timestampUs;
-            if (left.kind != right.kind) return left.kind == PlaybackEventKind::NoteOff;
+            const int leftPriority = playbackEventPriority(left);
+            const int rightPriority = playbackEventPriority(right);
+            if (leftPriority != rightPriority) return leftPriority < rightPriority;
             return left.sequence < right.sequence;
         });
         m_timestamps.clear();

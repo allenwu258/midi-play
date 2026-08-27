@@ -249,7 +249,7 @@ void parseBarline(QXmlStreamReader& xml, music::Measure& measure)
 
 void parseNote(QXmlStreamReader& xml, music::Track& track, music::Tick& cursor,
                music::Tick& previousStart, int divisions, int defaultProgram, int defaultStaff,
-               QString* instrumentId)
+               QString* instrumentId, music::Tick* parsedStart)
 {
     QString step;
     int alter = 0;
@@ -302,6 +302,7 @@ void parseNote(QXmlStreamReader& xml, music::Track& track, music::Tick& cursor,
     }
     const music::Tick duration = std::max<music::Tick>(1, static_cast<music::Tick>(durationValue) * music::MusicDocument::kPpq / divisions);
     const music::Tick start = isChord ? previousStart : cursor;
+    if (parsedStart) *parsedStart = start;
     if (!isRest && !isGrace && (!step.isEmpty() || isUnpitched)) {
         track.notes.push_back({start, duration, std::clamp((octave + 1) * 12 + stepToPitch(step) + alter, 0, 127), velocity,
                                track.channel, defaultProgram, voice, staff, false, isGrace, tieStart, tieStop,
@@ -365,11 +366,12 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
             }
         } else if (xml.name() == u"note") {
             QString noteInstrument;
-            parseNote(xml, track, cursor, previousStart, divisions, track.program, 1, &noteInstrument);
+            music::Tick noteStart = cursor;
+            parseNote(xml, track, cursor, previousStart, divisions, track.program, 1, &noteInstrument, &noteStart);
             if (!noteInstrument.isEmpty() && noteInstrument != currentInstrument) {
                 currentInstrument = noteInstrument;
                 const auto info = instruments.value(noteInstrument);
-                track.instrumentChanges.push_back({cursor, info.channel, info.program, noteInstrument});
+                track.instrumentChanges.push_back({noteStart, info.channel, info.program, noteInstrument});
             }
             measureEnd = std::max(measureEnd, cursor);
         } else if (xml.name() == u"forward") {
