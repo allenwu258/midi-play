@@ -184,6 +184,14 @@ struct ChannelState {
     int bankLsb = 0;
     int pitchBend = 8192;
     int channelPressure = 0;
+    int rpnMsb = 127;
+    int rpnLsb = 127;
+    int nrpnMsb = 127;
+    int nrpnLsb = 127;
+    int dataEntryMsb = 0;
+    int dataEntryLsb = 0;
+    int pitchBendRangeSemitones = 2;
+    int pitchBendRangeCents = 0;
     QHash<int, int> controllers;
 };
 

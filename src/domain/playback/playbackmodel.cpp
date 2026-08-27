@@ -6,13 +6,15 @@ namespace midi_play::playback {
 
 namespace {
 
-void buildStateSnapshots(PlaybackData& data)
+void buildStateSnapshots(const QVector<PlaybackEvent>& events,
+                         QVector<PlaybackStateSnapshot>& snapshots)
 {
     QVector<ChannelState> channels(16);
     QHash<int, QVector<ActiveNoteState>> active;
     QVector<QVector<qint64>> sustainReleaseTimes(16);
     QVector<QVector<qint64>> sostenutoReleaseTimes(16);
-    for (const auto& event : data.events) {
+    snapshots.clear();
+    for (const auto& event : events) {
         if (event.kind == PlaybackEventKind::ControlChange
             && (event.controller == 64 || event.controller == 66) && event.value < 64
             && event.channel >= 0 && event.channel < sustainReleaseTimes.size()) {
@@ -36,10 +38,10 @@ void buildStateSnapshots(PlaybackData& data)
         for (auto it = active.cbegin(); it != active.cend(); ++it) {
             snapshot.activeNotes += it.value();
         }
-        data.snapshots.push_back(std::move(snapshot));
+        snapshots.push_back(std::move(snapshot));
     };
 
-    for (const auto& event : data.events) {
+    for (const auto& event : events) {
         while (event.timestampUs >= nextSnapshotUs) {
             appendSnapshot(nextSnapshotUs);
             nextSnapshotUs += snapshotIntervalUs;
@@ -55,6 +57,25 @@ void buildStateSnapshots(PlaybackData& data)
                 channels[channel].bankMsb = std::clamp(event.value, 0, 127);
             } else if (event.controller == 32) {
                 channels[channel].bankLsb = std::clamp(event.value, 0, 127);
+            }
+            switch (event.controller) {
+            case 101: channels[channel].rpnMsb = std::clamp(event.value, 0, 127); break;
+            case 100: channels[channel].rpnLsb = std::clamp(event.value, 0, 127); break;
+            case 99: channels[channel].nrpnMsb = std::clamp(event.value, 0, 127); break;
+            case 98: channels[channel].nrpnLsb = std::clamp(event.value, 0, 127); break;
+            case 6:
+                channels[channel].dataEntryMsb = std::clamp(event.value, 0, 127);
+                if (channels[channel].rpnMsb == 0 && channels[channel].rpnLsb == 0) {
+                    channels[channel].pitchBendRangeSemitones = channels[channel].dataEntryMsb;
+                }
+                break;
+            case 38:
+                channels[channel].dataEntryLsb = std::clamp(event.value, 0, 127);
+                if (channels[channel].rpnMsb == 0 && channels[channel].rpnLsb == 0) {
+                    channels[channel].pitchBendRangeCents = channels[channel].dataEntryLsb;
+                }
+                break;
+            default: break;
             }
             if (event.controller == 64 && event.value < 64) {
                 auto activeIt = active.begin();
@@ -128,7 +149,7 @@ void buildStateSnapshots(PlaybackData& data)
         }
         ++processedEvents;
     }
-    if (data.snapshots.isEmpty() || data.snapshots.back().timestampUs < nextSnapshotUs) {
+    if (snapshots.isEmpty() || snapshots.back().timestampUs < nextSnapshotUs) {
         appendSnapshot(nextSnapshotUs);
     }
 }
@@ -258,10 +279,31 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
         });
         data.index = std::make_shared<PlaybackEventIndex>(data.events);
         data.offIndex = std::make_shared<PlaybackEventIndex>(data.offEvents);
-        buildStateSnapshots(data);
+        buildStateSnapshots(data.events, data.snapshots);
         m_tracks.push_back(std::move(data));
         }
     }
+
+    // Build one canonical event stream for score-wide state reconstruction.
+    // Track-local streams remain the scheduling source, while this stream is
+    // the authoritative seek/playback context for shared MIDI channels.
+    quint64 globalSequence = 0;
+    for (const auto& track : m_tracks) {
+        for (const auto& sourceEvent : track.events) {
+            auto event = sourceEvent;
+            event.sequence = globalSequence++;
+            m_globalEvents.push_back(std::move(event));
+        }
+    }
+    std::sort(m_globalEvents.begin(), m_globalEvents.end(), [](const auto& left, const auto& right) {
+        if (left.timestampUs != right.timestampUs) return left.timestampUs < right.timestampUs;
+        const int leftPriority = playbackEventPriority(left);
+        const int rightPriority = playbackEventPriority(right);
+        if (leftPriority != rightPriority) return leftPriority < rightPriority;
+        return left.sequence < right.sequence;
+    });
+    m_globalIndex = std::make_shared<PlaybackEventIndex>(m_globalEvents);
+    buildStateSnapshots(m_globalEvents, m_globalSnapshots);
 }
 
 qint64 PlaybackModel::durationUs() const

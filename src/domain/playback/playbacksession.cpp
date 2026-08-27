@@ -131,99 +131,111 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
 {
     m_scheduler.seek(targetUs);
 
+    const auto& globalEvents = m_playbackModel.globalEvents();
+    const int end = m_playbackModel.globalIndex()
+        ? m_playbackModel.globalIndex()->lowerBound(targetUs)
+        : 0;
+    int start = 0;
     QHash<int, QVector<PlaybackEvent>> activeNotes;
     QVector<PlaybackEvent> replayEvents;
 
-    for (int trackIndex = 0; trackIndex < m_playbackModel.tracks().size(); ++trackIndex) {
-        const auto& track = m_playbackModel.tracks()[trackIndex];
-        const auto& events = track.events;
-        const int end = track.index
-                            ? track.index->lowerBound(targetUs)
-                            : 0;
-        int start = 0;
-        const PlaybackStateSnapshot* snapshot = nullptr;
-        for (const auto& candidate : track.snapshots) {
-            if (candidate.timestampUs > targetUs) break;
-            snapshot = &candidate;
+    const PlaybackStateSnapshot* snapshot = nullptr;
+    for (const auto& candidate : m_playbackModel.globalSnapshots()) {
+        if (candidate.timestampUs > targetUs) break;
+        snapshot = &candidate;
+    }
+    if (snapshot) {
+        start = std::min(snapshot->eventIndex, end);
+        for (auto channelIt = snapshot->channels.cbegin(); channelIt != snapshot->channels.cend(); ++channelIt) {
+            const int channel = channelIt.key();
+            const auto& state = channelIt.value();
+            if (!state.initialized) continue;
+            // Bank Select is a two-controller message and must precede
+            // Program Change when restoring a channel after seek.
+            for (const int controller : {0, 32}) {
+                if (!state.controllers.contains(controller)) continue;
+                PlaybackEvent control;
+                control.channel = channel;
+                control.controller = controller;
+                control.value = state.controllers.value(controller);
+                control.kind = PlaybackEventKind::ControlChange;
+                replayEvents.push_back(control);
+            }
+            PlaybackEvent program;
+            program.channel = channel;
+            program.program = state.program;
+            program.bankMsb = state.bankMsb;
+            program.bankLsb = state.bankLsb;
+            program.kind = PlaybackEventKind::ProgramChange;
+            replayEvents.push_back(program);
+            QVector<int> controllerKeys;
+            controllerKeys.reserve(state.controllers.size());
+            for (auto controllerIt = state.controllers.cbegin(); controllerIt != state.controllers.cend(); ++controllerIt) {
+                if (controllerIt.key() != 0 && controllerIt.key() != 32) controllerKeys.push_back(controllerIt.key());
+            }
+            const auto controllerPriority = [](int controller) {
+                switch (controller) {
+                case 101: return 0; // RPN MSB
+                case 100: return 1; // RPN LSB
+                case 99: return 2;  // NRPN MSB
+                case 98: return 3;  // NRPN LSB
+                case 6: return 4;   // Data Entry MSB
+                case 38: return 5;  // Data Entry LSB
+                default: return 100 + controller;
+                }
+            };
+            std::sort(controllerKeys.begin(), controllerKeys.end(), [&](int left, int right) {
+                const int leftPriority = controllerPriority(left);
+                const int rightPriority = controllerPriority(right);
+                return leftPriority != rightPriority ? leftPriority < rightPriority : left < right;
+            });
+            for (const int controller : controllerKeys) {
+                PlaybackEvent control;
+                control.channel = channel;
+                control.controller = controller;
+                control.value = state.controllers.value(controller);
+                control.kind = PlaybackEventKind::ControlChange;
+                replayEvents.push_back(control);
+            }
+            PlaybackEvent bend;
+            bend.channel = channel;
+            bend.value = state.pitchBend;
+            bend.kind = PlaybackEventKind::PitchBend;
+            replayEvents.push_back(bend);
+            PlaybackEvent pressure;
+            pressure.channel = channel;
+            pressure.value = state.channelPressure;
+            pressure.kind = PlaybackEventKind::ChannelPressure;
+            replayEvents.push_back(pressure);
         }
-        if (snapshot) {
-            start = std::min(snapshot->eventIndex, end);
-            for (auto channelIt = snapshot->channels.cbegin(); channelIt != snapshot->channels.cend(); ++channelIt) {
-                const int channel = channelIt.key();
-                const auto& state = channelIt.value();
-                if (!state.initialized) continue;
-                // Bank Select is a two-controller message and must precede
-                // Program Change when restoring a channel after seek.
-                for (const int controller : {0, 32}) {
-                    if (!state.controllers.contains(controller)) continue;
-                    PlaybackEvent control;
-                    control.channel = channel;
-                    control.controller = controller;
-                    control.value = state.controllers.value(controller);
-                    control.kind = PlaybackEventKind::ControlChange;
-                    replayEvents.push_back(control);
-                }
-                PlaybackEvent program;
-                program.channel = channel;
-                program.program = state.program;
-                program.bankMsb = state.bankMsb;
-                program.bankLsb = state.bankLsb;
-                program.kind = PlaybackEventKind::ProgramChange;
-                replayEvents.push_back(program);
-                QVector<int> controllerKeys;
-                controllerKeys.reserve(state.controllers.size());
-                for (auto controllerIt = state.controllers.cbegin(); controllerIt != state.controllers.cend(); ++controllerIt) {
-                    if (controllerIt.key() != 0 && controllerIt.key() != 32) {
-                        controllerKeys.push_back(controllerIt.key());
-                    }
-                }
-                std::sort(controllerKeys.begin(), controllerKeys.end());
-                for (const int controller : controllerKeys) {
-                    PlaybackEvent control;
-                    control.channel = channel;
-                    control.controller = controller;
-                    control.value = state.controllers.value(controller);
-                    control.kind = PlaybackEventKind::ControlChange;
-                    replayEvents.push_back(control);
-                }
-                PlaybackEvent bend;
-                bend.channel = channel;
-                bend.value = state.pitchBend;
-                bend.kind = PlaybackEventKind::PitchBend;
-                replayEvents.push_back(bend);
-                PlaybackEvent pressure;
-                pressure.channel = channel;
-                pressure.value = state.channelPressure;
-                pressure.kind = PlaybackEventKind::ChannelPressure;
-                replayEvents.push_back(pressure);
-            }
-            for (const auto& active : snapshot->activeNotes) {
-                PlaybackEvent resumed;
-                resumed.timestampUs = targetUs - 1;
-                resumed.durationUs = active.endTimestampUs - targetUs + 1;
-                resumed.channel = active.channel;
-                resumed.pitch = active.pitch;
-                resumed.velocity = active.velocity;
-                resumed.keyReleased = active.keyReleased;
-                resumed.kind = PlaybackEventKind::NoteOn;
-                activeNotes[active.channel * 128 + active.pitch].push_back(resumed);
-            }
+        for (const auto& active : snapshot->activeNotes) {
+            PlaybackEvent resumed;
+            resumed.timestampUs = targetUs - 1;
+            resumed.durationUs = active.endTimestampUs - targetUs + 1;
+            resumed.channel = active.channel;
+            resumed.pitch = active.pitch;
+            resumed.velocity = active.velocity;
+            resumed.keyReleased = active.keyReleased;
+            resumed.kind = PlaybackEventKind::NoteOn;
+            activeNotes[active.channel * 128 + active.pitch].push_back(resumed);
         }
-        for (int i = start; i < end; ++i) {
-            const auto& event = events[i];
-            if (event.kind == PlaybackEventKind::NoteOn) {
-                activeNotes[event.channel * 128 + event.pitch].push_back(event);
-            } else if (event.kind == PlaybackEventKind::NoteOff) {
-                const int key = event.channel * 128 + event.pitch;
-                if (activeNotes.contains(key) && !activeNotes[key].isEmpty()) {
-                    activeNotes[key].removeLast();
-                    if (activeNotes[key].isEmpty()) activeNotes.remove(key);
-                }
-            } else {
-                // Program, controller, pitch bend and pressure events form the
-                // device state that must be replayed after a seek.
-                replayEvents.push_back(event);
+    }
+
+    for (int i = start; i < end; ++i) {
+        const auto& event = globalEvents[i];
+        if (event.kind == PlaybackEventKind::NoteOn) {
+            activeNotes[event.channel * 128 + event.pitch].push_back(event);
+        } else if (event.kind == PlaybackEventKind::NoteOff) {
+            const int key = event.channel * 128 + event.pitch;
+            if (activeNotes.contains(key) && !activeNotes[key].isEmpty()) {
+                activeNotes[key].removeLast();
+                if (activeNotes[key].isEmpty()) activeNotes.remove(key);
             }
+        } else {
+            // State events after the selected global snapshot are replayed in
+            // canonical score order; no track can overwrite another track's
+            // shared channel state out of order.
+            replayEvents.push_back(event);
         }
     }
 
