@@ -74,4 +74,16 @@ QVector<PlaybackEvent> PlaybackEventScheduler::collectUntil(qint64 timestampUs)
     return result;
 }
 
+PlaybackEventWindow PlaybackEventScheduler::collectWindow(qint64 startUs, qint64 endUs,
+                                                          quint64 generation)
+{
+    PlaybackEventWindow window;
+    window.startUs = startUs;
+    window.endUs = endUs;
+    window.generation = generation;
+    if (generation != m_generation || window.endUs < startUs) return window;
+    window.events = collectUntil(window.endUs);
+    return window;
+}
+
 } // namespace midi_play::playback

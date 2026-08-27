@@ -6,6 +6,7 @@
 #include "playbackmodel.h"
 #include "playbackeventscheduler.h"
 #include "playbackclock.h"
+#include "playbackplayhead.h"
 
 #include <QObject>
 #include <QTimer>
@@ -54,7 +55,7 @@ private:
     State m_state = State::Ready;
     qint64 m_positionUs = 0;
     qint64 m_clockBaseUs = 0;
-    PlaybackClock m_clock;
+    PlaybackPlayHead m_playHead;
     PlaybackEventScheduler m_scheduler;
     quint64 m_eventGeneration = 1;
 };

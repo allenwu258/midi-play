@@ -35,6 +35,9 @@ qt_add_executable(midi_play
     src/domain/playback/playbacksession.cpp
     src/domain/playback/playbackclock.h
     src/domain/playback/playbackclock.cpp
+    src/domain/playback/itransporteventsdispatcher.h
+    src/domain/playback/playbackplayhead.h
+    src/domain/playback/playbackplayhead.cpp
     src/domain/playback/playbackcontroller.h
     src/domain/playback/playbackcontroller.cpp
     src/infrastructure/musicxml/musicxmlreader.h

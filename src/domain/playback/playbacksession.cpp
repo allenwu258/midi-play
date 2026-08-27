@@ -14,6 +14,8 @@ PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> doc
     m_timer->setTimerType(Qt::PreciseTimer);
     connect(m_timer, &QTimer::timeout, this, &PlaybackSession::onTimer);
     m_scheduler.setTracks(&m_playbackModel.tracks());
+    m_scheduler.setGeneration(m_eventGeneration);
+    m_playHead.configure(48000);
     m_audioService->setEventGeneration(m_eventGeneration);
 }
 
@@ -53,7 +55,7 @@ void PlaybackSession::play()
     }
     setState(State::Playing);
     m_clockBaseUs = m_positionUs;
-    m_clock.start(m_positionUs);
+    m_playHead.start(m_positionUs);
     m_timer->start();
 }
 
@@ -63,13 +65,15 @@ void PlaybackSession::pause()
         return;
     }
     const qint64 audioClockUs = m_audioService->clockPositionUs();
-    m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clock.positionUs();
+    if (audioClockUs >= 0) m_playHead.setAudioPositionUs(audioClockUs);
+    else m_playHead.clearAudioPosition();
+    m_positionUs = m_playHead.positionUs();
     m_timer->stop();
     // Explicit note-off events are dispatched by this session. Flush them on
     // pause and reconstruct the exact state when play() resumes.
     flushActiveNotes();
     m_audioService->pause();
-    m_clock.pause(m_positionUs);
+    m_playHead.pause(m_positionUs);
     setState(State::Paused);
 }
 
@@ -84,7 +88,7 @@ void PlaybackSession::stop()
     m_audioService->stop();
     m_positionUs = 0;
     m_clockBaseUs = 0;
-    m_clock.reset();
+    m_playHead.reset();
     m_scheduler.reset();
     emitPosition();
     setState(State::Stopped);
@@ -104,7 +108,7 @@ void PlaybackSession::seek(qint64 microseconds)
     m_audioService->seek(microseconds);
     m_positionUs = std::clamp<qint64>(microseconds, 0, durationMicroseconds());
     m_clockBaseUs = m_positionUs;
-    m_clock.seek(m_positionUs);
+    m_playHead.seek(m_positionUs);
     m_audioService->setTransportPosition(m_positionUs);
     rebuildAudioState(m_positionUs);
     emitPosition();
@@ -119,12 +123,14 @@ void PlaybackSession::onTimer()
         return;
     }
     const qint64 audioClockUs = m_audioService->clockPositionUs();
-    m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clock.positionUs();
+    if (audioClockUs >= 0) m_playHead.setAudioPositionUs(audioClockUs);
+    else m_playHead.clearAudioPosition();
+    m_positionUs = m_playHead.positionUs();
     const qint64 now = m_positionUs;
     const qint64 dispatchUntilUs = m_audioService->supportsTimedEvents() ? now + 30'000 : now;
-    const auto events = m_scheduler.collectUntil(dispatchUntilUs);
-    if (!events.isEmpty()) {
-        m_audioService->submitBatch(events, m_eventGeneration);
+    const auto window = m_scheduler.collectWindow(now, dispatchUntilUs, m_eventGeneration);
+    if (!window.events.isEmpty()) {
+        m_audioService->submitBatch(window.events, window.generation);
     }
     if (m_positionUs >= durationMicroseconds()) {
         stop();
@@ -276,6 +282,7 @@ void PlaybackSession::flushActiveNotes()
 void PlaybackSession::advanceEventGeneration()
 {
     ++m_eventGeneration;
+    m_scheduler.setGeneration(m_eventGeneration);
     m_audioService->setEventGeneration(m_eventGeneration);
 }
 
