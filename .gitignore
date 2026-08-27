@@ -31,8 +31,20 @@ ui_*.h
 
 # Logs and temporary files
 *.log
+*.out
+*.err
 *.tmp
 *.bak
+
+# Accidental in-source CMake build
+/CMakeCache.txt
+/cmake_install.cmake
+/CTestTestfile.cmake
+/Makefile
+/*.sln
+/*.vcxproj
+/*.vcxproj.filters
+/Testing/
 
 # OS files
 Thumbs.db

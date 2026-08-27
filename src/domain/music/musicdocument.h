@@ -24,12 +24,36 @@ struct NoteEvent {
     int staff = 1;
     bool rest = false;
     bool grace = false;
+    bool tieStart = false;
+    bool tieStop = false;
+    bool staccato = false;
+    bool accent = false;
+    bool tenuto = false;
+    bool ghost = false;
 };
 
 struct Measure {
     int number = 0;
     Tick start = 0;
     Tick duration = 0;
+    bool repeatStart = false;
+    bool repeatEnd = false;
+    int repeatCount = 2;
+    int endingNumber = 0;
+    QString endingType;
+};
+
+struct InstrumentChange {
+    Tick tick = 0;
+    int channel = 0;
+    int program = 0;
+    QString sourceId;
+};
+
+struct PlaybackSegment {
+    Tick sourceStart = 0;
+    Tick sourceEnd = 0;
+    Tick outputStart = 0;
 };
 
 struct Track {
@@ -37,8 +61,10 @@ struct Track {
     QString name;
     int channel = 0;
     int program = 0;
+    bool percussion = false;
     QVector<NoteEvent> notes;
     QVector<Measure> measures;
+    QVector<InstrumentChange> instrumentChanges;
 };
 
 class MusicDocument {
@@ -57,6 +83,8 @@ public:
 
     qint64 tickToMicroseconds(Tick tick) const;
     Tick microsecondsToTick(qint64 microseconds) const;
+    QVector<PlaybackSegment> playbackSegments() const;
+    Tick playbackDuration() const;
 
 private:
     QVector<Track> m_tracks;

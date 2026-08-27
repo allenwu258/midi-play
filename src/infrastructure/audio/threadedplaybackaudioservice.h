@@ -1,15 +1,16 @@
 #pragma once
 
 #include "domain/playback/iplaybackaudioservice.h"
-#include "fluidsynthengine.h"
 
+#include <QThread>
 #include <memory>
 
 namespace midi_play::audio {
 
-class FluidSynthAudioService final : public playback::IPlaybackAudioService {
+class ThreadedPlaybackAudioService final : public playback::IPlaybackAudioService {
 public:
-    explicit FluidSynthAudioService(std::unique_ptr<FluidSynthEngine> engine);
+    explicit ThreadedPlaybackAudioService(std::unique_ptr<playback::IPlaybackAudioService> service);
+    ~ThreadedPlaybackAudioService() override;
 
     bool loadSoundFont(const QString& path, QString* error) override;
     bool configureTrack(const QString& trackId, int channel, int program, QString* error) override;
@@ -23,7 +24,10 @@ public:
     void submitOff(const playback::PlaybackEvent& event) override;
 
 private:
-    std::unique_ptr<FluidSynthEngine> m_engine;
+    class Worker;
+    std::unique_ptr<playback::IPlaybackAudioService> m_service;
+    std::unique_ptr<Worker> m_worker;
+    QThread m_thread;
 };
 
 } // namespace midi_play::audio

@@ -47,7 +47,7 @@ private:
     std::shared_ptr<const music::MusicDocument> m_document;
     std::unique_ptr<IPlaybackAudioService> m_audioService;
     PlaybackModel m_playbackModel;
-    QTimer m_timer;
+    QTimer* m_timer = nullptr;
     State m_state = State::Ready;
     qint64 m_positionUs = 0;
     qint64 m_clockBaseUs = 0;

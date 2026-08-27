@@ -37,6 +37,17 @@ qt_add_executable(midi_play
     src/infrastructure/audio/fluidsynthengine.cpp
     src/infrastructure/audio/fluidsynthaudioservice.h
     src/infrastructure/audio/fluidsynthaudioservice.cpp
+    src/infrastructure/audio/threadedplaybackaudioservice.h
+    src/infrastructure/audio/threadedplaybackaudioservice.cpp
+    src/infrastructure/resources/projectaudiosettings.h
+    src/infrastructure/resources/projectaudiosettings.cpp
+    src/infrastructure/readers/imusicreader.h
+    src/infrastructure/readers/musicreaderregistry.h
+    src/infrastructure/readers/musicreaderregistry.cpp
+    src/infrastructure/readers/musicxmlreaderadapter.h
+    src/infrastructure/readers/musicxmlreaderadapter.cpp
+    src/infrastructure/midi/midireader.h
+    src/infrastructure/midi/midireader.cpp
     src/presentation/mainwindow.h
     src/presentation/mainwindow.cpp
 )

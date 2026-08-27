@@ -22,7 +22,11 @@ PlaybackContext::PlaybackContext(std::shared_ptr<const music::MusicDocument> doc
 
 int PlaybackContext::velocityAt(const QString& trackId, qint64 timestampUs, int fallback) const
 {
-    const auto it = m_dynamics.find(trackId);
+    auto it = m_dynamics.find(trackId);
+    if (it == m_dynamics.end()) {
+        const int slash = trackId.indexOf(u'/');
+        if (slash > 0) it = m_dynamics.find(trackId.left(slash));
+    }
     if (it == m_dynamics.end()) return fallback;
     int result = fallback;
     for (const auto& point : it.value()) {

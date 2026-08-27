@@ -29,6 +29,13 @@ struct PlaybackEvent {
     int pitch = 60;
     int velocity = 90;
     int program = 0;
+    bool tieStart = false;
+    bool tieStop = false;
+    bool staccato = false;
+    bool accent = false;
+    bool tenuto = false;
+    bool ghost = false;
+    enum class Kind { Note, ProgramChange, ControlChange, AllNotesOff } kind = Kind::Note;
 };
 
 class PlaybackEventIndex final {
@@ -52,6 +59,7 @@ struct PlaybackData {
     QString trackId;
     PlaybackSetupData setupData;
     QVector<PlaybackEvent> events;
+    QVector<PlaybackEvent> offEvents;
     std::shared_ptr<const PlaybackEventIndex> index;
 };
 

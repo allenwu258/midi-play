@@ -5,6 +5,7 @@
 ## 已实现
 
 - MusicXML (`.xml` / `.musicxml`) 流式读取。
+- 标准 MIDI 文件 reader（format 0/1/2 的基础 note/tempo/program 语义）。
 - `score-partwise` 的 part、measure、tempo、note、rest、chord、grace、cue、backup、forward 基础语义。
 - 统一 tick 时间线、tempo map 和 tick/time 双向转换。
 - 默认 `midiSound-2025-1-14.sf2` 音源。
@@ -52,6 +53,14 @@ build/windows-msvc-debug/Debug/midi_play.exe --audio-test `
   'C:/Users/Vyas/projects/midi-play/midiSound-2025-1-14.sf2'
 ```
 
+测试 MIDI reader：
+
+```powershell
+build/windows-msvc-debug/Debug/midi_play.exe --midi-test `
+  'C:/Users/Vyas/Downloads/midi-files/Canon in D_211QUeDwFsn/3cdfa9914c7b42928694349744b8800b.mid'
+```
+
+
 ## Qt 平台插件说明
 
 Debug 部署必须包含：
@@ -67,10 +76,21 @@ platforms/qwindowsd.dll
 ```text
 Qt UI
   -> PlayerApplicationService
-  -> MusicXmlReader / MusicDocument
-  -> PlaybackSession / TempoClock / timeline
-  -> FluidSynthEngine adapter
-  -> FluidSynth audio driver
+  -> MusicReaderRegistry / MusicXmlReader / MusicDocument
+  -> PlaybackModel / PlaybackContext / PlaybackEventsRenderer
+  -> PlaybackController / PlaybackSession / PlaybackEventIndex
+  -> ThreadedPlaybackAudioService
+  -> FluidSynthAudioService / SoundProfileRepository
+  -> FluidSynthEngine / FluidSynth audio driver
 ```
+
+当前引擎还包含：
+
+- repeat segment 和 ending 的播放顺序展开。
+- staff/voice 独立 playback track。
+- tie 合并、staccato、accent、tenuto、ghost articulation。
+- ProgramChange 和基础 instrument change。
+- playback thread 与 audio service thread。
+- `ProjectAudioSettings` JSON 持久化。
 
 领域模型和播放状态不依赖 Qt Widgets 或 FluidSynth 具体类型，后续可注册 MIDI reader、替换音频后端或增加谱面视图。

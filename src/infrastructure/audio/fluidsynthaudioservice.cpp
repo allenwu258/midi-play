@@ -21,8 +21,29 @@ bool FluidSynthAudioService::seek(qint64 positionUs) { return m_engine->seek(pos
 bool FluidSynthAudioService::flush() { return m_engine->flush(); }
 void FluidSynthAudioService::submit(const playback::PlaybackEvent& event)
 {
+    if (event.kind == playback::PlaybackEvent::Kind::ProgramChange) {
+        m_engine->programChange(event.channel, event.program);
+        return;
+    }
+    if (event.kind == playback::PlaybackEvent::Kind::ControlChange) {
+        m_engine->controlChange(event.channel, event.pitch, event.velocity);
+        return;
+    }
+    if (event.kind == playback::PlaybackEvent::Kind::AllNotesOff) {
+        m_engine->flush();
+        return;
+    }
     m_engine->noteOn(event.channel, event.pitch, event.velocity);
     m_engine->scheduleNoteOff(event.channel, event.pitch, event.durationUs);
+}
+
+void FluidSynthAudioService::submitOff(const playback::PlaybackEvent& event)
+{
+    if (event.kind == playback::PlaybackEvent::Kind::AllNotesOff) {
+        m_engine->flush();
+        return;
+    }
+    m_engine->scheduleNoteOff(event.channel, event.pitch, 0);
 }
 
 } // namespace midi_play::audio

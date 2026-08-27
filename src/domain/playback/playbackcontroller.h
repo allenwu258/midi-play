@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <memory>
+#include <QThread>
 
 namespace midi_play::playback {
 
@@ -12,6 +13,7 @@ class PlaybackController final : public QObject {
     Q_OBJECT
 public:
     explicit PlaybackController(QObject* parent = nullptr);
+    ~PlaybackController() override;
     PlaybackSession* session() const { return m_session.get(); }
 
     bool setDocument(std::shared_ptr<const music::MusicDocument> document,
@@ -32,6 +34,7 @@ signals:
 
 private:
     std::unique_ptr<PlaybackSession> m_session;
+    QThread m_playbackThread;
 };
 
 } // namespace midi_play::playback

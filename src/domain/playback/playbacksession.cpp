@@ -8,8 +8,9 @@ PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> doc
                                  QObject* parent)
     : QObject(parent), m_document(std::move(document)), m_audioService(std::move(audioService)), m_playbackModel(m_document)
 {
-    m_timer.setInterval(10);
-    connect(&m_timer, &QTimer::timeout, this, &PlaybackSession::onTimer);
+    m_timer = new QTimer(this);
+    m_timer->setInterval(10);
+    connect(m_timer, &QTimer::timeout, this, &PlaybackSession::onTimer);
 }
 
 PlaybackSession::~PlaybackSession() = default;
@@ -45,7 +46,7 @@ void PlaybackSession::play()
     setState(State::Playing);
     m_clockBaseUs = m_positionUs;
     m_clock.restart();
-    m_timer.start();
+    m_timer->start();
 }
 
 void PlaybackSession::pause()
@@ -55,7 +56,7 @@ void PlaybackSession::pause()
     }
     m_audioService->pause();
     m_positionUs = m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
-    m_timer.stop();
+    m_timer->stop();
     setState(State::Paused);
 }
 
@@ -64,7 +65,7 @@ void PlaybackSession::stop()
     if (m_state == State::Empty) {
         return;
     }
-    m_timer.stop();
+    m_timer->stop();
     flushActiveNotes();
     m_audioService->stop();
     m_positionUs = 0;
@@ -82,7 +83,7 @@ void PlaybackSession::seek(qint64 microseconds)
     }
     const bool resume = m_state == State::Playing;
     if (resume) {
-        m_timer.stop();
+        m_timer->stop();
     }
     flushActiveNotes();
     m_audioService->seek(microseconds);

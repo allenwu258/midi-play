@@ -1,6 +1,7 @@
 #include "app/playerapplicationservice.h"
 #include "infrastructure/musicxml/musicxmlreader.h"
 #include "infrastructure/audio/fluidsynthengine.h"
+#include "infrastructure/midi/midireader.h"
 #include "presentation/mainwindow.h"
 
 #include <QApplication>
@@ -33,6 +34,17 @@ int main(int argc, char* argv[])
         engine.scheduleNoteOff(0, 60, 800'000);
         QTimer::singleShot(1'000, &app, &QCoreApplication::quit);
         return app.exec();
+    }
+
+    if (argc > 2 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--midi-test")) {
+        const auto result = midi_play::midi::MidiReader().read(QString::fromLocal8Bit(argv[2]));
+        if (!result.ok()) {
+            qCritical().noquote() << result.error;
+            return 1;
+        }
+        qInfo().noquote() << "MIDI loaded tracks=" << result.document->tracks().size()
+                          << "duration_us=" << result.document->tickToMicroseconds(result.document->duration());
+        return 0;
     }
 
     if (argc > 1) {

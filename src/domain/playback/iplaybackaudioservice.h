@@ -18,6 +18,7 @@ public:
     virtual bool seek(qint64 positionUs) = 0;
     virtual bool flush() = 0;
     virtual void submit(const PlaybackEvent& event) = 0;
+    virtual void submitOff(const PlaybackEvent& event) = 0;
 };
 
 } // namespace midi_play::playback

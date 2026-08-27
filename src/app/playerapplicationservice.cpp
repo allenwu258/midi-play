@@ -2,6 +2,7 @@
 
 #include "infrastructure/audio/fluidsynthengine.h"
 #include "infrastructure/audio/fluidsynthaudioservice.h"
+#include "infrastructure/audio/threadedplaybackaudioservice.h"
 #include "infrastructure/musicxml/musicxmlreader.h"
 
 #include <QFileInfo>
@@ -27,7 +28,8 @@ void PlayerApplicationService::openMusicXml(const QString& path)
             return;
         }
         auto engine = std::make_unique<audio::FluidSynthEngine>();
-        auto audioService = std::make_unique<audio::FluidSynthAudioService>(std::move(engine));
+        auto fluidsynthService = std::make_unique<audio::FluidSynthAudioService>(std::move(engine));
+        auto audioService = std::make_unique<audio::ThreadedPlaybackAudioService>(std::move(fluidsynthService));
         m_controller = std::make_unique<playback::PlaybackController>(this);
         QString controllerError;
         if (!m_controller->setDocument(result.document, std::move(audioService), &controllerError)) {

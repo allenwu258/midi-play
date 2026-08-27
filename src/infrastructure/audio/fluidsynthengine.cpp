@@ -58,6 +58,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_programSelect = reinterpret_cast<ProgramSelect>(resolve("fluid_synth_program_select"));
     m_noteOn = reinterpret_cast<NoteOn>(resolve("fluid_synth_noteon"));
     m_noteOff = reinterpret_cast<NoteOff>(resolve("fluid_synth_noteoff"));
+    m_cc = reinterpret_cast<Cc>(resolve("fluid_synth_cc"));
     m_systemReset = reinterpret_cast<SystemReset>(resolve("fluid_synth_system_reset"));
 
     if (!m_newSettings || !m_deleteSettings || !m_newSynth || !m_deleteSynth || !m_sfload
@@ -144,6 +145,16 @@ void FluidSynthEngine::scheduleNoteOff(int channel, int pitch, qint64 durationMi
                        [this, channel, pitch] {
                            if (m_loaded) m_noteOff(m_synth, channel % 16, pitch);
                        });
+}
+
+void FluidSynthEngine::programChange(int channel, int program)
+{
+    if (m_loaded && m_programSelect) m_programSelect(m_synth, channel % 16, m_soundFontId, 0, program % 128);
+}
+
+void FluidSynthEngine::controlChange(int channel, int controller, int value)
+{
+    if (m_loaded && m_cc) m_cc(m_synth, channel % 16, controller % 128, value % 128);
 }
 
 void FluidSynthEngine::release()

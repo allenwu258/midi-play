@@ -44,4 +44,42 @@ Tick MusicDocument::microsecondsToTick(qint64 microseconds) const
     return low;
 }
 
+QVector<PlaybackSegment> MusicDocument::playbackSegments() const
+{
+    QVector<PlaybackSegment> result;
+    if (m_tracks.isEmpty() || m_tracks.front().measures.isEmpty()) {
+        result.push_back({0, m_duration, 0});
+        return result;
+    }
+    const auto& measures = m_tracks.front().measures;
+    int repeatStart = 0;
+    Tick output = 0;
+    for (int i = 0; i < measures.size(); ++i) {
+        if (measures[i].repeatStart) repeatStart = i;
+        if (!measures[i].repeatEnd && i + 1 < measures.size()) continue;
+        const int count = measures[i].repeatEnd ? qMax(1, measures[i].repeatCount) : 1;
+        const Tick sourceStart = measures[repeatStart].start;
+        const Tick sourceEnd = measures[i].start + measures[i].duration;
+        for (int pass = 0; pass < count; ++pass) {
+            for (int measureIndex = repeatStart; measureIndex <= i; ++measureIndex) {
+                const auto& measure = measures[measureIndex];
+                if (measure.endingNumber > 0 && measure.endingNumber != pass + 1) continue;
+                result.push_back({measure.start, measure.start + measure.duration, output});
+                output += measure.duration;
+            }
+        }
+        repeatStart = i + 1;
+    }
+    if (result.isEmpty()) result.push_back({0, m_duration, 0});
+    return result;
+}
+
+Tick MusicDocument::playbackDuration() const
+{
+    const auto segments = playbackSegments();
+    if (segments.isEmpty()) return m_duration;
+    const auto& last = segments.back();
+    return last.outputStart + (last.sourceEnd - last.sourceStart);
+}
+
 } // namespace midi_play::music
