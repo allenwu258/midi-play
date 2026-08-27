@@ -12,7 +12,7 @@
 - MusicXML 每个 staff/voice 独立维护游标，并使用跨小节余数累积降低 divisions 换算漂移。
 - `MusicDocument` 提供全局 MeasureGrid、预计算 TempoMap 和稳定 NoteId。
 - 导入完成后由 `MusicAnalyzer` 生成 WrittenPitch、调内 degree、Raw/Grid 双时间、和弦组、延音/连音组、鼓组映射、量化网格、调性置信度、三连音候选、swing 比例和音游 lane。
-- 默认 `midiSound-2025-1-14.sf2` 音源。
+- 默认 `assets/midisound.sf2` 音源。
 - FluidSynth SF2 动态适配器，不把 FluidSynth 类型泄漏到领域层。
 - 播放、暂停、停止、进度拖动和旧音符 flush。
 - Qt Widgets UI，解析在 QtConcurrent 工作线程执行。
@@ -26,58 +26,66 @@ MIDI format 2 的各个独立序列会按源轨道顺序串联到统一播放时
 
 ## 构建
 
-在 Developer PowerShell for VS 2022 中执行：
+构建前需要配置以下环境变量：
+
+- `QT_ROOT`：Qt MSVC 套件根目录，目录下应包含 `bin/windeployqt.exe`。
+- `VCPKG_ROOT`：vcpkg 根目录，目录下应包含 `vcpkg.exe`。
+
+在 Developer PowerShell for VS 2022 中，从项目根目录执行：
 
 ```powershell
-$env:QT_ROOT = 'C:/SDK/Qt/6.8.3/msvc2022_64'
-$env:VCPKG_ROOT = 'C:/SDK/VC/vcpkg'
+if (-not (Test-Path "$env:QT_ROOT/bin/windeployqt.exe")) {
+    throw 'QT_ROOT 未指向有效的 Qt MSVC 套件'
+}
+if (-not (Test-Path "$env:VCPKG_ROOT/vcpkg.exe")) {
+    throw 'VCPKG_ROOT 未指向有效的 vcpkg 根目录'
+}
 
 & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet x64-windows
 
-cmake --preset windows-msvc-debug
+cmake --preset windows-msvc-debug `
+    -DCMAKE_PREFIX_PATH="$env:QT_ROOT"
 cmake --build --preset windows-msvc-debug
 
 & "$env:QT_ROOT/bin/windeployqt.exe" --debug --compiler-runtime `
     'build/windows-msvc-debug/Debug/midi_play.exe'
 ```
 
-CMake 会在可用时将默认 SF2 和 vcpkg 的 FluidSynth DLL 复制到输出目录。
+CMake 会在可用时将默认 SF2 复制到输出目录的 `assets` 子目录，并将 vcpkg 的 FluidSynth DLL 复制到可执行文件同级目录。
 
 ## 运行
 
 ```powershell
-build/windows-msvc-debug/Debug/midi_play.exe
+$midiPlayExe = 'build/windows-msvc-debug/Debug/midi_play.exe'
+& $midiPlayExe
 ```
 
-也可以直接对 MusicXML 或 MIDI 做无界面解析 smoke test：
+以下示例使用 `MIDI_PLAY_TEST_DATA` 指向包含测试 MusicXML 和 MIDI 文件的目录：
 
 ```powershell
-build/windows-msvc-debug/Debug/midi_play.exe `
-  'C:/Users/Vyas/Downloads/midi-files/Canon in D_211QUeDwFsn/211QUeDwFsn.musicxml'
+$env:MIDI_PLAY_TEST_DATA = '<测试数据目录>'
 
-build/windows-msvc-debug/Debug/midi_play.exe `
-  'C:/Users/Vyas/Downloads/midi-files/Canon in D_211QUeDwFsn/3cdfa9914c7b42928694349744b8800b.mid'
+& $midiPlayExe "$env:MIDI_PLAY_TEST_DATA/example.musicxml"
+& $midiPlayExe "$env:MIDI_PLAY_TEST_DATA/example.mid"
 ```
 
 测试 SF2 加载和单音输出：
 
 ```powershell
-build/windows-msvc-debug/Debug/midi_play.exe --audio-test `
-  'C:/Users/Vyas/projects/midi-play/midiSound-2025-1-14.sf2'
+& $midiPlayExe --audio-test 'assets/midisound.sf2'
 ```
 
 测试 MIDI reader：
 
 ```powershell
-build/windows-msvc-debug/Debug/midi_play.exe --midi-test `
-  'C:/Users/Vyas/Downloads/midi-files/Canon in D_211QUeDwFsn/3cdfa9914c7b42928694349744b8800b.mid'
+& $midiPlayExe --midi-test "$env:MIDI_PLAY_TEST_DATA/example.mid"
 ```
 
 生成固定播放位置的离屏可视化帧：
 
 ```powershell
-build/windows-msvc-debug/Debug/midi_play.exe --render-test `
-  'C:/path/to/example.musicxml' `
+& $midiPlayExe --render-test `
+  "$env:MIDI_PLAY_TEST_DATA/example.musicxml" `
   'build/visualization.png' `
   10000000 1280 720
 ```
