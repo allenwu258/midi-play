@@ -5,11 +5,11 @@
 #include "iplaybackaudioservice.h"
 #include "playbackmodel.h"
 #include "playbackeventscheduler.h"
+#include "playbackclock.h"
 
 #include <QObject>
 #include <QTimer>
 #include <memory>
-#include <QElapsedTimer>
 
 namespace midi_play::playback {
 
@@ -53,7 +53,7 @@ private:
     State m_state = State::Ready;
     qint64 m_positionUs = 0;
     qint64 m_clockBaseUs = 0;
-    QElapsedTimer m_clock;
+    PlaybackClock m_clock;
     PlaybackEventScheduler m_scheduler;
 };
 

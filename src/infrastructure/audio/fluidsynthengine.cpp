@@ -203,6 +203,14 @@ void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
         case playback::PlaybackEventKind::ControlChange: controlChange(event.channel, event.controller, event.value); break;
         case playback::PlaybackEventKind::PitchBend: pitchBend(event.channel, event.value); break;
         case playback::PlaybackEventKind::ChannelPressure: channelPressure(event.channel, event.value); break;
+        case playback::PlaybackEventKind::NoteExpression:
+            switch (event.expressionType) {
+            case playback::NoteExpressionType::Pitch: pitchBend(event.channel, event.value); break;
+            case playback::NoteExpressionType::Pressure: channelPressure(event.channel, event.value); break;
+            case playback::NoteExpressionType::Timbre: controlChange(event.channel, 74, event.value); break;
+            case playback::NoteExpressionType::Volume: controlChange(event.channel, 11, event.value); break;
+            }
+            break;
         case playback::PlaybackEventKind::AllNotesOff: flush(); break;
         }
     };
@@ -236,6 +244,25 @@ void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
         break;
     case playback::PlaybackEventKind::ChannelPressure:
         m_eventChannelPressure(nativeEvent, event.channel % 16, event.value);
+        break;
+    case playback::PlaybackEventKind::NoteExpression:
+        // FluidSynth's public sequencer API has no polyphonic expression
+        // primitive. Use the closest channel-level MIDI fallback while the
+        // event still retains its noteId for MPE-capable backends.
+        switch (event.expressionType) {
+        case playback::NoteExpressionType::Pitch:
+            m_eventPitchBend(nativeEvent, event.channel % 16, event.value);
+            break;
+        case playback::NoteExpressionType::Pressure:
+            m_eventChannelPressure(nativeEvent, event.channel % 16, event.value);
+            break;
+        case playback::NoteExpressionType::Timbre:
+            m_eventControlChange(nativeEvent, event.channel % 16, 74, event.value);
+            break;
+        case playback::NoteExpressionType::Volume:
+            m_eventControlChange(nativeEvent, event.channel % 16, 11, event.value);
+            break;
+        }
         break;
     case playback::PlaybackEventKind::AllNotesOff:
         m_eventAllNotesOff(nativeEvent, event.channel % 16);

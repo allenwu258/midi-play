@@ -6,6 +6,12 @@
 
 namespace midi_play::playback {
 
+enum class PlaybackClockSource {
+    SoftwareMonotonic,
+    TimedSequencer,
+    AudioFrame
+};
+
 class IPlaybackAudioService {
 public:
     virtual ~IPlaybackAudioService() = default;
@@ -22,7 +28,9 @@ public:
         return true;
     }
     virtual qint64 clockPositionUs() const { return -1; }
+    virtual PlaybackClockSource clockSource() const { return PlaybackClockSource::SoftwareMonotonic; }
     virtual bool supportsTimedEvents() const { return false; }
+    virtual bool supportsPerNoteExpression() const { return false; }
     virtual bool flush() = 0;
     virtual void submit(const PlaybackEvent& event) = 0;
     virtual void submitOff(const PlaybackEvent& event) = 0;

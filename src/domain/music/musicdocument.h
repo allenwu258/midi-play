@@ -114,6 +114,28 @@ struct PlaybackSegment {
     Tick sourceStart = 0;
     Tick sourceEnd = 0;
     Tick outputStart = 0;
+    int repeatPass = 0;
+    int sourceMeasureIndex = -1;
+};
+
+struct RepeatJumpContext {
+    int repeatStartIndex = 0;
+    int repeatPass = 0;
+    bool daCapoTaken = false;
+    bool dalSegnoTaken = false;
+    bool codaArmed = false;
+};
+
+class RepeatList final {
+public:
+    static RepeatList build(const QVector<Measure>& measures, Tick duration);
+
+    const QVector<PlaybackSegment>& segments() const { return m_segments; }
+    Tick duration() const { return m_duration; }
+
+private:
+    QVector<PlaybackSegment> m_segments;
+    Tick m_duration = 0;
 };
 
 struct Track {

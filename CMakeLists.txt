@@ -17,6 +17,8 @@ qt_add_executable(midi_play
     src/app/playerapplicationservice.cpp
     src/domain/music/musicdocument.h
     src/domain/music/musicdocument.cpp
+    src/domain/music/scoreplaybackdom.h
+    src/domain/music/scoreplaybackdom.cpp
     src/domain/playback/playbacktypes.h
     src/domain/playback/iplaybackaudioservice.h
     src/domain/playback/playbackmodel.h
@@ -31,6 +33,8 @@ qt_add_executable(midi_play
     src/domain/playback/soundprofilerepository.cpp
     src/domain/playback/playbacksession.h
     src/domain/playback/playbacksession.cpp
+    src/domain/playback/playbackclock.h
+    src/domain/playback/playbackclock.cpp
     src/domain/playback/playbackcontroller.h
     src/domain/playback/playbackcontroller.cpp
     src/infrastructure/musicxml/musicxmlreader.h

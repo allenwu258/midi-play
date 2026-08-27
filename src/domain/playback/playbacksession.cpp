@@ -52,7 +52,7 @@ void PlaybackSession::play()
     }
     setState(State::Playing);
     m_clockBaseUs = m_positionUs;
-    m_clock.restart();
+    m_clock.start(m_positionUs);
     m_timer->start();
 }
 
@@ -62,12 +62,13 @@ void PlaybackSession::pause()
         return;
     }
     const qint64 audioClockUs = m_audioService->clockPositionUs();
-    m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
+    m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clock.positionUs();
     m_timer->stop();
     // Explicit note-off events are dispatched by this session. Flush them on
     // pause and reconstruct the exact state when play() resumes.
     flushActiveNotes();
     m_audioService->pause();
+    m_clock.pause(m_positionUs);
     setState(State::Paused);
 }
 
@@ -81,6 +82,7 @@ void PlaybackSession::stop()
     m_audioService->stop();
     m_positionUs = 0;
     m_clockBaseUs = 0;
+    m_clock.reset();
     m_scheduler.reset();
     emitPosition();
     setState(State::Stopped);
@@ -99,6 +101,7 @@ void PlaybackSession::seek(qint64 microseconds)
     m_audioService->seek(microseconds);
     m_positionUs = std::clamp<qint64>(microseconds, 0, durationMicroseconds());
     m_clockBaseUs = m_positionUs;
+    m_clock.seek(m_positionUs);
     m_audioService->setTransportPosition(m_positionUs);
     rebuildAudioState(m_positionUs);
     emitPosition();
@@ -113,7 +116,7 @@ void PlaybackSession::onTimer()
         return;
     }
     const qint64 audioClockUs = m_audioService->clockPositionUs();
-    m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
+    m_positionUs = audioClockUs >= 0 ? audioClockUs : m_clock.positionUs();
     const qint64 now = m_positionUs;
     const qint64 dispatchUntilUs = m_audioService->supportsTimedEvents() ? now + 30'000 : now;
     const auto events = m_scheduler.collectUntil(dispatchUntilUs);

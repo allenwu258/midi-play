@@ -160,6 +160,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
     : m_document(std::move(document))
 {
     if (!m_document) return;
+    m_scoreDom = music::ScorePlaybackDom::build(*m_document);
     m_context = std::make_shared<PlaybackContext>(m_document);
     PlaybackEventsRenderer renderer(m_context);
     const auto segments = m_document->playbackSegments();

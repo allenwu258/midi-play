@@ -20,7 +20,13 @@ bool FluidSynthAudioService::stop() { return m_engine->stop(); }
 bool FluidSynthAudioService::seek(qint64 positionUs) { return m_engine->seek(positionUs); }
 bool FluidSynthAudioService::setTransportPosition(qint64 positionUs) { return m_engine->setTransportPosition(positionUs); }
 qint64 FluidSynthAudioService::clockPositionUs() const { return m_engine->clockPositionUs(); }
+playback::PlaybackClockSource FluidSynthAudioService::clockSource() const
+{
+    return m_engine->supportsTimedEvents() ? playback::PlaybackClockSource::TimedSequencer
+                                           : playback::PlaybackClockSource::SoftwareMonotonic;
+}
 bool FluidSynthAudioService::supportsTimedEvents() const { return m_engine->supportsTimedEvents(); }
+bool FluidSynthAudioService::supportsPerNoteExpression() const { return false; }
 bool FluidSynthAudioService::flush() { return m_engine->flush(); }
 void FluidSynthAudioService::submit(const playback::PlaybackEvent& event)
 {

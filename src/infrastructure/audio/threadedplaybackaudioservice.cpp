@@ -105,11 +105,29 @@ qint64 ThreadedPlaybackAudioService::clockPositionUs() const
     return result;
 }
 
+playback::PlaybackClockSource ThreadedPlaybackAudioService::clockSource() const
+{
+    playback::PlaybackClockSource result = playback::PlaybackClockSource::SoftwareMonotonic;
+    QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
+        result = m_worker->m_service->clockSource();
+    }, Qt::BlockingQueuedConnection);
+    return result;
+}
+
 bool ThreadedPlaybackAudioService::supportsTimedEvents() const
 {
     bool result = false;
     QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
         result = m_worker->m_service->supportsTimedEvents();
+    }, Qt::BlockingQueuedConnection);
+    return result;
+}
+
+bool ThreadedPlaybackAudioService::supportsPerNoteExpression() const
+{
+    bool result = false;
+    QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
+        result = m_worker->m_service->supportsPerNoteExpression();
     }, Qt::BlockingQueuedConnection);
     return result;
 }

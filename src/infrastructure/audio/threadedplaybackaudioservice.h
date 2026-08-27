@@ -21,7 +21,9 @@ public:
     bool seek(qint64 positionUs) override;
     bool setTransportPosition(qint64 positionUs) override;
     qint64 clockPositionUs() const override;
+    playback::PlaybackClockSource clockSource() const override;
     bool supportsTimedEvents() const override;
+    bool supportsPerNoteExpression() const override;
     bool flush() override;
     void submit(const playback::PlaybackEvent& event) override;
     void submitOff(const playback::PlaybackEvent& event) override;

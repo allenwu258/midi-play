@@ -47,7 +47,15 @@ enum class PlaybackEventKind {
     ControlChange,
     PitchBend,
     ChannelPressure,
+    NoteExpression,
     AllNotesOff
+};
+
+enum class NoteExpressionType {
+    Pressure,
+    Timbre,
+    Pitch,
+    Volume
 };
 
 enum class ArticulationType {
@@ -104,6 +112,8 @@ struct PlaybackEvent {
     int bankMsb = 0;
     int bankLsb = 0;
     bool keyReleased = false;
+    int noteId = -1;
+    NoteExpressionType expressionType = NoteExpressionType::Volume;
 
     bool isNoteOn() const { return kind == PlaybackEventKind::NoteOn; }
     bool isNoteOff() const { return kind == PlaybackEventKind::NoteOff; }
@@ -120,7 +130,8 @@ inline int playbackEventPriority(const PlaybackEvent& event)
     if (event.kind == PlaybackEventKind::ProgramChange) return 2;
     if (event.kind == PlaybackEventKind::ControlChange
         || event.kind == PlaybackEventKind::PitchBend
-        || event.kind == PlaybackEventKind::ChannelPressure) return 3;
+        || event.kind == PlaybackEventKind::ChannelPressure
+        || event.kind == PlaybackEventKind::NoteExpression) return 3;
     return 4;
 }
 
