@@ -234,7 +234,7 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
             tailColor.setAlpha(std::max(38, color.alpha() / 3));
             painter.setPen(Qt::NoPen);
             painter.setBrush(tailColor);
-            painter.drawRoundedRect(tail, 2.0, 2.0);
+            painter.drawRect(tail);
         }
 
         QColor border = color.lighter(isActive(note, state.transportPositionUs) ? 145 : 112);
@@ -243,7 +243,7 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
         if (note.isGhost()) pen.setStyle(Qt::DashLine);
         painter.setPen(pen);
         painter.setBrush(color);
-        painter.drawRoundedRect(primary, 3.0, 3.0);
+        painter.drawRect(primary);
 
         painter.setPen(QPen(border, 1.3));
         painter.drawLine(QPointF(primary.left() + 1.0, startY),
@@ -348,7 +348,7 @@ void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGe
         if (!fill.isValid()) fill = m_theme.blackKey;
         painter.setPen(QPen(m_theme.blackKeyBorder, 1.0));
         painter.setBrush(fill);
-        painter.drawRoundedRect(slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0), 2.0, 2.0);
+        painter.drawRect(slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
     }
 
     QFont keyFont = painter.font();
