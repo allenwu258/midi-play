@@ -1,4 +1,5 @@
 #include "musicxmlreader.h"
+#include "domain/music/musicanalysis.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -94,6 +95,15 @@ int stepToPitch(const QString& step)
                                              {QStringLiteral("E"), 4}, {QStringLiteral("F"), 5},
                                              {QStringLiteral("G"), 7}, {QStringLiteral("A"), 9},
                                              {QStringLiteral("B"), 11}};
+    return values.value(step.toUpper(), 0);
+}
+
+int stepToIndex(const QString& step)
+{
+    static const QHash<QString, int> values {{QStringLiteral("C"), 0}, {QStringLiteral("D"), 1},
+                                             {QStringLiteral("E"), 2}, {QStringLiteral("F"), 3},
+                                             {QStringLiteral("G"), 4}, {QStringLiteral("A"), 5},
+                                             {QStringLiteral("B"), 6}};
     return values.value(step.toUpper(), 0);
 }
 
@@ -231,6 +241,10 @@ void parseDirection(QXmlStreamReader& xml, music::MusicDocument& document, music
                         velocity = dynamicVelocity(xml.name().toString());
                         xml.skipCurrentElement();
                     }
+                } else if (xml.name() == u"words") {
+                    const QString text = xml.readElementText().trimmed();
+                    if (!text.isEmpty()) document.markers().push_back({tick, text,
+                                                                         static_cast<quint64>(document.markers().size())});
                 } else if (xml.name() == u"segno") {
                     measure.segno = true;
                     xml.skipCurrentElement();
@@ -339,6 +353,8 @@ struct ParsedNote {
     bool marcato = false;
     bool tremolo = false;
     QString instrumentId;
+    QString lyric;
+    int lyricVerse = 1;
 };
 
 ParsedNote parseNote(QXmlStreamReader& xml, int defaultStaff)
@@ -364,6 +380,14 @@ ParsedNote parseNote(QXmlStreamReader& xml, int defaultStaff)
         else if (xml.name() == u"voice") note.voice = std::max(1, xml.readElementText().toInt());
         else if (xml.name() == u"staff") note.staff = std::max(1, xml.readElementText().toInt());
         else if (xml.name() == u"instrument") note.instrumentId = xml.attributes().value(u"id").toString(), xml.skipCurrentElement();
+        else if (xml.name() == u"lyric") {
+            bool ok = false;
+            note.lyricVerse = std::max(1, xml.attributes().value(u"number").toInt(&ok));
+            while (xml.readNextStartElement()) {
+                if (xml.name() == u"text") note.lyric = xml.readElementText();
+                else xml.skipCurrentElement();
+            }
+        }
         else if (xml.name() == u"dynamics") note.velocity = std::clamp(xml.readElementText().toInt(), 1, 127);
         else if (xml.name() == u"tie") {
             const auto type = xml.attributes().value(u"type");
@@ -451,12 +475,26 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
             }
             const music::Tick noteStart = parsed.chord ? state.previousStart : state.tick;
             if (!parsed.rest && !parsed.grace && (!parsed.step.isEmpty() || parsed.unpitched)) {
-                track.notes.push_back({noteStart, duration,
-                                       std::clamp((parsed.octave + 1) * 12 + stepToPitch(parsed.step) + parsed.alter, 0, 127),
-                                       parsed.velocity, track.channel, track.program, parsed.voice, parsed.staff,
-                                       false, parsed.grace, parsed.tieStart, parsed.tieStop, parsed.staccato,
-                                       parsed.accent, parsed.tenuto, false, parsed.marcato, parsed.tremolo,
-                                       static_cast<quint64>(track.notes.size() + 1), 0});
+                music::NoteEvent event;
+                event.start = noteStart;
+                event.duration = duration;
+                event.pitch = std::clamp((parsed.octave + 1) * 12 + stepToPitch(parsed.step) + parsed.alter, 0, 127);
+                event.velocity = parsed.velocity;
+                event.channel = track.channel;
+                event.program = track.program;
+                event.voice = parsed.voice;
+                event.staff = parsed.staff;
+                event.tieStart = parsed.tieStart;
+                event.tieStop = parsed.tieStop;
+                event.staccato = parsed.staccato;
+                event.accent = parsed.accent;
+                event.tenuto = parsed.tenuto;
+                event.marcato = parsed.marcato;
+                event.tremolo = parsed.tremolo;
+                event.sequence = static_cast<quint64>(track.notes.size() + 1);
+                event.writtenPitch = {stepToIndex(parsed.step), parsed.alter, parsed.octave, event.pitch};
+                event.hasWrittenPitch = true;
+                track.notes.push_back(event);
                 state.previousStart = noteStart;
             }
             if (!parsed.chord && !parsed.grace) state.tick += duration;
@@ -467,6 +505,9 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
                 const auto info = instruments.value(noteInstrument);
                 track.instrumentChanges.push_back({noteStart, info.channel, info.program, noteInstrument});
             }
+            if (!parsed.lyric.isEmpty()) track.lyrics.push_back({noteStart, parsed.lyric,
+                                                                  parsed.lyricVerse,
+                                                                  static_cast<quint64>(track.lyrics.size())});
             measureEnd = std::max(measureEnd, state.tick);
         } else if (xml.name() == u"forward") {
             while (xml.readNextStartElement()) {
@@ -584,9 +625,12 @@ ReadResult MusicXmlReader::read(const QString& path) const
     quint64 nextNoteId = 1;
     for (auto& track : document->tracks()) {
         for (auto& note : track.notes) note.noteId = nextNoteId++;
+        for (const auto& key : track.keySignatures) document->keySignatures().push_back(key);
+        for (const auto& lyric : track.lyrics) document->lyrics().push_back(lyric);
     }
     document->rebuildMeasureGrid();
     document->rebuildTempoMap();
+    music::MusicAnalyzer().analyze(*document);
     if (!document->isValid()) return {nullptr, QStringLiteral("MusicXML 未包含可播放音符")};
     return {std::move(document), {}};
 }

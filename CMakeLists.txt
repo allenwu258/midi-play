@@ -17,6 +17,8 @@ qt_add_executable(midi_play
     src/app/playerapplicationservice.cpp
     src/domain/music/musicdocument.h
     src/domain/music/musicdocument.cpp
+    src/domain/music/musicanalysis.h
+    src/domain/music/musicanalysis.cpp
     src/domain/music/musicreadresult.h
     src/domain/music/scoreplaybackdom.h
     src/domain/music/scoreplaybackdom.cpp

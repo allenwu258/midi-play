@@ -8,6 +8,32 @@ namespace midi_play::music {
 
 using Tick = std::int64_t;
 
+struct RawTime {
+    Tick tick = 0;
+    qint64 microseconds = 0;
+};
+
+struct GridTime {
+    Tick tick = 0;
+    int measureIndex = -1;
+    double beat = 0.0;
+};
+
+struct WrittenPitch {
+    int step = 0; // C=0 ... B=6
+    int alter = 0;
+    int octave = 4;
+    int midiPitch = 60;
+};
+
+struct KeyContext {
+    int fifths = 0;
+    QString mode = QStringLiteral("major");
+
+    int tonicPitchClass() const;
+    int degreeFor(const WrittenPitch& pitch) const;
+};
+
 struct TempoChange {
     Tick tick = 0;
     double bpm = 120.0;
@@ -35,6 +61,19 @@ struct NoteEvent {
     bool tremolo = false;
     quint64 sequence = 0;
     quint64 noteId = 0;
+    RawTime rawStart;
+    RawTime rawEnd;
+    GridTime gridStart;
+    GridTime gridEnd;
+    WrittenPitch writtenPitch;
+    int scaleDegree = 0;
+    int accidental = 0;
+    int measureIndex = -1;
+    double beat = 0.0;
+    quint64 chordId = 0;
+    quint64 tieGroupId = 0;
+    int lane = -1;
+    bool hasWrittenPitch = false;
 };
 
 struct Measure {
@@ -125,6 +164,47 @@ struct HairpinChange {
     bool crescendo = true;
 };
 
+struct ChordGroup {
+    quint64 id = 0;
+    Tick start = 0;
+    Tick duration = 0;
+    int voice = 1;
+    int staff = 1;
+    QVector<quint64> noteIds;
+};
+
+struct HoldNote {
+    quint64 noteId = 0;
+    Tick start = 0;
+    Tick end = 0;
+    int lane = -1;
+};
+
+struct TieGroup {
+    quint64 id = 0;
+    QVector<quint64> noteIds;
+};
+
+struct DrumMapEntry {
+    int pitch = 0;
+    QString name;
+    int lane = 0;
+    int staffLine = 0;
+};
+
+struct MarkerEvent {
+    Tick tick = 0;
+    QString text;
+    quint64 sequence = 0;
+};
+
+struct LyricEvent {
+    Tick tick = 0;
+    QString text;
+    int verse = 1;
+    quint64 sequence = 0;
+};
+
 struct PlaybackSegment {
     Tick sourceStart = 0;
     Tick sourceEnd = 0;
@@ -171,6 +251,12 @@ struct Track {
     QVector<KeySignatureChange> keySignatures;
     QVector<ClefChange> clefs;
     QVector<HairpinChange> hairpins;
+    QVector<ChordGroup> chords;
+    QVector<HoldNote> holds;
+    QVector<TieGroup> ties;
+    QVector<DrumMapEntry> drumMap;
+    QVector<MarkerEvent> markers;
+    QVector<LyricEvent> lyrics;
 };
 
 class MusicDocument {
@@ -183,6 +269,14 @@ public:
     const QVector<Measure>& measures() const { return m_measures; }
     QVector<Measure>& measures() { return m_measures; }
     void rebuildMeasureGrid();
+    const QVector<KeySignatureChange>& keySignatures() const { return m_keySignatures; }
+    QVector<KeySignatureChange>& keySignatures() { return m_keySignatures; }
+    const QVector<MarkerEvent>& markers() const { return m_markers; }
+    QVector<MarkerEvent>& markers() { return m_markers; }
+    const QVector<LyricEvent>& lyrics() const { return m_lyrics; }
+    QVector<LyricEvent>& lyrics() { return m_lyrics; }
+    const KeyContext& keyContext() const { return m_keyContext; }
+    void setKeyContext(const KeyContext& value) { m_keyContext = value; }
     const QVector<TempoChange>& tempos() const { return m_tempos; }
     QVector<TempoChange>& tempos() { m_tempoMap.clear(); return m_tempos; }
     void rebuildTempoMap() const;
@@ -203,6 +297,10 @@ private:
     Tick m_duration = 0;
     QString m_title;
     QVector<Measure> m_measures;
+    QVector<KeySignatureChange> m_keySignatures;
+    QVector<MarkerEvent> m_markers;
+    QVector<LyricEvent> m_lyrics;
+    KeyContext m_keyContext;
     struct TempoSegment {
         Tick start = 0;
         Tick end = 0;

@@ -5,6 +5,36 @@
 
 namespace midi_play::music {
 
+int KeyContext::tonicPitchClass() const
+{
+    const int normalizedFifths = std::clamp(fifths, -7, 7);
+    int tonic = (normalizedFifths * 7) % 12;
+    if (tonic < 0) tonic += 12;
+    if (mode.compare(QStringLiteral("minor"), Qt::CaseInsensitive) == 0) tonic = (tonic + 9) % 12;
+    return tonic;
+}
+
+int KeyContext::degreeFor(const WrittenPitch& pitch) const
+{
+    static constexpr int majorScale[] = {0, 2, 4, 5, 7, 9, 11};
+    static constexpr int minorScale[] = {0, 2, 3, 5, 7, 8, 10};
+    const auto& scale = mode.compare(QStringLiteral("minor"), Qt::CaseInsensitive) == 0
+        ? minorScale : majorScale;
+    const int tonic = tonicPitchClass();
+    int bestDegree = 1;
+    int bestDistance = 12;
+    for (int degree = 0; degree < 7; ++degree) {
+        const int candidate = (tonic + scale[degree]) % 12;
+        const int distance = std::min((pitch.midiPitch - candidate + 12) % 12,
+                                      (candidate - pitch.midiPitch + 12) % 12);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestDegree = degree + 1;
+        }
+    }
+    return bestDegree;
+}
+
 RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
 {
     RepeatList list;

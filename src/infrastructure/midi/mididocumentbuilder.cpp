@@ -1,4 +1,5 @@
 #include "mididocumentbuilder.h"
+#include "domain/music/musicanalysis.h"
 
 #include "midinormalizer.h"
 
@@ -9,19 +10,25 @@ namespace {
 
 void appendMeta(const MidiNormalizedFile& source, music::MusicDocument& document)
 {
-    if (document.tracks().isEmpty()) return;
     for (const auto& event : source.globalEvents) {
         if (event.kind != MidiMessageKind::Meta) continue;
         if (event.metaType == 0x58 && event.payload.size() >= 2) {
             const int beats = static_cast<unsigned char>(event.payload.at(0));
             const int denominatorPower = static_cast<unsigned char>(event.payload.at(1));
-            document.tracks().front().timeSignatures.push_back({event.tick, beats,
-                1 << std::clamp(denominatorPower, 0, 6)});
+            const music::TimeSignatureChange change {event.tick, beats,
+                                                      1 << std::clamp(denominatorPower, 0, 6)};
+            if (!document.tracks().isEmpty()) document.tracks().front().timeSignatures.push_back(change);
         } else if (event.metaType == 0x59 && event.payload.size() >= 2) {
             const int fifths = static_cast<qint8>(event.payload.at(0));
             const int mode = static_cast<unsigned char>(event.payload.at(1));
-            document.tracks().front().keySignatures.push_back({event.tick, fifths,
-                mode == 0 ? QStringLiteral("major") : QStringLiteral("minor")});
+            const music::KeySignatureChange change {event.tick, fifths,
+                mode == 0 ? QStringLiteral("major") : QStringLiteral("minor")};
+            document.keySignatures().push_back(change);
+            if (!document.tracks().isEmpty()) document.tracks().front().keySignatures.push_back(change);
+        } else if ((event.metaType == 0x06 || event.metaType == 0x05) && !event.payload.isEmpty()) {
+            const QString text = QString::fromUtf8(event.payload.constData(), event.payload.size());
+            if (event.metaType == 0x06) document.markers().push_back({event.tick, text, event.sequence});
+            else document.lyrics().push_back({event.tick, text, 1, event.sequence});
         }
     }
 }
@@ -101,6 +108,7 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
     document->setDuration(std::max<music::Tick>(1, source.duration));
     document->rebuildMeasureGrid();
     document->rebuildTempoMap();
+    music::MusicAnalyzer().analyze(*document);
     if (!document->isValid()) return {nullptr, QStringLiteral("MIDI 未包含可播放音符")};
     return {std::move(document), {}};
 }

@@ -11,6 +11,7 @@
 - MusicXML `score-timewise` 自动转换为统一 `score-partwise` 语义入口。
 - MusicXML 每个 staff/voice 独立维护游标，并使用跨小节余数累积降低 divisions 换算漂移。
 - `MusicDocument` 提供全局 MeasureGrid、预计算 TempoMap 和稳定 NoteId。
+- 导入完成后由 `MusicAnalyzer` 生成 WrittenPitch、调内 degree、Raw/Grid 双时间、和弦组、延音/连音组、鼓组映射、量化网格、调性置信度、三连音候选、swing 比例和音游 lane。
 - 默认 `midiSound-2025-1-14.sf2` 音源。
 - FluidSynth SF2 动态适配器，不把 FluidSynth 类型泄漏到领域层。
 - 播放、暂停、停止、进度拖动和旧音符 flush。
