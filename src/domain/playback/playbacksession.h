@@ -45,6 +45,7 @@ private:
     void emitPosition();
     void flushActiveNotes();
     void rebuildAudioState(qint64 targetUs);
+    void advanceEventGeneration();
 
     std::shared_ptr<const music::MusicDocument> m_document;
     std::unique_ptr<IPlaybackAudioService> m_audioService;
@@ -55,6 +56,7 @@ private:
     qint64 m_clockBaseUs = 0;
     PlaybackClock m_clock;
     PlaybackEventScheduler m_scheduler;
+    quint64 m_eventGeneration = 1;
 };
 
 } // namespace midi_play::playback

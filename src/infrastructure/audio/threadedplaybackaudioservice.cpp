@@ -11,6 +11,7 @@ public:
         : m_service(std::move(service)) {}
 
     std::unique_ptr<playback::IPlaybackAudioService> m_service;
+    quint64 m_eventGeneration = 0;
 };
 
 ThreadedPlaybackAudioService::ThreadedPlaybackAudioService(std::unique_ptr<playback::IPlaybackAudioService> service)
@@ -139,23 +140,40 @@ bool ThreadedPlaybackAudioService::flush()
     return result;
 }
 
+void ThreadedPlaybackAudioService::setEventGeneration(quint64 generation)
+{
+    m_submissionGeneration.store(generation, std::memory_order_release);
+    QMetaObject::invokeMethod(m_worker.get(), [this, generation] {
+        m_worker->m_eventGeneration = generation;
+        m_worker->m_service->setEventGeneration(generation);
+    }, Qt::BlockingQueuedConnection);
+}
+
 void ThreadedPlaybackAudioService::submit(const playback::PlaybackEvent& event)
 {
-    QMetaObject::invokeMethod(m_worker.get(), [this, event] { m_worker->m_service->submit(event); }, Qt::QueuedConnection);
+    submitBatch(QVector<playback::PlaybackEvent> {event}, m_submissionGeneration.load(std::memory_order_acquire));
 }
 
 void ThreadedPlaybackAudioService::submitOff(const playback::PlaybackEvent& event)
 {
-    QMetaObject::invokeMethod(m_worker.get(), [this, event] { m_worker->m_service->submitOff(event); }, Qt::QueuedConnection);
+    const quint64 generation = m_submissionGeneration.load(std::memory_order_acquire);
+    QMetaObject::invokeMethod(m_worker.get(), [this, event, generation] {
+        if (generation != m_worker->m_eventGeneration) return;
+        m_worker->m_service->submitOff(event);
+    }, Qt::QueuedConnection);
 }
 
 void ThreadedPlaybackAudioService::submitBatch(const QVector<playback::PlaybackEvent>& events)
 {
-    if (events.isEmpty()) {
-        return;
-    }
-    QMetaObject::invokeMethod(m_worker.get(), [this, events] {
-        m_worker->m_service->submitBatch(events);
+    submitBatch(events, m_submissionGeneration.load(std::memory_order_acquire));
+}
+
+void ThreadedPlaybackAudioService::submitBatch(const QVector<playback::PlaybackEvent>& events, quint64 generation)
+{
+    if (events.isEmpty()) return;
+    QMetaObject::invokeMethod(m_worker.get(), [this, events, generation] {
+        if (generation != m_worker->m_eventGeneration) return;
+        m_worker->m_service->submitBatch(events, generation);
     }, Qt::QueuedConnection);
 }
 

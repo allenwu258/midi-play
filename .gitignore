@@ -52,3 +52,6 @@ Thumbs.db
 
 # User-specific settings
 *.user
+
+# Local architecture and analysis documents
+/documents/

@@ -42,6 +42,15 @@ public:
             submit(event);
         }
     }
+    virtual void setEventGeneration(quint64 generation)
+    {
+        Q_UNUSED(generation)
+    }
+    virtual void submitBatch(const QVector<PlaybackEvent>& events, quint64 generation)
+    {
+        Q_UNUSED(generation)
+        submitBatch(events);
+    }
     virtual bool updateMainStream(const QString& trackId, const PlaybackEventMap& events)
     {
         Q_UNUSED(trackId)

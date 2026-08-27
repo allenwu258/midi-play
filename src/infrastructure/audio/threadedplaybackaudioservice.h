@@ -3,6 +3,7 @@
 #include "domain/playback/iplaybackaudioservice.h"
 
 #include <QThread>
+#include <atomic>
 #include <memory>
 
 namespace midi_play::audio {
@@ -25,15 +26,18 @@ public:
     bool supportsTimedEvents() const override;
     bool supportsPerNoteExpression() const override;
     bool flush() override;
+    void setEventGeneration(quint64 generation) override;
     void submit(const playback::PlaybackEvent& event) override;
     void submitOff(const playback::PlaybackEvent& event) override;
     void submitBatch(const QVector<playback::PlaybackEvent>& events) override;
+    void submitBatch(const QVector<playback::PlaybackEvent>& events, quint64 generation) override;
 
 private:
     class Worker;
     std::unique_ptr<playback::IPlaybackAudioService> m_service;
     std::unique_ptr<Worker> m_worker;
     QThread m_thread;
+    std::atomic<quint64> m_submissionGeneration {0};
 };
 
 } // namespace midi_play::audio

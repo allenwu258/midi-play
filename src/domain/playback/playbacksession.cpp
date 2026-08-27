@@ -14,6 +14,7 @@ PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> doc
     m_timer->setTimerType(Qt::PreciseTimer);
     connect(m_timer, &QTimer::timeout, this, &PlaybackSession::onTimer);
     m_scheduler.setTracks(&m_playbackModel.tracks());
+    m_audioService->setEventGeneration(m_eventGeneration);
 }
 
 PlaybackSession::~PlaybackSession() = default;
@@ -78,6 +79,7 @@ void PlaybackSession::stop()
         return;
     }
     m_timer->stop();
+    advanceEventGeneration();
     flushActiveNotes();
     m_audioService->stop();
     m_positionUs = 0;
@@ -97,6 +99,7 @@ void PlaybackSession::seek(qint64 microseconds)
     if (resume) {
         m_timer->stop();
     }
+    advanceEventGeneration();
     flushActiveNotes();
     m_audioService->seek(microseconds);
     m_positionUs = std::clamp<qint64>(microseconds, 0, durationMicroseconds());
@@ -121,7 +124,7 @@ void PlaybackSession::onTimer()
     const qint64 dispatchUntilUs = m_audioService->supportsTimedEvents() ? now + 30'000 : now;
     const auto events = m_scheduler.collectUntil(dispatchUntilUs);
     if (!events.isEmpty()) {
-        m_audioService->submitBatch(events);
+        m_audioService->submitBatch(events, m_eventGeneration);
     }
     if (m_positionUs >= durationMicroseconds()) {
         stop();
@@ -261,13 +264,19 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
         }
     }
     if (!replayEvents.isEmpty()) {
-        m_audioService->submitBatch(replayEvents);
+        m_audioService->submitBatch(replayEvents, m_eventGeneration);
     }
 }
 
 void PlaybackSession::flushActiveNotes()
 {
     m_audioService->flush();
+}
+
+void PlaybackSession::advanceEventGeneration()
+{
+    ++m_eventGeneration;
+    m_audioService->setEventGeneration(m_eventGeneration);
 }
 
 void PlaybackSession::setState(State state)
