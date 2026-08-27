@@ -10,6 +10,18 @@ void buildStateSnapshots(PlaybackData& data)
 {
     QVector<ChannelState> channels(16);
     QHash<int, QVector<ActiveNoteState>> active;
+    QVector<QVector<qint64>> sustainReleaseTimes(16);
+    QVector<QVector<qint64>> sostenutoReleaseTimes(16);
+    for (const auto& event : data.events) {
+        if (event.kind == PlaybackEventKind::ControlChange
+            && (event.controller == 64 || event.controller == 66) && event.value < 64
+            && event.channel >= 0 && event.channel < sustainReleaseTimes.size()) {
+            auto& releaseTimes = event.controller == 64
+                ? sustainReleaseTimes[event.channel]
+                : sostenutoReleaseTimes[event.channel];
+            releaseTimes.push_back(event.timestampUs);
+        }
+    }
     qint64 nextSnapshotUs = 0;
     int processedEvents = 0;
     constexpr qint64 snapshotIntervalUs = 1'000'000;
@@ -44,6 +56,38 @@ void buildStateSnapshots(PlaybackData& data)
             } else if (event.controller == 32) {
                 channels[channel].bankLsb = std::clamp(event.value, 0, 127);
             }
+            if (event.controller == 64 && event.value < 64) {
+                auto activeIt = active.begin();
+                while (activeIt != active.end()) {
+                    auto& notes = activeIt.value();
+                    for (auto& note : notes) note.sustainLatched = false;
+                    notes.erase(std::remove_if(notes.begin(), notes.end(), [](const auto& note) {
+                        return note.keyReleased && !note.sostenutoLatched;
+                    }), notes.end());
+                    if (notes.isEmpty()) activeIt = active.erase(activeIt);
+                    else ++activeIt;
+                }
+            }
+            if (event.controller == 66 && event.value >= 64) {
+                for (auto activeIt = active.begin(); activeIt != active.end(); ++activeIt) {
+                    for (auto& note : activeIt.value()) {
+                        if (!note.keyReleased) note.sostenutoCaptured = true;
+                    }
+                }
+            } else if (event.controller == 66 && event.value < 64) {
+                auto activeIt = active.begin();
+                while (activeIt != active.end()) {
+                    auto& notes = activeIt.value();
+                    for (auto& note : notes) {
+                        if (note.sostenutoCaptured) note.sostenutoLatched = false;
+                    }
+                    notes.erase(std::remove_if(notes.begin(), notes.end(), [](const auto& note) {
+                        return note.keyReleased && !note.sustainLatched;
+                    }), notes.end());
+                    if (notes.isEmpty()) activeIt = active.erase(activeIt);
+                    else ++activeIt;
+                }
+            }
         } else if (event.kind == PlaybackEventKind::PitchBend) {
             channels[channel].initialized = true;
             channels[channel].pitchBend = event.value;
@@ -56,8 +100,30 @@ void buildStateSnapshots(PlaybackData& data)
         } else if (event.kind == PlaybackEventKind::NoteOff) {
             auto it = active.find(channel * 128 + event.pitch);
             if (it != active.end() && !it->isEmpty()) {
-                it->removeLast();
-                if (it->isEmpty()) active.erase(it);
+                auto& notes = it.value();
+                auto& note = notes.last();
+                const bool sustainDown = channels[channel].controllers.value(64, 0) >= 64;
+                const bool sostenutoDown = channels[channel].controllers.value(66, 0) >= 64
+                    && note.sostenutoCaptured;
+                if (sustainDown || sostenutoDown) {
+                    note.keyReleased = true;
+                    note.sustainLatched = sustainDown;
+                    note.sostenutoLatched = sostenutoDown;
+                    note.endTimestampUs = event.timestampUs;
+                    if (sustainDown) {
+                        const auto& releases = sustainReleaseTimes[channel];
+                        const auto releaseIt = std::lower_bound(releases.cbegin(), releases.cend(), event.timestampUs);
+                        if (releaseIt != releases.cend()) note.endTimestampUs = qMax(note.endTimestampUs, *releaseIt);
+                    }
+                    if (sostenutoDown) {
+                        const auto& releases = sostenutoReleaseTimes[channel];
+                        const auto releaseIt = std::lower_bound(releases.cbegin(), releases.cend(), event.timestampUs);
+                        if (releaseIt != releases.cend()) note.endTimestampUs = qMax(note.endTimestampUs, *releaseIt);
+                    }
+                } else {
+                    notes.removeLast();
+                    if (notes.isEmpty()) active.erase(it);
+                }
             }
         }
         ++processedEvents;

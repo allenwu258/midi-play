@@ -103,6 +103,7 @@ struct PlaybackEvent {
     // Keeping both bytes on the event makes seek/state replay lossless.
     int bankMsb = 0;
     int bankLsb = 0;
+    bool keyReleased = false;
 
     bool isNoteOn() const { return kind == PlaybackEventKind::NoteOn; }
     bool isNoteOff() const { return kind == PlaybackEventKind::NoteOff; }
@@ -191,6 +192,10 @@ struct ActiveNoteState {
     int pitch = 60;
     int velocity = 90;
     qint64 endTimestampUs = 0;
+    bool keyReleased = false;
+    bool sostenutoCaptured = false;
+    bool sustainLatched = false;
+    bool sostenutoLatched = false;
 };
 
 struct PlaybackStateSnapshot {

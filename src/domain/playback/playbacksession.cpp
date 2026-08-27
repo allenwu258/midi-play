@@ -204,6 +204,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
                 resumed.channel = active.channel;
                 resumed.pitch = active.pitch;
                 resumed.velocity = active.velocity;
+                resumed.keyReleased = active.keyReleased;
                 resumed.kind = PlaybackEventKind::NoteOn;
                 activeNotes[active.channel * 128 + active.pitch].push_back(resumed);
             }
@@ -236,6 +237,12 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             resumed.timestampUs = targetUs;
             resumed.durationUs = endUs - targetUs;
             replayEvents.push_back(resumed);
+            if (active.keyReleased) {
+                PlaybackEvent released = resumed;
+                released.durationUs = 0;
+                released.kind = PlaybackEventKind::NoteOff;
+                replayEvents.push_back(released);
+            }
         }
     }
     if (!replayEvents.isEmpty()) {
