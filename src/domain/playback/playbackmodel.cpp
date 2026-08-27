@@ -115,6 +115,9 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
         } else if (event.kind == PlaybackEventKind::ChannelPressure) {
             channels[channel].initialized = true;
             channels[channel].channelPressure = event.value;
+        } else if (event.kind == PlaybackEventKind::PolyPressure) {
+            channels[channel].initialized = true;
+            channels[channel].polyPressure.insert(event.pitch, event.value);
         } else if (event.kind == PlaybackEventKind::NoteOn) {
             active[channel * 128 + event.pitch].push_back({channel, event.pitch, event.velocity,
                                                             event.timestampUs + event.durationUs});
@@ -189,6 +192,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 event.pitch = note->pitch;
                 event.velocity = note->velocity;
                 event.program = note->program;
+                event.sequence = note->sequence;
                 event.tieStart = note->tieStart;
                 event.tieStop = note->tieStop;
                 event.staccato = note->staccato;
@@ -210,6 +214,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 program.program = change.program;
                 program.bankMsb = change.bankMsb;
                 program.bankLsb = change.bankLsb;
+                program.sequence = change.sequence;
                 program.kind = PlaybackEventKind::ProgramChange;
                 data.events.push_back(program);
             }
@@ -221,6 +226,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 event.channel = change.channel;
                 event.controller = change.controller;
                 event.value = change.value;
+                event.sequence = change.sequence;
                 event.kind = PlaybackEventKind::ControlChange;
                 data.events.push_back(event);
             }
@@ -231,6 +237,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 event.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
                 event.channel = change.channel;
                 event.value = change.value;
+                event.sequence = change.sequence;
                 event.kind = PlaybackEventKind::PitchBend;
                 data.events.push_back(event);
             }
@@ -241,7 +248,20 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 event.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
                 event.channel = change.channel;
                 event.value = change.value;
+                event.sequence = change.sequence;
                 event.kind = PlaybackEventKind::ChannelPressure;
+                data.events.push_back(event);
+            }
+            for (const auto& change : track.polyPressureChanges) {
+                if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
+                const music::Tick outputTick = segment.outputStart + (change.tick - segment.sourceStart);
+                PlaybackEvent event;
+                event.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
+                event.channel = change.channel;
+                event.pitch = change.pitch;
+                event.value = change.value;
+                event.sequence = change.sequence;
+                event.kind = PlaybackEventKind::PolyPressure;
                 data.events.push_back(event);
             }
         }

@@ -5,14 +5,16 @@
 ## 已实现
 
 - MusicXML (`.xml` / `.musicxml`) 流式读取。
-- 标准 MIDI 文件 reader（format 0/1/2 的基础 note/tempo/program 语义）。
+- 分层标准 MIDI 文件 reader（`.mid` / `.midi` / `.kar`；format 0/1/2、PPQN/SMPTE、Running Status、Meta/SysEx、按 port/channel 拆分、踏板和控制器归一化）。
 - `score-partwise` 的 part、measure、tempo、note、rest、chord、grace、cue、backup、forward 基础语义。
 - 统一 tick 时间线、tempo map 和 tick/time 双向转换。
 - 默认 `midiSound-2025-1-14.sf2` 音源。
 - FluidSynth SF2 动态适配器，不把 FluidSynth 类型泄漏到领域层。
 - 播放、暂停、停止、进度拖动和旧音符 flush。
 - Qt Widgets UI，解析在 QtConcurrent 工作线程执行。
-- `--audio-test <sf2>` 和 MusicXML 路径命令行解析 smoke test。
+- `--audio-test <sf2>` 以及 MusicXML/MIDI 路径命令行解析 smoke test。
+
+MIDI format 2 的各个独立序列会按源轨道顺序串联到统一播放时间线；format 0/1 则保持轨道并行。SMPTE division 使用固定帧率换算，tempo meta-event 不会覆盖固定 tick 速率。
 
 ## 构建
 
@@ -39,11 +41,14 @@ CMake 会在可用时将默认 SF2 和 vcpkg 的 FluidSynth DLL 复制到输出�
 build/windows-msvc-debug/Debug/midi_play.exe
 ```
 
-也可以直接对 MusicXML 做无界面解析 smoke test：
+也可以直接对 MusicXML 或 MIDI 做无界面解析 smoke test：
 
 ```powershell
 build/windows-msvc-debug/Debug/midi_play.exe `
   'C:/Users/Vyas/Downloads/midi-files/Canon in D_211QUeDwFsn/211QUeDwFsn.musicxml'
+
+build/windows-msvc-debug/Debug/midi_play.exe `
+  'C:/Users/Vyas/Downloads/midi-files/Canon in D_211QUeDwFsn/3cdfa9914c7b42928694349744b8800b.mid'
 ```
 
 测试 SF2 加载和单音输出：

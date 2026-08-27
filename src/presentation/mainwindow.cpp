@@ -24,14 +24,14 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
     auto* central = new QWidget(this);
     auto* root = new QVBoxLayout(central);
     auto* files = new QFormLayout();
-    m_fileLabel = new QLabel(QStringLiteral("未加载 MusicXML"));
+    m_fileLabel = new QLabel(QStringLiteral("未加载音乐文件"));
     m_soundFontLabel = new QLabel(QStringLiteral("未加载 SF2"));
     files->addRow(QStringLiteral("曲目"), m_fileLabel);
     files->addRow(QStringLiteral("音源"), m_soundFontLabel);
     root->addLayout(files);
 
     auto* fileButtons = new QHBoxLayout();
-    auto* openMusic = new QPushButton(QStringLiteral("打开 MusicXML"));
+    auto* openMusic = new QPushButton(QStringLiteral("打开音乐文件"));
     auto* openSf2 = new QPushButton(QStringLiteral("加载 SF2"));
     fileButtons->addWidget(openMusic);
     fileButtons->addWidget(openSf2);
@@ -57,7 +57,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
     root->addWidget(m_statusLabel);
     setCentralWidget(central);
 
-    connect(openMusic, &QPushButton::clicked, this, &MainWindow::openMusicXml);
+    connect(openMusic, &QPushButton::clicked, this, &MainWindow::openMusicFile);
     connect(openSf2, &QPushButton::clicked, this, &MainWindow::openSoundFont);
     connect(m_playButton, &QPushButton::clicked, m_service, &app::PlayerApplicationService::play);
     connect(m_pauseButton, &QPushButton::clicked, m_service, &app::PlayerApplicationService::pause);
@@ -86,11 +86,11 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
     });
 }
 
-void MainWindow::openMusicXml()
+void MainWindow::openMusicFile()
 {
-    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("打开 MusicXML"), {},
-                                                       QStringLiteral("MusicXML (*.xml *.musicxml);;所有文件 (*.*)"));
-    if (!path.isEmpty()) m_service->openMusicXml(path);
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("打开音乐文件"), {},
+                                                       QStringLiteral("音乐文件 (*.xml *.musicxml *.mid *.midi *.kar);;所有文件 (*.*)"));
+    if (!path.isEmpty()) m_service->openFile(path);
 }
 
 void MainWindow::openSoundFont()

@@ -47,6 +47,7 @@ enum class PlaybackEventKind {
     ControlChange,
     PitchBend,
     ChannelPressure,
+    PolyPressure,
     NoteExpression,
     AllNotesOff
 };
@@ -131,6 +132,7 @@ inline int playbackEventPriority(const PlaybackEvent& event)
     if (event.kind == PlaybackEventKind::ControlChange
         || event.kind == PlaybackEventKind::PitchBend
         || event.kind == PlaybackEventKind::ChannelPressure
+        || event.kind == PlaybackEventKind::PolyPressure
         || event.kind == PlaybackEventKind::NoteExpression) return 3;
     return 4;
 }
@@ -195,6 +197,7 @@ struct ChannelState {
     int bankLsb = 0;
     int pitchBend = 8192;
     int channelPressure = 0;
+    QHash<int, int> polyPressure;
     int rpnMsb = 127;
     int rpnLsb = 127;
     int nrpnMsb = 127;

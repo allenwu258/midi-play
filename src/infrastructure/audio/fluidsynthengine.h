@@ -36,6 +36,7 @@ public:
     void controlChange(int channel, int controller, int value);
     void pitchBend(int channel, int value);
     void channelPressure(int channel, int value);
+    void polyPressure(int channel, int pitch, int value);
 
 private:
     bool resolveSymbols(QString* error);
@@ -63,6 +64,7 @@ private:
     using Cc = int (*)(fluid_synth_t*, int, int, int);
     using PitchBend = int (*)(fluid_synth_t*, int, int);
     using ChannelPressure = int (*)(fluid_synth_t*, int, int);
+    using KeyPressure = int (*)(fluid_synth_t*, int, int, int);
     using SystemReset = int (*)(fluid_synth_t*);
 
     NewSettings m_newSettings = nullptr;
@@ -80,6 +82,7 @@ private:
     Cc m_cc = nullptr;
     PitchBend m_pitchBend = nullptr;
     ChannelPressure m_channelPressure = nullptr;
+    KeyPressure m_keyPressure = nullptr;
     SystemReset m_systemReset = nullptr;
 };
 

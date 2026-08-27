@@ -17,6 +17,7 @@ qt_add_executable(midi_play
     src/app/playerapplicationservice.cpp
     src/domain/music/musicdocument.h
     src/domain/music/musicdocument.cpp
+    src/domain/music/musicreadresult.h
     src/domain/music/scoreplaybackdom.h
     src/domain/music/scoreplaybackdom.cpp
     src/domain/playback/playbacktypes.h
@@ -55,8 +56,17 @@ qt_add_executable(midi_play
     src/infrastructure/readers/musicreaderregistry.cpp
     src/infrastructure/readers/musicxmlreaderadapter.h
     src/infrastructure/readers/musicxmlreaderadapter.cpp
+    src/infrastructure/readers/midireaderadapter.h
+    src/infrastructure/readers/midireaderadapter.cpp
     src/infrastructure/midi/midireader.h
     src/infrastructure/midi/midireader.cpp
+    src/infrastructure/midi/miditypes.h
+    src/infrastructure/midi/midifileparser.h
+    src/infrastructure/midi/midifileparser.cpp
+    src/infrastructure/midi/midinormalizer.h
+    src/infrastructure/midi/midinormalizer.cpp
+    src/infrastructure/midi/mididocumentbuilder.h
+    src/infrastructure/midi/mididocumentbuilder.cpp
     src/presentation/mainwindow.h
     src/presentation/mainwindow.cpp
 )

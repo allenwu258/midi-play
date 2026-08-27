@@ -8,7 +8,7 @@ bool MusicXmlReaderAdapter::canRead(const QString& suffix) const
         || suffix.compare(QStringLiteral("musicxml"), Qt::CaseInsensitive) == 0;
 }
 
-musicxml::ReadResult MusicXmlReaderAdapter::read(const QString& path) const
+music::ReadResult MusicXmlReaderAdapter::read(const QString& path) const
 {
     return m_reader.read(path);
 }

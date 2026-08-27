@@ -3,7 +3,8 @@
 #include "infrastructure/audio/fluidsynthengine.h"
 #include "infrastructure/audio/fluidsynthaudioservice.h"
 #include "infrastructure/audio/threadedplaybackaudioservice.h"
-#include "infrastructure/musicxml/musicxmlreader.h"
+#include "infrastructure/readers/musicxmlreaderadapter.h"
+#include "infrastructure/readers/midireaderadapter.h"
 
 #include <QFileInfo>
 #include <QtConcurrent>
@@ -13,13 +14,26 @@ namespace midi_play::app {
 PlayerApplicationService::PlayerApplicationService(QObject* parent)
     : QObject(parent)
 {
+    m_readerRegistry.registerReader(std::make_unique<readers::MusicXmlReaderAdapter>());
+    m_readerRegistry.registerReader(std::make_unique<readers::MidiReaderAdapter>());
 }
 
 void PlayerApplicationService::openMusicXml(const QString& path)
 {
+    openFile(path);
+}
+
+void PlayerApplicationService::openFile(const QString& path)
+{
+    const auto suffix = QFileInfo(path).suffix();
+    const auto* reader = m_readerRegistry.find(suffix);
+    if (!reader) {
+        emit errorOccurred(QStringLiteral("不支持的音乐文件类型: %1").arg(suffix));
+        return;
+    }
     emit busyChanged(true);
-    auto watcher = new QFutureWatcher<musicxml::ReadResult>(this);
-    connect(watcher, &QFutureWatcher<musicxml::ReadResult>::finished, this, [this, watcher, path] {
+    auto watcher = new QFutureWatcher<music::ReadResult>(this);
+    connect(watcher, &QFutureWatcher<music::ReadResult>::finished, this, [this, watcher, path] {
         const auto result = watcher->result();
         watcher->deleteLater();
         emit busyChanged(false);
@@ -44,7 +58,7 @@ void PlayerApplicationService::openMusicXml(const QString& path)
         emit documentLoaded(result.document->title().isEmpty() ? QFileInfo(path).fileName() : result.document->title(),
                             session()->durationMicroseconds());
     });
-    watcher->setFuture(QtConcurrent::run([path] { return musicxml::MusicXmlReader().read(path); }));
+    watcher->setFuture(QtConcurrent::run([reader, path] { return reader->read(path); }));
 }
 
 void PlayerApplicationService::loadSoundFont(const QString& path)

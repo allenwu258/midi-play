@@ -1,17 +1,17 @@
 #pragma once
 
 #include "imusicreader.h"
-#include "infrastructure/musicxml/musicxmlreader.h"
+#include "infrastructure/midi/midireader.h"
 
 namespace midi_play::readers {
 
-class MusicXmlReaderAdapter final : public IMusicReader {
+class MidiReaderAdapter final : public IMusicReader {
 public:
     bool canRead(const QString& suffix) const override;
     music::ReadResult read(const QString& path) const override;
 
 private:
-    midi_play::musicxml::MusicXmlReader m_reader;
+    midi::MidiReader m_reader;
 };
 
 } // namespace midi_play::readers

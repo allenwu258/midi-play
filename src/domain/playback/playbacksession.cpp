@@ -219,6 +219,14 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             pressure.value = state.channelPressure;
             pressure.kind = PlaybackEventKind::ChannelPressure;
             replayEvents.push_back(pressure);
+            for (auto pressureIt = state.polyPressure.cbegin(); pressureIt != state.polyPressure.cend(); ++pressureIt) {
+                PlaybackEvent polyPressure;
+                polyPressure.channel = channel;
+                polyPressure.pitch = pressureIt.key();
+                polyPressure.value = pressureIt.value();
+                polyPressure.kind = PlaybackEventKind::PolyPressure;
+                replayEvents.push_back(polyPressure);
+            }
         }
         for (const auto& active : snapshot->activeNotes) {
             PlaybackEvent resumed;

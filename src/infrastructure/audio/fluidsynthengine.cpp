@@ -56,6 +56,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_cc = reinterpret_cast<Cc>(resolve("fluid_synth_cc"));
     m_pitchBend = reinterpret_cast<PitchBend>(resolve("fluid_synth_pitch_bend"));
     m_channelPressure = reinterpret_cast<ChannelPressure>(resolve("fluid_synth_channel_pressure"));
+    m_keyPressure = reinterpret_cast<KeyPressure>(resolve("fluid_synth_key_pressure"));
     m_systemReset = reinterpret_cast<SystemReset>(resolve("fluid_synth_system_reset"));
 
     if (!m_newSettings || !m_deleteSettings || !m_newSynth || !m_deleteSynth || !m_sfload
@@ -154,6 +155,9 @@ void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
     case playback::PlaybackEventKind::ChannelPressure:
         channelPressure(event.channel, event.value);
         break;
+    case playback::PlaybackEventKind::PolyPressure:
+        polyPressure(event.channel, event.pitch, event.value);
+        break;
     case playback::PlaybackEventKind::NoteExpression:
         // FluidSynth exposes channel-level controls; apply the closest MIDI
         // operation while preserving the richer domain event.
@@ -202,6 +206,13 @@ void FluidSynthEngine::pitchBend(int channel, int value)
 void FluidSynthEngine::channelPressure(int channel, int value)
 {
     if (m_loaded && m_channelPressure) m_channelPressure(m_synth, channel % 16, std::clamp(value, 0, 127));
+}
+
+void FluidSynthEngine::polyPressure(int channel, int pitch, int value)
+{
+    if (m_loaded && m_keyPressure) {
+        m_keyPressure(m_synth, channel % 16, std::clamp(pitch, 0, 127), std::clamp(value, 0, 127));
+    }
 }
 
 void FluidSynthEngine::release()

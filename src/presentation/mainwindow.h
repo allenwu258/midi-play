@@ -16,7 +16,7 @@ public:
     explicit MainWindow(app::PlayerApplicationService* service, QWidget* parent = nullptr);
 
 private slots:
-    void openMusicXml();
+    void openMusicFile();
     void openSoundFont();
     void updatePosition(qint64 position, qint64 duration);
 

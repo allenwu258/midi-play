@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/playback/playbackcontroller.h"
+#include "infrastructure/readers/musicreaderregistry.h"
 
 #include <QObject>
 #include <memory>
@@ -16,6 +17,7 @@ public:
     QString fileName() const { return m_fileName; }
 
 public slots:
+    void openFile(const QString& path);
     void openMusicXml(const QString& path);
     void loadSoundFont(const QString& path);
     void play();
@@ -36,6 +38,7 @@ private:
     std::unique_ptr<playback::PlaybackController> m_controller;
     QString m_fileName;
     QString m_soundFontPath;
+    readers::MusicReaderRegistry m_readerRegistry;
 };
 
 } // namespace midi_play::app

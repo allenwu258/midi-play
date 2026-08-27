@@ -11,6 +11,7 @@ using Tick = std::int64_t;
 struct TempoChange {
     Tick tick = 0;
     double bpm = 120.0;
+    quint64 sequence = 0;
 };
 
 struct NoteEvent {
@@ -32,6 +33,7 @@ struct NoteEvent {
     bool ghost = false;
     bool marcato = false;
     bool tremolo = false;
+    quint64 sequence = 0;
 };
 
 struct Measure {
@@ -58,6 +60,7 @@ struct InstrumentChange {
     QString sourceId;
     int bankMsb = 0;
     int bankLsb = 0;
+    quint64 sequence = 0;
 };
 
 struct ControlChange {
@@ -65,18 +68,29 @@ struct ControlChange {
     int channel = 0;
     int controller = 0;
     int value = 0;
+    quint64 sequence = 0;
 };
 
 struct PitchBendChange {
     Tick tick = 0;
     int channel = 0;
     int value = 8192;
+    quint64 sequence = 0;
 };
 
 struct ChannelPressureChange {
     Tick tick = 0;
     int channel = 0;
     int value = 0;
+    quint64 sequence = 0;
+};
+
+struct PolyPressureChange {
+    Tick tick = 0;
+    int channel = 0;
+    int pitch = 60;
+    int value = 0;
+    quint64 sequence = 0;
 };
 
 struct DynamicChange {
@@ -150,6 +164,7 @@ struct Track {
     QVector<ControlChange> controlChanges;
     QVector<PitchBendChange> pitchBendChanges;
     QVector<ChannelPressureChange> channelPressureChanges;
+    QVector<PolyPressureChange> polyPressureChanges;
     QVector<DynamicChange> dynamics;
     QVector<TimeSignatureChange> timeSignatures;
     QVector<KeySignatureChange> keySignatures;

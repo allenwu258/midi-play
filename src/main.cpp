@@ -2,6 +2,9 @@
 #include "infrastructure/musicxml/musicxmlreader.h"
 #include "infrastructure/audio/fluidsynthengine.h"
 #include "infrastructure/midi/midireader.h"
+#include "infrastructure/readers/musicreaderregistry.h"
+#include "infrastructure/readers/musicxmlreaderadapter.h"
+#include "infrastructure/readers/midireaderadapter.h"
 #include "presentation/mainwindow.h"
 
 #include <QApplication>
@@ -59,7 +62,16 @@ int main(int argc, char* argv[])
     }
 
     if (argc > 1) {
-        const auto result = midi_play::musicxml::MusicXmlReader().read(QString::fromLocal8Bit(argv[1]));
+        midi_play::readers::MusicReaderRegistry registry;
+        registry.registerReader(std::make_unique<midi_play::readers::MusicXmlReaderAdapter>());
+        registry.registerReader(std::make_unique<midi_play::readers::MidiReaderAdapter>());
+        const QString path = QString::fromLocal8Bit(argv[1]);
+        const auto* reader = registry.find(QFileInfo(path).suffix());
+        if (!reader) {
+            qCritical().noquote() << "Unsupported music file extension:" << QFileInfo(path).suffix();
+            return 1;
+        }
+        const auto result = reader->read(path);
         if (!result.ok()) {
             qCritical().noquote() << result.error;
             return 1;
