@@ -10,7 +10,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
                          QVector<PlaybackStateSnapshot>& snapshots)
 {
     QVector<ChannelState> channels(16);
-    QHash<int, QVector<ActiveNoteState>> active;
+    QHash<qint64, QVector<ActiveNoteState>> active;
     QVector<QVector<qint64>> sustainReleaseTimes(16);
     QVector<QVector<qint64>> sostenutoReleaseTimes(16);
     snapshots.clear();
@@ -119,10 +119,19 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
             channels[channel].initialized = true;
             channels[channel].polyPressure.insert(event.pitch, event.value);
         } else if (event.kind == PlaybackEventKind::NoteOn) {
-            active[channel * 128 + event.pitch].push_back({channel, event.pitch, event.velocity,
-                                                            event.timestampUs + event.durationUs});
+            const qint64 noteKey = event.noteId >= 0 ? event.noteId
+                                                     : qint64(channel * 128 + event.pitch);
+            ActiveNoteState note;
+            note.noteId = event.noteId;
+            note.channel = channel;
+            note.pitch = event.pitch;
+            note.velocity = event.velocity;
+            note.endTimestampUs = event.timestampUs + event.durationUs;
+            active[noteKey].push_back(note);
         } else if (event.kind == PlaybackEventKind::NoteOff) {
-            auto it = active.find(channel * 128 + event.pitch);
+            const qint64 noteKey = event.noteId >= 0 ? event.noteId
+                                                     : qint64(channel * 128 + event.pitch);
+            auto it = active.find(noteKey);
             if (it != active.end() && !it->isEmpty()) {
                 auto& notes = it.value();
                 auto& note = notes.last();
@@ -192,6 +201,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 event.pitch = note->pitch;
                 event.velocity = note->velocity;
                 event.program = note->program;
+                event.noteId = static_cast<qint64>(note->noteId);
                 event.sequence = note->sequence;
                 event.tieStart = note->tieStart;
                 event.tieStop = note->tieStop;

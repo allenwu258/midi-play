@@ -113,7 +113,7 @@ struct PlaybackEvent {
     int bankMsb = 0;
     int bankLsb = 0;
     bool keyReleased = false;
-    int noteId = -1;
+    qint64 noteId = -1;
     NoteExpressionType expressionType = NoteExpressionType::Volume;
 
     bool isNoteOn() const { return kind == PlaybackEventKind::NoteOn; }
@@ -210,6 +210,7 @@ struct ChannelState {
 };
 
 struct ActiveNoteState {
+    qint64 noteId = -1;
     int channel = 0;
     int pitch = 60;
     int velocity = 90;

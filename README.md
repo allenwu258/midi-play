@@ -8,6 +8,9 @@
 - 分层标准 MIDI 文件 reader（`.mid` / `.midi` / `.kar`；format 0/1/2、PPQN/SMPTE、Running Status、Meta/SysEx、按 port/channel 拆分、踏板和控制器归一化）。
 - `score-partwise` 的 part、measure、tempo、note、rest、chord、grace、cue、backup、forward 基础语义。
 - 统一 tick 时间线、tempo map 和 tick/time 双向转换。
+- MusicXML `score-timewise` 自动转换为统一 `score-partwise` 语义入口。
+- MusicXML 每个 staff/voice 独立维护游标，并使用跨小节余数累积降低 divisions 换算漂移。
+- `MusicDocument` 提供全局 MeasureGrid、预计算 TempoMap 和稳定 NoteId。
 - 默认 `midiSound-2025-1-14.sf2` 音源。
 - FluidSynth SF2 动态适配器，不把 FluidSynth 类型泄漏到领域层。
 - 播放、暂停、停止、进度拖动和旧音符 flush。

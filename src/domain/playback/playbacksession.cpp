@@ -148,7 +148,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
         ? m_playbackModel.globalIndex()->lowerBound(targetUs)
         : 0;
     int start = 0;
-    QHash<int, QVector<PlaybackEvent>> activeNotes;
+    QHash<qint64, QVector<PlaybackEvent>> activeNotes;
     QVector<PlaybackEvent> replayEvents;
 
     const PlaybackStateSnapshot* snapshot = nullptr;
@@ -234,19 +234,25 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             resumed.durationUs = active.endTimestampUs - targetUs + 1;
             resumed.channel = active.channel;
             resumed.pitch = active.pitch;
+            resumed.noteId = active.noteId;
             resumed.velocity = active.velocity;
             resumed.keyReleased = active.keyReleased;
             resumed.kind = PlaybackEventKind::NoteOn;
-            activeNotes[active.channel * 128 + active.pitch].push_back(resumed);
+            const qint64 key = active.noteId >= 0 ? active.noteId
+                                                  : qint64(active.channel * 128 + active.pitch);
+            activeNotes[key].push_back(resumed);
         }
     }
 
     for (int i = start; i < end; ++i) {
         const auto& event = globalEvents[i];
         if (event.kind == PlaybackEventKind::NoteOn) {
-            activeNotes[event.channel * 128 + event.pitch].push_back(event);
+            const qint64 key = event.noteId >= 0 ? event.noteId
+                                                : qint64(event.channel * 128 + event.pitch);
+            activeNotes[key].push_back(event);
         } else if (event.kind == PlaybackEventKind::NoteOff) {
-            const int key = event.channel * 128 + event.pitch;
+            const qint64 key = event.noteId >= 0 ? event.noteId
+                                                 : qint64(event.channel * 128 + event.pitch);
             if (activeNotes.contains(key) && !activeNotes[key].isEmpty()) {
                 activeNotes[key].removeLast();
                 if (activeNotes[key].isEmpty()) activeNotes.remove(key);

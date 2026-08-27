@@ -9,7 +9,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
 
 qt_add_executable(midi_play
     src/main.cpp
@@ -72,7 +72,7 @@ qt_add_executable(midi_play
 )
 
 target_include_directories(midi_play PRIVATE src)
-target_link_libraries(midi_play PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent)
+target_link_libraries(midi_play PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
 
 set(DEFAULT_SF2 "${CMAKE_CURRENT_SOURCE_DIR}/midiSound-2025-1-14.sf2")
 if (EXISTS "${DEFAULT_SF2}")

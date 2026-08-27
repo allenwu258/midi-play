@@ -33,6 +33,7 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
     auto document = std::make_shared<music::MusicDocument>();
     document->setTitle(source.title);
     document->tempos() = source.tempos;
+    quint64 nextNoteId = 1;
 
     for (const auto& normalizedTrack : source.tracks) {
         music::Track track;
@@ -84,6 +85,7 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
             event.channel = note.channel;
             event.program = note.program;
             event.sequence = note.sequence;
+            event.noteId = nextNoteId++;
             track.notes.push_back(event);
         }
         std::sort(track.notes.begin(), track.notes.end(), [](const auto& left, const auto& right) {
@@ -97,6 +99,8 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
 
     appendMeta(source, *document);
     document->setDuration(std::max<music::Tick>(1, source.duration));
+    document->rebuildMeasureGrid();
+    document->rebuildTempoMap();
     if (!document->isValid()) return {nullptr, QStringLiteral("MIDI 未包含可播放音符")};
     return {std::move(document), {}};
 }

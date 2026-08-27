@@ -1,6 +1,7 @@
 #include "musicdocument.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace midi_play::music {
 
@@ -87,23 +88,16 @@ RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
 qint64 MusicDocument::tickToMicroseconds(Tick tick) const
 {
     tick = std::clamp<Tick>(tick, 0, m_duration);
-    if (m_tempos.isEmpty()) {
-        return tick * 60'000'000LL / (120 * kPpq);
-    }
-
-    qint64 result = 0;
-    Tick cursor = 0;
-    double bpm = 120.0;
-    for (const TempoChange& change : m_tempos) {
-        if (change.tick > tick) {
-            break;
-        }
-        result += static_cast<qint64>((change.tick - cursor) * 60'000'000.0 / (bpm * kPpq));
-        cursor = change.tick;
-        bpm = change.bpm > 0.0 ? change.bpm : bpm;
-    }
-    result += static_cast<qint64>((tick - cursor) * 60'000'000.0 / (bpm * kPpq));
-    return result;
+    rebuildTempoMap();
+    if (m_tempoMap.isEmpty()) return static_cast<qint64>(std::llround(
+        tick * 60'000'000.0 / (120.0 * kPpq)));
+    const auto it = std::upper_bound(m_tempoMap.cbegin(), m_tempoMap.cend(), tick,
+                                     [](Tick value, const TempoSegment& segment) {
+                                         return value < segment.start;
+                                     });
+    const auto& segment = it == m_tempoMap.cbegin() ? m_tempoMap.front() : *std::prev(it);
+    return segment.startUs + static_cast<qint64>(std::llround(
+        (tick - segment.start) * 60'000'000.0 / (segment.bpm * kPpq)));
 }
 
 Tick MusicDocument::microsecondsToTick(qint64 microseconds) const
@@ -144,17 +138,62 @@ qint64 MusicDocument::playbackTickToMicroseconds(Tick outputTick) const
     return elapsedUs;
 }
 
+void MusicDocument::rebuildTempoMap() const
+{
+    if (!m_tempoMap.isEmpty()) return;
+    QVector<TempoChange> changes = m_tempos;
+    std::sort(changes.begin(), changes.end(), [](const auto& left, const auto& right) {
+        if (left.tick != right.tick) return left.tick < right.tick;
+        return left.sequence < right.sequence;
+    });
+    double bpm = 120.0;
+    Tick cursor = 0;
+    qint64 elapsedUs = 0;
+    for (const auto& change : changes) {
+        const Tick tick = std::clamp<Tick>(change.tick, 0, m_duration);
+        if (tick < cursor) continue;
+        elapsedUs += static_cast<qint64>(std::llround(
+            (tick - cursor) * 60'000'000.0 / (bpm * kPpq)));
+        bpm = change.bpm > 0.0 ? change.bpm : bpm;
+        if (!m_tempoMap.isEmpty() && m_tempoMap.back().start == tick) {
+            m_tempoMap.back().startUs = elapsedUs;
+            m_tempoMap.back().bpm = bpm;
+        } else {
+            m_tempoMap.push_back({tick, m_duration, elapsedUs, bpm});
+        }
+        cursor = tick;
+    }
+    if (m_tempoMap.isEmpty() || m_tempoMap.front().start != 0) {
+        m_tempoMap.push_front({0, m_duration, 0, 120.0});
+    }
+    for (int i = 0; i + 1 < m_tempoMap.size(); ++i) {
+        m_tempoMap[i].end = m_tempoMap[i + 1].start;
+    }
+    m_tempoMap.back().end = m_duration;
+}
+
+void MusicDocument::rebuildMeasureGrid()
+{
+    m_measures.clear();
+    for (const auto& track : m_tracks) {
+        if (track.measures.size() > m_measures.size()) m_measures = track.measures;
+    }
+    if (m_measures.isEmpty() && m_duration > 0) {
+        m_measures.push_back({1, 0, m_duration});
+    }
+}
+
 QVector<PlaybackSegment> MusicDocument::playbackSegments() const
 {
-    if (m_tracks.isEmpty()) return {{0, m_duration, 0, 0, -1}};
-    return RepeatList::build(m_tracks.front().measures, m_duration).segments();
+    if (m_measures.isEmpty()) return {{0, m_duration, 0, 0, -1}};
+    return RepeatList::build(m_measures, m_duration).segments();
 }
 
 Tick MusicDocument::playbackDuration() const
 {
     const auto segments = playbackSegments();
     if (segments.isEmpty()) return m_duration;
-    return RepeatList::build(m_tracks.front().measures, m_duration).duration();
+    return RepeatList::build(m_measures, m_duration).duration();
 }
 
 } // namespace midi_play::music

@@ -16,6 +16,7 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
         ScoreDomPart part;
         part.id = track.id;
         part.name = track.name;
+        const auto& measures = track.measures.isEmpty() ? document.measures() : track.measures;
 
         QHash<int, QVector<const NoteEvent*>> notesByStaff;
         for (const auto& note : track.notes) {
@@ -23,7 +24,7 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
         }
 
         QVector<int> staffNumbers = notesByStaff.keys().toVector();
-        for (const auto& measure : track.measures) {
+        for (const auto& measure : measures) {
             if (!staffNumbers.contains(1)) staffNumbers.push_back(1);
             Q_UNUSED(measure);
         }
@@ -33,7 +34,7 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
             ScoreDomStaff staff;
             staff.number = staffNumber;
             const auto notes = notesByStaff.value(staffNumber);
-            for (const auto& measure : track.measures) {
+            for (const auto& measure : measures) {
                 ScoreDomMeasure domMeasure;
                 domMeasure.value = measure;
                 QHash<Tick, QVector<const NoteEvent*>> notesAtTick;

@@ -78,7 +78,8 @@ QVector<PlaybackEvent> PlaybackEventsRenderer::render(const PlaybackData& source
                 expression.timestampUs = event.timestampUs + qMax<qint64>(0, point.offsetUs);
                 expression.channel = event.channel;
                 expression.value = qBound(0, qRound(point.value * 127.0F), 127);
-                expression.noteId = event.channel * 128 + event.pitch;
+                expression.noteId = event.noteId >= 0 ? event.noteId
+                                                       : event.channel * 128 + event.pitch;
                 expression.expressionType = NoteExpressionType::Volume;
                 expression.voice = event.voice;
                 expression.staff = event.staff;
@@ -95,7 +96,8 @@ QVector<PlaybackEvent> PlaybackEventsRenderer::render(const PlaybackData& source
                 // Pitch curves use normalized semitone-independent [-1, 1]
                 // values and are mapped to the 14-bit MIDI bend range.
                 pitch.value = qBound(0, qRound(8192.0F + point.value * 8191.0F), 16383);
-                pitch.noteId = event.channel * 128 + event.pitch;
+                pitch.noteId = event.noteId >= 0 ? event.noteId
+                                                 : event.channel * 128 + event.pitch;
                 pitch.expressionType = NoteExpressionType::Pitch;
                 pitch.voice = event.voice;
                 pitch.staff = event.staff;

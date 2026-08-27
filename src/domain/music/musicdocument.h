@@ -34,6 +34,7 @@ struct NoteEvent {
     bool marcato = false;
     bool tremolo = false;
     quint64 sequence = 0;
+    quint64 noteId = 0;
 };
 
 struct Measure {
@@ -179,8 +180,12 @@ public:
     bool isValid() const { return !m_tracks.isEmpty() && m_duration > 0; }
     const QVector<Track>& tracks() const { return m_tracks; }
     QVector<Track>& tracks() { return m_tracks; }
+    const QVector<Measure>& measures() const { return m_measures; }
+    QVector<Measure>& measures() { return m_measures; }
+    void rebuildMeasureGrid();
     const QVector<TempoChange>& tempos() const { return m_tempos; }
-    QVector<TempoChange>& tempos() { return m_tempos; }
+    QVector<TempoChange>& tempos() { m_tempoMap.clear(); return m_tempos; }
+    void rebuildTempoMap() const;
     Tick duration() const { return m_duration; }
     void setDuration(Tick value) { m_duration = value; }
     QString title() const { return m_title; }
@@ -197,6 +202,14 @@ private:
     QVector<TempoChange> m_tempos;
     Tick m_duration = 0;
     QString m_title;
+    QVector<Measure> m_measures;
+    struct TempoSegment {
+        Tick start = 0;
+        Tick end = 0;
+        qint64 startUs = 0;
+        double bpm = 120.0;
+    };
+    mutable QVector<TempoSegment> m_tempoMap;
 };
 
 } // namespace midi_play::music
