@@ -67,7 +67,7 @@ CMakeUserPresets.json
 *.swo
 *~
 
-# Keep source assets such as midiSound-2025-1-14.sf2 trackable.
+# Keep source assets, including SoundFont files, trackable.
 
 # Local architecture and analysis documents
 /documents/

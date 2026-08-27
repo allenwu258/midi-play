@@ -146,9 +146,11 @@ int main(int argc, char* argv[])
     midi_play::presentation::MainWindow window(&service);
     window.show();
 
-    QString defaultSoundFont = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("midiSound-2025-1-14.sf2"));
+    const QString defaultSoundFontRelativePath = QStringLiteral("assets/midisound.sf2");
+    QString defaultSoundFont =
+        QDir(QCoreApplication::applicationDirPath()).filePath(defaultSoundFontRelativePath);
     if (!QFileInfo::exists(defaultSoundFont)) {
-        defaultSoundFont = QDir::current().filePath(QStringLiteral("midiSound-2025-1-14.sf2"));
+        defaultSoundFont = QDir::current().filePath(defaultSoundFontRelativePath);
     }
     service.loadSoundFont(defaultSoundFont);
     return app.exec();

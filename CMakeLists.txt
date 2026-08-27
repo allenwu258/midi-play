@@ -90,12 +90,14 @@ qt_add_executable(midi_play
 target_include_directories(midi_play PRIVATE src)
 target_link_libraries(midi_play PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
 
-set(DEFAULT_SF2 "${CMAKE_CURRENT_SOURCE_DIR}/midiSound-2025-1-14.sf2")
+set(DEFAULT_SF2 "${CMAKE_CURRENT_SOURCE_DIR}/assets/midisound.sf2")
 if (EXISTS "${DEFAULT_SF2}")
     add_custom_command(TARGET midi_play POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:midi_play>/assets"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DEFAULT_SF2}"
-            "$<TARGET_FILE_DIR:midi_play>/midiSound-2025-1-14.sf2")
+            "$<TARGET_FILE_DIR:midi_play>/assets/midisound.sf2")
 endif()
 
 set(FLUIDSYNTH_DLL "" CACHE FILEPATH "FluidSynth runtime DLL to copy beside the executable")
@@ -118,6 +120,9 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS midi_play RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if (EXISTS "${DEFAULT_SF2}")
+    install(FILES "${DEFAULT_SF2}" DESTINATION "${CMAKE_INSTALL_BINDIR}/assets")
+endif()
 
 include(CTest)
 if (BUILD_TESTING)
