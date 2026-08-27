@@ -207,10 +207,6 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
     if (!state.chart) return;
     painter.save();
     painter.setClipRect(geometry.fallingRect);
-    QFont labelFont = painter.font();
-    labelFont.setPointSizeF(8.5);
-    labelFont.setWeight(QFont::DemiBold);
-    const QFontMetricsF metrics(labelFont);
 
     for (const int noteIndex : state.visibleNoteIndices) {
         if (noteIndex < 0 || noteIndex >= state.chart->notes().size()) continue;
@@ -256,13 +252,6 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
                              QPointF(primary.right() - 3.0, centerY - 3.0));
         }
 
-        if (!note.simplifiedLabel.isEmpty() && primary.width() >= metrics.horizontalAdvance(note.simplifiedLabel) + 7.0
-            && primary.height() >= metrics.height() + 4.0) {
-            painter.setFont(labelFont);
-            painter.setPen(QColor(15, 17, 18, 225));
-            painter.drawText(primary.adjusted(2.0, 1.0, -2.0, -1.0), Qt::AlignCenter,
-                             note.simplifiedLabel);
-        }
     }
     painter.restore();
 }
