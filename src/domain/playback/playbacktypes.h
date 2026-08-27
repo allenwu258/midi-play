@@ -4,6 +4,7 @@
 
 #include <QString>
 #include <QHash>
+#include <QMetaType>
 #include <QVector>
 #include <memory>
 #include <algorithm>
@@ -258,3 +259,5 @@ struct PlaybackData {
 };
 
 } // namespace midi_play::playback
+
+Q_DECLARE_METATYPE(midi_play::playback::State)

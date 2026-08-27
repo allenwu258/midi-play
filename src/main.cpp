@@ -6,13 +6,23 @@
 #include "infrastructure/readers/musicxmlreaderadapter.h"
 #include "infrastructure/readers/midireaderadapter.h"
 #include "presentation/mainwindow.h"
+#include "domain/visualization/playbackscenestate.h"
+#include "domain/visualization/playbackvisualizationprojector.h"
+#include "domain/visualization/visiblenoteindex.h"
+#include "presentation/visualization/fallingnotesrenderer.h"
+#include "presentation/visualization/scenelayoutengine.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QDebug>
+#include <QImage>
+#include <QPainter>
 #include <QThread>
 #include <QTimer>
+
+#include <algorithm>
+#include <cstdio>
 
 int main(int argc, char* argv[])
 {
@@ -59,6 +69,57 @@ int main(int argc, char* argv[])
         qInfo().noquote() << "MIDI loaded tracks=" << result.document->tracks().size()
                           << "duration_us=" << result.document->tickToMicroseconds(result.document->duration());
         return 0;
+    }
+
+    if (argc > 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--render-test")) {
+        midi_play::readers::MusicReaderRegistry registry;
+        registry.registerReader(std::make_unique<midi_play::readers::MusicXmlReaderAdapter>());
+        registry.registerReader(std::make_unique<midi_play::readers::MidiReaderAdapter>());
+        const QString inputPath = QString::fromLocal8Bit(argv[2]);
+        const QString outputPath = QString::fromLocal8Bit(argv[3]);
+        const auto* reader = registry.find(QFileInfo(inputPath).suffix());
+        if (!reader) return 1;
+        const auto result = reader->read(inputPath);
+        if (!result.ok()) return 1;
+        midi_play::visualization::VisualizationProjectionOptions options;
+        options.fallbackTitle = QFileInfo(inputPath).completeBaseName();
+        const auto chart = midi_play::visualization::PlaybackVisualizationProjector().project(
+            *result.document, 1, options);
+        if (!chart) return 1;
+        const qint64 requestedPosition = argc > 4
+            ? QString::fromLocal8Bit(argv[4]).toLongLong() : chart->durationUs() / 10;
+        midi_play::visualization::PlaybackSceneState state;
+        state.chart = chart;
+        state.durationUs = chart->durationUs();
+        state.transportPositionUs = std::clamp<qint64>(requestedPosition, 0, chart->durationUs());
+        state.transportState = midi_play::playback::State::Playing;
+        midi_play::visualization::VisibleNoteIndex index(chart->notes());
+        index.query(state.transportPositionUs - state.afterglowUs,
+                    state.transportPositionUs + state.lookAheadUs,
+                    state.visibleNoteIndices);
+        for (const int noteIndex : state.visibleNoteIndices) {
+            const auto& note = chart->notes().at(noteIndex);
+            if (note.startUs <= state.transportPositionUs && note.audibleEndUs > state.transportPositionUs) {
+                state.activeNoteIndices.push_back(noteIndex);
+            }
+        }
+        std::fprintf(stdout, "render chart_tracks=%lld notes=%lld visible=%lld active=%lld position_us=%lld duration_us=%lld\n",
+                     static_cast<long long>(chart->tracks().size()),
+                     static_cast<long long>(chart->notes().size()),
+                     static_cast<long long>(state.visibleNoteIndices.size()),
+                     static_cast<long long>(state.activeNoteIndices.size()),
+                     static_cast<long long>(state.transportPositionUs),
+                     static_cast<long long>(state.durationUs));
+        const int renderWidth = argc > 5 ? std::clamp(QString::fromLocal8Bit(argv[5]).toInt(), 320, 7680) : 1280;
+        const int renderHeight = argc > 6 ? std::clamp(QString::fromLocal8Bit(argv[6]).toInt(), 240, 4320) : 720;
+        QImage image(renderWidth, renderHeight, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        const auto geometry = midi_play::presentation::visualization::SceneLayoutEngine().layout(
+            image.size(), chart.get(), state.lookAheadUs);
+        midi_play::presentation::visualization::FallingNotesRenderer().render(painter, geometry, state);
+        painter.end();
+        return image.save(outputPath) ? 0 : 1;
     }
 
     if (argc > 1) {

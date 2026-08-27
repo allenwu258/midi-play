@@ -14,6 +14,9 @@ compile_commands.json
 *.ninja_deps
 *.ninja_log
 
+# vcpkg manifest-mode installation tree
+/vcpkg_installed/
+
 # Visual Studio / MSVC generated state
 .vs/
 *.suo

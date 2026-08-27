@@ -21,12 +21,13 @@ int KeyContext::degreeFor(const WrittenPitch& pitch) const
     const auto& scale = mode.compare(QStringLiteral("minor"), Qt::CaseInsensitive) == 0
         ? minorScale : majorScale;
     const int tonic = tonicPitchClass();
+    const int pitchClass = ((pitch.midiPitch % 12) + 12) % 12;
     int bestDegree = 1;
     int bestDistance = 12;
     for (int degree = 0; degree < 7; ++degree) {
         const int candidate = (tonic + scale[degree]) % 12;
-        const int distance = std::min((pitch.midiPitch - candidate + 12) % 12,
-                                      (candidate - pitch.midiPitch + 12) % 12);
+        const int directDistance = std::abs(pitchClass - candidate);
+        const int distance = std::min(directDistance, 12 - directDistance);
         if (distance < bestDistance) {
             bestDistance = distance;
             bestDegree = degree + 1;
@@ -57,9 +58,10 @@ RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
     const int maxSteps = qMax(1024, measures.size() * 64);
     for (int step = 0; index >= 0 && index < measures.size() && step < maxSteps; ++step) {
         const auto& measure = measures[index];
-        if (measure.repeatStart) {
+        // Returning to the repeat start must preserve the current pass. Resetting
+        // it here would make every repeat end jump back forever until maxSteps.
+        if (measure.repeatStart && context.repeatPass == 0) {
             context.repeatStartIndex = index;
-            context.repeatPass = 0;
         }
 
         const bool inEnding = measure.endingNumber > 0;

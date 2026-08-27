@@ -22,6 +22,13 @@ qt_add_executable(midi_play
     src/domain/music/musicreadresult.h
     src/domain/music/scoreplaybackdom.h
     src/domain/music/scoreplaybackdom.cpp
+    src/domain/visualization/visualchart.h
+    src/domain/visualization/visualchart.cpp
+    src/domain/visualization/playbackvisualizationprojector.h
+    src/domain/visualization/playbackvisualizationprojector.cpp
+    src/domain/visualization/visiblenoteindex.h
+    src/domain/visualization/visiblenoteindex.cpp
+    src/domain/visualization/playbackscenestate.h
     src/domain/playback/playbacktypes.h
     src/domain/playback/iplaybackaudioservice.h
     src/domain/playback/playbackmodel.h
@@ -71,6 +78,13 @@ qt_add_executable(midi_play
     src/infrastructure/midi/mididocumentbuilder.cpp
     src/presentation/mainwindow.h
     src/presentation/mainwindow.cpp
+    src/presentation/visualization/scenegeometry.h
+    src/presentation/visualization/scenelayoutengine.h
+    src/presentation/visualization/scenelayoutengine.cpp
+    src/presentation/visualization/fallingnotesrenderer.h
+    src/presentation/visualization/fallingnotesrenderer.cpp
+    src/presentation/visualization/fallingnotesview.h
+    src/presentation/visualization/fallingnotesview.cpp
 )
 
 target_include_directories(midi_play PRIVATE src)
@@ -104,3 +118,29 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS midi_play RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+include(CTest)
+if (BUILD_TESTING)
+    add_executable(midi_play_visualization_tests
+        tests/visualizationtests.cpp
+        src/domain/music/musicdocument.h
+        src/domain/music/musicdocument.cpp
+        src/domain/music/musicanalysis.h
+        src/domain/music/musicanalysis.cpp
+        src/domain/visualization/visualchart.h
+        src/domain/visualization/visualchart.cpp
+        src/domain/visualization/playbackvisualizationprojector.h
+        src/domain/visualization/playbackvisualizationprojector.cpp
+        src/domain/visualization/visiblenoteindex.h
+        src/domain/visualization/visiblenoteindex.cpp
+        src/presentation/visualization/scenegeometry.h
+        src/presentation/visualization/scenelayoutengine.h
+        src/presentation/visualization/scenelayoutengine.cpp
+    )
+    target_include_directories(midi_play_visualization_tests PRIVATE src)
+    target_link_libraries(midi_play_visualization_tests PRIVATE Qt6::Core)
+    if (WIN32)
+        target_compile_definitions(midi_play_visualization_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    add_test(NAME visualization_domain COMMAND midi_play_visualization_tests)
+endif()

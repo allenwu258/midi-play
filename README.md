@@ -16,6 +16,10 @@
 - FluidSynth SF2 动态适配器，不把 FluidSynth 类型泄漏到领域层。
 - 播放、暂停、停止、进度拖动和旧音符 flush。
 - Qt Widgets UI，解析在 QtConcurrent 工作线程执行。
+- 只读播放可视化：音符下落、长音/踏板尾段、固定触发线、真实钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
+- `VisualChart` 不可变播放视图模型，MusicXML/MIDI 共用反复展开、tempo-aware 时间投影和稳定实例 ID。
+- 带 subtree max-end 的平衡区间索引，seek 后可直接查询五秒可见窗口，无需逐帧扫描全谱。
+- 60 Hz `QWidget + QPainter` 绘制仅采样权威 transport 位置，不使用 UI 定时器累加播放时间。
 - `--audio-test <sf2>` 以及 MusicXML/MIDI 路径命令行解析 smoke test。
 
 MIDI format 2 的各个独立序列会按源轨道顺序串联到统一播放时间线；format 0/1 则保持轨道并行。SMPTE division 使用固定帧率换算，tempo meta-event 不会覆盖固定 tick 速率。
@@ -69,6 +73,23 @@ build/windows-msvc-debug/Debug/midi_play.exe --midi-test `
   'C:/Users/Vyas/Downloads/midi-files/Canon in D_211QUeDwFsn/3cdfa9914c7b42928694349744b8800b.mid'
 ```
 
+生成固定播放位置的离屏可视化帧：
+
+```powershell
+build/windows-msvc-debug/Debug/midi_play.exe --render-test `
+  'C:/path/to/example.musicxml' `
+  'build/visualization.png' `
+  10000000 1280 720
+```
+
+最后三个参数依次为播放位置（微秒）、输出宽度和输出高度；宽高可省略，默认 `1280x720`。
+
+运行可视化领域测试：
+
+```powershell
+ctest --test-dir build/windows-msvc-debug -C Debug --output-on-failure
+```
+
 
 ## Qt 平台插件说明
 
@@ -86,6 +107,8 @@ platforms/qwindowsd.dll
 Qt UI
   -> PlayerApplicationService
   -> MusicReaderRegistry / MusicXmlReader / MusicDocument
+  -> PlaybackVisualizationProjector / immutable VisualChart / VisibleNoteIndex
+  -> FallingNotesView / SceneLayoutEngine / FallingNotesRenderer
   -> PlaybackModel / PlaybackContext / PlaybackEventsRenderer
   -> PlaybackController / PlaybackSession / PlaybackEventScheduler / PlaybackEventMap
   -> ThreadedPlaybackAudioService

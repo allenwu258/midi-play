@@ -23,19 +23,24 @@ int nearestScaleStep(int pitch, const KeyContext& key, int* alter)
     const int pc = pitchClass(pitch);
     int bestStep = 0;
     int bestAlter = 0;
-    int bestDistance = std::numeric_limits<int>::max();
+    int bestCost = std::numeric_limits<int>::max();
     for (int step = 0; step < 7; ++step) {
         const int natural = (key.tonicPitchClass() + scale[step]) % 12;
-        for (int candidateAlter = -2; candidateAlter <= 2; ++candidateAlter) {
-            int candidate = (natural + candidateAlter) % 12;
-            if (candidate < 0) candidate += 12;
-            int distance = std::abs(pc - candidate);
-            distance = std::min(distance, 12 - distance);
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                bestStep = step;
-                bestAlter = candidateAlter;
-            }
+        int candidateAlter = pc - natural;
+        while (candidateAlter > 6) candidateAlter -= 12;
+        while (candidateAlter < -6) candidateAlter += 12;
+        if (std::abs(candidateAlter) > 2) continue;
+
+        // Prefer the diatonic spelling with the fewest accidentals. When a
+        // chromatic pitch is equidistant, follow the key signature direction.
+        const int directionPenalty = candidateAlter == 0 ? 0
+            : (key.fifths < 0 ? (candidateAlter > 0 ? 1 : 0)
+                              : (candidateAlter < 0 ? 1 : 0));
+        const int cost = std::abs(candidateAlter) * 10 + directionPenalty;
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestStep = step;
+            bestAlter = candidateAlter;
         }
     }
     if (alter) *alter = bestAlter;
@@ -147,19 +152,26 @@ Tick MusicAnalyzer::chooseQuantizationGrid(const MusicDocument& document, double
 void MusicAnalyzer::enrichPitchAndGrid(MusicDocument& document, const KeyContext& key, Tick grid)
 {
     const auto& measures = document.measures();
+    int tonicStep = ((key.fifths * 4) % 7 + 7) % 7; // C=0, each sharp moves up a fifth.
+    if (key.mode.compare(QStringLiteral("minor"), Qt::CaseInsensitive) == 0) {
+        tonicStep = (tonicStep + 5) % 7; // Relative minor is a diatonic sixth above.
+    }
     for (auto& track : document.tracks()) {
         for (auto& note : track.notes) {
             note.rawStart = {note.start, document.tickToMicroseconds(note.start)};
             note.rawEnd = {note.start + note.duration, document.tickToMicroseconds(note.start + note.duration)};
+            int scaleAlter = 0;
+            const int scaleStep = nearestScaleStep(note.pitch, key, &scaleAlter);
             if (!note.hasWrittenPitch) {
                 note.writtenPitch.midiPitch = note.pitch;
                 note.writtenPitch.octave = note.pitch / 12 - 1;
-                note.writtenPitch.step = nearestScaleStep(note.pitch, key, &note.writtenPitch.alter);
+                note.writtenPitch.step = (tonicStep + scaleStep) % 7;
+                note.writtenPitch.alter = scaleAlter;
             } else {
                 note.writtenPitch.midiPitch = note.pitch;
             }
-            note.scaleDegree = key.degreeFor(note.writtenPitch);
-            note.accidental = note.writtenPitch.alter;
+            note.scaleDegree = scaleStep + 1;
+            note.accidental = scaleAlter;
             note.measureIndex = findMeasure(measures, note.start);
             note.beat = note.measureIndex >= 0
                 ? static_cast<double>(note.start - measures[note.measureIndex].start) / MusicDocument::kPpq + 1.0 : 0.0;
