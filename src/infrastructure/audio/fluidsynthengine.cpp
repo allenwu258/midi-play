@@ -1,7 +1,6 @@
 #include "fluidsynthengine.h"
 
 #include <QCoreApplication>
-#include <QTimer>
 
 #include <algorithm>
 
@@ -59,6 +58,8 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_noteOn = reinterpret_cast<NoteOn>(resolve("fluid_synth_noteon"));
     m_noteOff = reinterpret_cast<NoteOff>(resolve("fluid_synth_noteoff"));
     m_cc = reinterpret_cast<Cc>(resolve("fluid_synth_cc"));
+    m_pitchBend = reinterpret_cast<PitchBend>(resolve("fluid_synth_pitch_bend"));
+    m_channelPressure = reinterpret_cast<ChannelPressure>(resolve("fluid_synth_channel_pressure"));
     m_systemReset = reinterpret_cast<SystemReset>(resolve("fluid_synth_system_reset"));
 
     if (!m_newSettings || !m_deleteSettings || !m_newSynth || !m_deleteSynth || !m_sfload
@@ -139,12 +140,9 @@ void FluidSynthEngine::noteOn(int channel, int pitch, int velocity)
     }
 }
 
-void FluidSynthEngine::scheduleNoteOff(int channel, int pitch, qint64 durationMicroseconds)
+void FluidSynthEngine::noteOff(int channel, int pitch)
 {
-    QTimer::singleShot(static_cast<int>(std::min<qint64>(durationMicroseconds / 1000, 60'000)), this,
-                       [this, channel, pitch] {
-                           if (m_loaded) m_noteOff(m_synth, channel % 16, pitch);
-                       });
+    if (m_loaded && m_noteOff) m_noteOff(m_synth, channel % 16, pitch);
 }
 
 void FluidSynthEngine::programChange(int channel, int program)
@@ -155,6 +153,16 @@ void FluidSynthEngine::programChange(int channel, int program)
 void FluidSynthEngine::controlChange(int channel, int controller, int value)
 {
     if (m_loaded && m_cc) m_cc(m_synth, channel % 16, controller % 128, value % 128);
+}
+
+void FluidSynthEngine::pitchBend(int channel, int value)
+{
+    if (m_loaded && m_pitchBend) m_pitchBend(m_synth, channel % 16, std::clamp(value, 0, 16383));
+}
+
+void FluidSynthEngine::channelPressure(int channel, int value)
+{
+    if (m_loaded && m_channelPressure) m_channelPressure(m_synth, channel % 16, std::clamp(value, 0, 127));
 }
 
 void FluidSynthEngine::release()

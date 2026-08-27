@@ -1,5 +1,6 @@
 #include "playbacksession.h"
 #include <algorithm>
+#include <QHash>
 
 namespace midi_play::playback {
 
@@ -9,8 +10,10 @@ PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> doc
     : QObject(parent), m_document(std::move(document)), m_audioService(std::move(audioService)), m_playbackModel(m_document)
 {
     m_timer = new QTimer(this);
-    m_timer->setInterval(10);
+    m_timer->setInterval(2);
+    m_timer->setTimerType(Qt::PreciseTimer);
     connect(m_timer, &QTimer::timeout, this, &PlaybackSession::onTimer);
+    m_nextEvents.resize(m_playbackModel.tracks().size());
 }
 
 PlaybackSession::~PlaybackSession() = default;
@@ -43,6 +46,9 @@ void PlaybackSession::play()
         setState(State::Error);
         return;
     }
+    if (m_state == State::Paused) {
+        rebuildAudioState(m_positionUs);
+    }
     setState(State::Playing);
     m_clockBaseUs = m_positionUs;
     m_clock.restart();
@@ -54,9 +60,12 @@ void PlaybackSession::pause()
     if (m_state != State::Playing) {
         return;
     }
-    m_audioService->pause();
     m_positionUs = m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
     m_timer->stop();
+    // Explicit note-off events are dispatched by this session. Flush them on
+    // pause and reconstruct the exact state when play() resumes.
+    flushActiveNotes();
+    m_audioService->pause();
     setState(State::Paused);
 }
 
@@ -70,8 +79,7 @@ void PlaybackSession::stop()
     m_audioService->stop();
     m_positionUs = 0;
     m_clockBaseUs = 0;
-    m_nextTrack = 0;
-    m_nextEvent = 0;
+    std::fill(m_nextEvents.begin(), m_nextEvents.end(), 0);
     emitPosition();
     setState(State::Stopped);
 }
@@ -89,20 +97,7 @@ void PlaybackSession::seek(qint64 microseconds)
     m_audioService->seek(microseconds);
     m_positionUs = std::clamp<qint64>(microseconds, 0, durationMicroseconds());
     m_clockBaseUs = m_positionUs;
-    const music::Tick target = m_document->microsecondsToTick(m_positionUs);
-    m_nextTrack = 0;
-    m_nextEvent = 0;
-    while (m_nextTrack < m_playbackModel.tracks().size()) {
-        const auto& events = m_playbackModel.tracks()[m_nextTrack].events;
-        m_nextEvent = m_playbackModel.tracks()[m_nextTrack].index
-                           ? m_playbackModel.tracks()[m_nextTrack].index->lowerBound(m_positionUs)
-                           : 0;
-        if (m_nextEvent < events.size() || target == 0) {
-            break;
-        }
-        ++m_nextTrack;
-        m_nextEvent = 0;
-    }
+    rebuildAudioState(m_positionUs);
     emitPosition();
     if (resume) {
         play();
@@ -116,34 +111,68 @@ void PlaybackSession::onTimer()
     }
     m_positionUs = m_clockBaseUs + m_clock.nsecsElapsed() / 1000;
     const qint64 now = m_positionUs;
-    constexpr qint64 lookAheadUs = 40'000;
-    for (int trackIndex = m_nextTrack; trackIndex < m_playbackModel.tracks().size(); ++trackIndex) {
+    for (int trackIndex = 0; trackIndex < m_playbackModel.tracks().size(); ++trackIndex) {
         const auto& track = m_playbackModel.tracks()[trackIndex];
-        int eventIndex = trackIndex == m_nextTrack ? m_nextEvent : 0;
+        int eventIndex = m_nextEvents.value(trackIndex, 0);
         for (; eventIndex < track.events.size(); ++eventIndex) {
             const auto& event = track.events[eventIndex];
-            const qint64 noteTime = event.timestampUs;
-            if (noteTime >= now + lookAheadUs) {
+            if (event.timestampUs > now) {
                 break;
             }
-            if (noteTime >= now) {
-                m_audioService->submit(event);
-            }
+            m_audioService->submit(event);
         }
-        if (trackIndex == m_nextTrack) {
-            m_nextEvent = eventIndex;
-        }
-        if (eventIndex < track.events.size()) {
-            break;
-        }
-        m_nextTrack = trackIndex + 1;
-        m_nextEvent = 0;
+        m_nextEvents[trackIndex] = eventIndex;
     }
     if (m_positionUs >= durationMicroseconds()) {
         stop();
         return;
     }
     emitPosition();
+}
+
+void PlaybackSession::rebuildAudioState(qint64 targetUs)
+{
+    m_nextEvents.resize(m_playbackModel.tracks().size());
+    std::fill(m_nextEvents.begin(), m_nextEvents.end(), 0);
+
+    QHash<int, QVector<PlaybackEvent>> activeNotes;
+
+    for (int trackIndex = 0; trackIndex < m_playbackModel.tracks().size(); ++trackIndex) {
+        const auto& events = m_playbackModel.tracks()[trackIndex].events;
+        const int end = m_playbackModel.tracks()[trackIndex].index
+                            ? m_playbackModel.tracks()[trackIndex].index->lowerBound(targetUs)
+                            : 0;
+        m_nextEvents[trackIndex] = end;
+        for (int i = 0; i < end; ++i) {
+            const auto& event = events[i];
+            if (event.kind == PlaybackEventKind::NoteOn) {
+                activeNotes[event.channel * 128 + event.pitch].push_back(event);
+            } else if (event.kind == PlaybackEventKind::NoteOff) {
+                const int key = event.channel * 128 + event.pitch;
+                if (activeNotes.contains(key) && !activeNotes[key].isEmpty()) {
+                    activeNotes[key].removeLast();
+                    if (activeNotes[key].isEmpty()) activeNotes.remove(key);
+                }
+            } else {
+                // Program, controller, pitch bend and pressure events form the
+                // device state that must be replayed after a seek.
+                m_audioService->submit(event);
+            }
+        }
+    }
+
+    for (auto it = activeNotes.cbegin(); it != activeNotes.cend(); ++it) {
+        for (const auto& active : it.value()) {
+            PlaybackEvent resumed = active;
+            const qint64 endUs = resumed.timestampUs + resumed.durationUs;
+            if (endUs <= targetUs) {
+                continue;
+            }
+            resumed.timestampUs = targetUs;
+            resumed.durationUs = endUs - targetUs;
+            m_audioService->submit(resumed);
+        }
+    }
 }
 
 void PlaybackSession::flushActiveNotes()

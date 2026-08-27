@@ -41,6 +41,12 @@ struct Measure {
     int repeatCount = 2;
     int endingNumber = 0;
     QString endingType;
+    bool segno = false;
+    bool coda = false;
+    bool daCapo = false;
+    bool dalSegno = false;
+    bool toCoda = false;
+    bool fine = false;
 };
 
 struct InstrumentChange {
@@ -48,6 +54,56 @@ struct InstrumentChange {
     int channel = 0;
     int program = 0;
     QString sourceId;
+};
+
+struct ControlChange {
+    Tick tick = 0;
+    int channel = 0;
+    int controller = 0;
+    int value = 0;
+};
+
+struct PitchBendChange {
+    Tick tick = 0;
+    int channel = 0;
+    int value = 8192;
+};
+
+struct ChannelPressureChange {
+    Tick tick = 0;
+    int channel = 0;
+    int value = 0;
+};
+
+struct DynamicChange {
+    Tick tick = 0;
+    int velocity = 90;
+};
+
+struct TimeSignatureChange {
+    Tick tick = 0;
+    int beats = 4;
+    int beatType = 4;
+};
+
+struct KeySignatureChange {
+    Tick tick = 0;
+    int fifths = 0;
+    QString mode = QStringLiteral("major");
+};
+
+struct ClefChange {
+    Tick tick = 0;
+    int staff = 1;
+    QString sign = QStringLiteral("G");
+    int line = 2;
+    int octaveChange = 0;
+};
+
+struct HairpinChange {
+    Tick start = 0;
+    Tick end = 0;
+    bool crescendo = true;
 };
 
 struct PlaybackSegment {
@@ -65,6 +121,14 @@ struct Track {
     QVector<NoteEvent> notes;
     QVector<Measure> measures;
     QVector<InstrumentChange> instrumentChanges;
+    QVector<ControlChange> controlChanges;
+    QVector<PitchBendChange> pitchBendChanges;
+    QVector<ChannelPressureChange> channelPressureChanges;
+    QVector<DynamicChange> dynamics;
+    QVector<TimeSignatureChange> timeSignatures;
+    QVector<KeySignatureChange> keySignatures;
+    QVector<ClefChange> clefs;
+    QVector<HairpinChange> hairpins;
 };
 
 class MusicDocument {
@@ -83,6 +147,7 @@ public:
 
     qint64 tickToMicroseconds(Tick tick) const;
     Tick microsecondsToTick(qint64 microseconds) const;
+    qint64 playbackTickToMicroseconds(Tick outputTick) const;
     QVector<PlaybackSegment> playbackSegments() const;
     Tick playbackDuration() const;
 

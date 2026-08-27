@@ -25,9 +25,11 @@ public:
     bool seek(qint64 microseconds);
     bool flush();
     void noteOn(int channel, int pitch, int velocity);
-    void scheduleNoteOff(int channel, int pitch, qint64 durationMicroseconds);
+    void noteOff(int channel, int pitch);
     void programChange(int channel, int program);
     void controlChange(int channel, int controller, int value);
+    void pitchBend(int channel, int value);
+    void channelPressure(int channel, int value);
 
 private:
     bool resolveSymbols(QString* error);
@@ -53,6 +55,8 @@ private:
     using NoteOn = int (*)(fluid_synth_t*, int, int, int);
     using NoteOff = int (*)(fluid_synth_t*, int, int);
     using Cc = int (*)(fluid_synth_t*, int, int, int);
+    using PitchBend = int (*)(fluid_synth_t*, int, int);
+    using ChannelPressure = int (*)(fluid_synth_t*, int, int);
     using SystemReset = int (*)(fluid_synth_t*);
 
     NewSettings m_newSettings = nullptr;
@@ -68,6 +72,8 @@ private:
     NoteOn m_noteOn = nullptr;
     NoteOff m_noteOff = nullptr;
     Cc m_cc = nullptr;
+    PitchBend m_pitchBend = nullptr;
+    ChannelPressure m_channelPressure = nullptr;
     SystemReset m_systemReset = nullptr;
 };
 

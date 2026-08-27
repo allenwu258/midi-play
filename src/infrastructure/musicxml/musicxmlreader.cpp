@@ -113,13 +113,39 @@ int parseDivisions(QXmlStreamReader& xml)
     return divisions;
 }
 
-void parseDirection(QXmlStreamReader& xml, music::MusicDocument& document, music::Tick tick)
+int dynamicVelocity(const QString& name)
+{
+    const QString value = name.toLower();
+    if (value == u"pppp") return 24;
+    if (value == u"ppp") return 34;
+    if (value == u"pp") return 44;
+    if (value == u"p") return 58;
+    if (value == u"mp") return 72;
+    if (value == u"mf") return 88;
+    if (value == u"f") return 104;
+    if (value == u"ff") return 116;
+    if (value == u"fff") return 124;
+    if (value == u"ffff") return 127;
+    return 90;
+}
+
+void parseDirection(QXmlStreamReader& xml, music::MusicDocument& document, music::Track& track,
+                    music::Measure& measure, music::Tick tick)
 {
     double bpm = -1;
+    int velocity = -1;
     while (xml.readNextStartElement()) {
         if (xml.name() == u"sound") {
             const auto value = xml.attributes().value(u"tempo");
             if (!value.isEmpty()) bpm = value.toDouble();
+            const auto dynamics = xml.attributes().value(u"dynamics");
+            if (!dynamics.isEmpty()) velocity = std::clamp(dynamics.toInt(), 1, 127);
+            measure.daCapo = xml.attributes().value(u"dacapo") == u"yes";
+            measure.fine = xml.attributes().value(u"fine") == u"yes";
+            measure.toCoda = !xml.attributes().value(u"tocoda").isEmpty();
+            measure.dalSegno = !xml.attributes().value(u"dalsegno").isEmpty();
+            measure.segno = measure.segno || !xml.attributes().value(u"segno").isEmpty();
+            measure.coda = measure.coda || !xml.attributes().value(u"coda").isEmpty();
             xml.skipCurrentElement();
         } else if (xml.name() == u"direction-type") {
             while (xml.readNextStartElement()) {
@@ -128,11 +154,41 @@ void parseDirection(QXmlStreamReader& xml, music::MusicDocument& document, music
                         if (xml.name() == u"per-minute") bpm = xml.readElementText().toDouble();
                         else xml.skipCurrentElement();
                     }
+                } else if (xml.name() == u"dynamics") {
+                    while (xml.readNextStartElement()) {
+                        velocity = dynamicVelocity(xml.name().toString());
+                        xml.skipCurrentElement();
+                    }
+                } else if (xml.name() == u"segno") {
+                    measure.segno = true;
+                    xml.skipCurrentElement();
+                } else if (xml.name() == u"coda") {
+                    measure.coda = true;
+                    xml.skipCurrentElement();
+                } else if (xml.name() == u"pedal") {
+                    const auto type = xml.attributes().value(u"type");
+                    const int value = (type == u"start" || type == u"change") ? 127 : 0;
+                    track.controlChanges.push_back({tick, track.channel, 64, value});
+                    xml.skipCurrentElement();
+                } else if (xml.name() == u"wedge") {
+                    const auto type = xml.attributes().value(u"type");
+                    if (type == u"stop") {
+                        for (int index = track.hairpins.size() - 1; index >= 0; --index) {
+                            if (track.hairpins[index].end == 0) {
+                                track.hairpins[index].end = tick;
+                                break;
+                            }
+                        }
+                    } else if (type == u"crescendo" || type == u"diminuendo") {
+                        track.hairpins.push_back({tick, 0, type == u"crescendo"});
+                    }
+                    xml.skipCurrentElement();
                 } else xml.skipCurrentElement();
             }
         } else xml.skipCurrentElement();
     }
     if (bpm > 0.0) document.tempos().push_back({tick, bpm});
+    if (velocity > 0) track.dynamics.push_back({tick, velocity});
 }
 
 void parseNotations(QXmlStreamReader& xml, bool& tieStart, bool& tieStop,
@@ -261,7 +317,41 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
         if (xml.name() == u"attributes") {
             while (xml.readNextStartElement()) {
                 if (xml.name() == u"divisions") divisions = std::max(1, xml.readElementText().toInt());
-                else xml.skipCurrentElement();
+                else if (xml.name() == u"time") {
+                    int beats = 4;
+                    int beatType = 4;
+                    while (xml.readNextStartElement()) {
+                        if (xml.name() == u"beats") beats = std::max(1, xml.readElementText().toInt());
+                        else if (xml.name() == u"beat-type") beatType = std::max(1, xml.readElementText().toInt());
+                        else xml.skipCurrentElement();
+                    }
+                    track.timeSignatures.push_back({measureStart, beats, beatType});
+                } else if (xml.name() == u"key") {
+                    int fifths = 0;
+                    QString mode = QStringLiteral("major");
+                    while (xml.readNextStartElement()) {
+                        if (xml.name() == u"fifths") fifths = xml.readElementText().toInt();
+                        else if (xml.name() == u"mode") mode = xml.readElementText();
+                        else xml.skipCurrentElement();
+                    }
+                    track.keySignatures.push_back({measureStart, fifths, mode});
+                } else if (xml.name() == u"clef") {
+                    bool ok = false;
+                    const int staff = std::max(1, xml.attributes().value(u"number").toInt(&ok));
+                    int actualStaff = ok ? staff : 1;
+                    QString sign = QStringLiteral("G");
+                    int line = 2;
+                    int octaveChange = 0;
+                    while (xml.readNextStartElement()) {
+                        if (xml.name() == u"sign") sign = xml.readElementText();
+                        else if (xml.name() == u"line") line = xml.readElementText().toInt();
+                        else if (xml.name() == u"clef-octave-change") octaveChange = xml.readElementText().toInt();
+                        else xml.skipCurrentElement();
+                    }
+                    track.clefs.push_back({measureStart, actualStaff, sign, line, octaveChange});
+                } else {
+                    xml.skipCurrentElement();
+                }
             }
         } else if (xml.name() == u"note") {
             QString noteInstrument;
@@ -286,7 +376,7 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
                 else xml.skipCurrentElement();
             }
         } else if (xml.name() == u"direction") {
-            parseDirection(xml, document, cursor);
+            parseDirection(xml, document, track, measureInfo, cursor);
         } else if (xml.name() == u"barline") {
             parseBarline(xml, measureInfo);
         } else {
@@ -349,6 +439,9 @@ ReadResult MusicXmlReader::read(const QString& path) const
                         measureStart = parseMeasure(xml, track, *document, measureStart, divisions, measureNumber,
                                                     instruments, currentInstrument);
                     } else xml.skipCurrentElement();
+                }
+                for (auto& hairpin : track.hairpins) {
+                    if (hairpin.end <= hairpin.start) hairpin.end = document->duration();
                 }
                 if (!track.notes.isEmpty()) document->tracks().push_back(std::move(track));
             } else xml.skipCurrentElement();

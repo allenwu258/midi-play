@@ -30,8 +30,9 @@ QVector<PlaybackEvent> PlaybackEventsRenderer::render(const PlaybackData& source
     for (const auto& event : result) {
         if (!merged.isEmpty()) {
             auto& previous = merged.back();
-            if (previous.kind == PlaybackEvent::Kind::Note && event.kind == PlaybackEvent::Kind::Note
+            if (previous.kind == PlaybackEventKind::NoteOn && event.kind == PlaybackEventKind::NoteOn
                 && previous.channel == event.channel && previous.pitch == event.pitch
+                && previous.voice == event.voice && previous.staff == event.staff
                 && previous.tieStart && event.tieStop
                 && event.timestampUs <= previous.timestampUs + previous.durationUs + 2'000) {
                 previous.durationUs = qMax(previous.durationUs,

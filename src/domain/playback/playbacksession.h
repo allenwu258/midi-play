@@ -43,6 +43,7 @@ private:
     void setState(State state);
     void emitPosition();
     void flushActiveNotes();
+    void rebuildAudioState(qint64 targetUs);
 
     std::shared_ptr<const music::MusicDocument> m_document;
     std::unique_ptr<IPlaybackAudioService> m_audioService;
@@ -52,8 +53,7 @@ private:
     qint64 m_positionUs = 0;
     qint64 m_clockBaseUs = 0;
     QElapsedTimer m_clock;
-    int m_nextTrack = 0;
-    int m_nextEvent = 0;
+    QVector<int> m_nextEvents;
 };
 
 } // namespace midi_play::playback

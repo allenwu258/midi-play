@@ -87,9 +87,12 @@ Qt UI
 当前引擎还包含：
 
 - repeat segment 和 ending 的播放顺序展开。
+- D.C./D.S./Segno/Coda/Fine 基础跳转和重复段 tempo-aware 时间映射。
 - staff/voice 独立 playback track。
-- tie 合并、staccato、accent、tenuto、ghost articulation。
-- ProgramChange 和基础 instrument change。
+- 显式 NoteOn/NoteOff 事件流，避免由 UI 定时器生成 note-off。
+- tie 合并、staccato、accent、tenuto、ghost articulation、dynamic/hairpin/pedal。
+- ProgramChange、ControlChange、PitchBend、ChannelPressure 和 instrument change。
+- 每轨道 PlaybackStateSnapshot，用于 seek 时恢复音色、控制器和跨目标位置的长音。
 - playback thread 与 audio service thread。
 - `ProjectAudioSettings` JSON 持久化。
 

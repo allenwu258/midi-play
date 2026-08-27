@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QDebug>
+#include <QThread>
 #include <QTimer>
 
 int main(int argc, char* argv[])
@@ -31,7 +32,8 @@ int main(int argc, char* argv[])
         }
         engine.start();
         engine.noteOn(0, 60, 100);
-        engine.scheduleNoteOff(0, 60, 800'000);
+        QThread::msleep(800);
+        engine.noteOff(0, 60);
         QTimer::singleShot(1'000, &app, &QCoreApplication::quit);
         return app.exec();
     }

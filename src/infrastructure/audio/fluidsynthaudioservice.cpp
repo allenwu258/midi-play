@@ -21,29 +21,40 @@ bool FluidSynthAudioService::seek(qint64 positionUs) { return m_engine->seek(pos
 bool FluidSynthAudioService::flush() { return m_engine->flush(); }
 void FluidSynthAudioService::submit(const playback::PlaybackEvent& event)
 {
-    if (event.kind == playback::PlaybackEvent::Kind::ProgramChange) {
+    if (event.kind == playback::PlaybackEventKind::ProgramChange) {
         m_engine->programChange(event.channel, event.program);
         return;
     }
-    if (event.kind == playback::PlaybackEvent::Kind::ControlChange) {
-        m_engine->controlChange(event.channel, event.pitch, event.velocity);
+    if (event.kind == playback::PlaybackEventKind::ControlChange) {
+        m_engine->controlChange(event.channel, event.controller, event.value);
         return;
     }
-    if (event.kind == playback::PlaybackEvent::Kind::AllNotesOff) {
+    if (event.kind == playback::PlaybackEventKind::PitchBend) {
+        m_engine->pitchBend(event.channel, event.value);
+        return;
+    }
+    if (event.kind == playback::PlaybackEventKind::ChannelPressure) {
+        m_engine->channelPressure(event.channel, event.value);
+        return;
+    }
+    if (event.kind == playback::PlaybackEventKind::AllNotesOff) {
         m_engine->flush();
         return;
     }
+    if (event.kind == playback::PlaybackEventKind::NoteOff) {
+        m_engine->noteOff(event.channel, event.pitch);
+        return;
+    }
     m_engine->noteOn(event.channel, event.pitch, event.velocity);
-    m_engine->scheduleNoteOff(event.channel, event.pitch, event.durationUs);
 }
 
 void FluidSynthAudioService::submitOff(const playback::PlaybackEvent& event)
 {
-    if (event.kind == playback::PlaybackEvent::Kind::AllNotesOff) {
+    if (event.kind == playback::PlaybackEventKind::AllNotesOff) {
         m_engine->flush();
         return;
     }
-    m_engine->scheduleNoteOff(event.channel, event.pitch, 0);
+    m_engine->noteOff(event.channel, event.pitch);
 }
 
 } // namespace midi_play::audio

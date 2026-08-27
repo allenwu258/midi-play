@@ -3,6 +3,8 @@
 #include <QFile>
 #include <QHash>
 
+#include <algorithm>
+
 namespace midi_play::midi {
 namespace {
 
@@ -57,7 +59,7 @@ musicxml::ReadResult MidiReader::read(const QString& path) const
         music::Track track;
         track.id = QStringLiteral("midi-track-%1").arg(trackIndex + 1);
         track.name = track.id;
-        QHash<int, ActiveNote> active;
+        QHash<int, QVector<ActiveNote>> active;
         music::Tick tick = 0;
         quint8 runningStatus = 0;
         int currentProgram = 0;
@@ -78,6 +80,20 @@ musicxml::ReadResult MidiReader::read(const QString& path) const
                     const quint32 usPerQuarter = (quint32(reader.u8()) << 16) | (quint32(reader.u8()) << 8) | reader.u8();
                     if (usPerQuarter > 0) document->tempos().push_back({tick * music::MusicDocument::kPpq / division,
                                                                           60'000'000.0 / usPerQuarter});
+                } else if (metaType == 0x03 && size > 0 && reader.canRead(size)) {
+                    track.name = QString::fromUtf8(reader.bytes(size));
+                } else if (metaType == 0x58 && size >= 2 && reader.canRead(size)) {
+                    const int beats = reader.u8();
+                    const int exponent = reader.u8();
+                    reader.bytes(size - 2);
+                    track.timeSignatures.push_back({tick * music::MusicDocument::kPpq / division,
+                                                     beats, 1 << std::clamp(exponent, 0, 6)});
+                } else if (metaType == 0x59 && size >= 2 && reader.canRead(size)) {
+                    const int fifths = static_cast<qint8>(reader.u8());
+                    const int mode = reader.u8();
+                    reader.bytes(size - 2);
+                    track.keySignatures.push_back({tick * music::MusicDocument::kPpq / division,
+                                                    fifths, mode == 0 ? QStringLiteral("major") : QStringLiteral("minor")});
                 } else {
                     reader.bytes(size);
                 }
@@ -96,18 +112,30 @@ musicxml::ReadResult MidiReader::read(const QString& path) const
                 currentProgram = first;
                 track.program = currentProgram;
                 track.channel = channel;
+                track.instrumentChanges.push_back({tick * music::MusicDocument::kPpq / division,
+                                                    channel, currentProgram, QString()});
             } else if (command == 0x90 && second > 0) {
-                active.insert(channel * 128 + first, {tick, second});
+                active[channel * 128 + first].push_back({tick, second});
             } else if (command == 0x80 || (command == 0x90 && second == 0)) {
                 const int key = channel * 128 + first;
-                if (active.contains(key)) {
-                    const auto start = active.take(key);
+                if (active.contains(key) && !active[key].isEmpty()) {
+                    const auto start = active[key].takeLast();
+                    if (active[key].isEmpty()) active.remove(key);
                     const music::Tick scaledStart = start.tick * music::MusicDocument::kPpq / division;
                     const music::Tick scaledEnd = tick * music::MusicDocument::kPpq / division;
                     track.notes.push_back({scaledStart, qMax<music::Tick>(1, scaledEnd - scaledStart), first,
                                            start.velocity, channel, currentProgram});
                     maxTick = qMax(maxTick, scaledEnd);
                 }
+            } else if (command == 0xb0) {
+                const music::Tick scaledTick = tick * music::MusicDocument::kPpq / division;
+                track.controlChanges.push_back({scaledTick, channel, first, second});
+            } else if (command == 0xe0) {
+                const music::Tick scaledTick = tick * music::MusicDocument::kPpq / division;
+                track.pitchBendChanges.push_back({scaledTick, channel, (second << 7) | first});
+            } else if (command == 0xd0) {
+                const music::Tick scaledTick = tick * music::MusicDocument::kPpq / division;
+                track.channelPressureChanges.push_back({scaledTick, channel, first});
             }
         }
         reader.pos = trackEnd;
