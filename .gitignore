@@ -1,57 +1,70 @@
+# Build trees and CMake-generated files
 /build/
 /CMakeFiles/
-cmake-build-*/
-out/
-CMakeUserPresets.json
+/cmake-build-*/
+/out/
+/dist/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
 compile_commands.json
+/Makefile
+*.ninja
+*.ninja_deps
+*.ninja_log
 
-# Visual Studio
+# Visual Studio / MSVC generated state
 .vs/
 *.suo
-*.VC.db
-*.tlog/
-
-# Build artifacts
-*.exe
-*.dll
+*.user
+*.vcxproj.user
 *.pdb
 *.ilk
-*.obj
-*.lib
-*.exp
-*.ipch
-*.ninja
-.ninja_*/
+*.tlog/
+/Debug/
+/Release/
+/x64/
+/x86/
 
-# Qt generated files
-*_autogen/
-moc_*.cpp
-qrc_*.cpp
-ui_*.h
+# CMake preset overrides and local tool configuration
+CMakeUserPresets.json
+.cache/
+.vscode/settings.json
+.idea/
 
-# Logs and temporary files
+# Qt and local deployment artifacts
+/qt.conf
+/plugins/
+/platforms/
+/styles/
+/imageformats/
+*.qmlc
+*.jsc
+
+# Runtime logs, diagnostics, dumps and command output
 *.log
-*.out
 *.err
+*.out
+*.dmp
+*.stackdump
+
+# Test and coverage output
+/coverage/
+/test-results/
+*.gcda
+*.gcno
+*.gcov
+
+# Temporary files and editor backups
 *.tmp
+*.temp
 *.bak
+*.swp
+*.swo
+*~
 
-# Accidental in-source CMake build
-/CMakeCache.txt
-/cmake_install.cmake
-/CTestTestfile.cmake
-/Makefile
-/*.sln
-/*.vcxproj
-/*.vcxproj.filters
-/Testing/
-
-# OS files
-Thumbs.db
-.DS_Store
-
-# User-specific settings
-*.user
+# Keep source assets such as midiSound-2025-1-14.sf2 trackable.
 
 # Local architecture and analysis documents
 /documents/
