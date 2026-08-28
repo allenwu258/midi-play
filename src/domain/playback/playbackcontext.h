@@ -16,7 +16,14 @@ public:
 
 private:
     struct DynamicPoint { qint64 timestampUs; int velocity; };
-    struct HairpinPoint { qint64 startUs; qint64 endUs; bool crescendo; };
+    struct HairpinPoint {
+        qint64 startUs;
+        qint64 endUs;
+        double startProgress;
+        double endProgress;
+        bool crescendo;
+        bool includeEnd;
+    };
     QMap<QString, QVector<DynamicPoint>> m_dynamics;
     QMap<QString, QVector<HairpinPoint>> m_hairpins;
     QMap<qint64, double> m_tempos;

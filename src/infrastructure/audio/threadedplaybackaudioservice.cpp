@@ -4,6 +4,22 @@
 #include <QPointer>
 
 namespace midi_play::audio {
+namespace {
+
+playback::PlaybackBackendCapabilities effectiveCapabilities(
+    playback::PlaybackBackendCapabilities capabilities,
+    const std::shared_ptr<const playback::PlaybackClockSnapshot>& clockSnapshot)
+{
+    // A device clock without a separately shared atomic snapshot cannot be
+    // consumed safely through this threaded decorator. Degrade explicitly to
+    // the monotonic transport clock rather than crossing into the worker.
+    if (capabilities.usesAudioClock() && !clockSnapshot) {
+        capabilities.clockSource = playback::PlaybackClockSource::SoftwareMonotonic;
+    }
+    return capabilities;
+}
+
+} // namespace
 
 class ThreadedPlaybackAudioService::Worker final : public QObject {
 public:
@@ -15,8 +31,10 @@ public:
 };
 
 ThreadedPlaybackAudioService::ThreadedPlaybackAudioService(std::unique_ptr<playback::IPlaybackAudioService> service)
-    : m_capabilities(service ? service->capabilities()
-                             : playback::PlaybackBackendCapabilities {})
+    : m_clockSnapshot(service ? service->clockSnapshot() : nullptr)
+    , m_capabilities(effectiveCapabilities(
+          service ? service->capabilities() : playback::PlaybackBackendCapabilities {},
+          m_clockSnapshot))
     , m_worker(std::make_unique<Worker>(std::move(service)))
 {
     m_worker->moveToThread(&m_thread);
@@ -101,12 +119,7 @@ bool ThreadedPlaybackAudioService::setTransportPosition(qint64 positionUs)
 
 qint64 ThreadedPlaybackAudioService::clockPositionUs() const
 {
-    // clockPositionUs() is explicitly a thread-safe snapshot API. Reading it
-    // directly keeps an AudioDevice clock from adding a blocking worker hop to
-    // every scheduler tick.
-    return m_worker && m_worker->m_service
-        ? m_worker->m_service->clockPositionUs()
-        : -1;
+    return m_clockSnapshot ? m_clockSnapshot->positionUs() : -1;
 }
 
 playback::PlaybackClockSource ThreadedPlaybackAudioService::clockSource() const

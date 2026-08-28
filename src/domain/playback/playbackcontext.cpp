@@ -19,22 +19,73 @@ PlaybackContext::PlaybackContext(std::shared_ptr<const music::MusicDocument> doc
     }
     for (const auto& track : document->tracks()) {
         auto& points = m_dynamics[track.id];
-        for (const auto& dynamic : track.dynamics) {
-            points.push_back({timeline->outputTickToMicroseconds(dynamic.tick), dynamic.velocity});
-        }
+        auto& hairpins = m_hairpins[track.id];
+
+        QVector<const music::DynamicChange*> sortedDynamics;
+        sortedDynamics.reserve(track.dynamics.size());
+        for (const auto& dynamic : track.dynamics) sortedDynamics.push_back(&dynamic);
+        std::stable_sort(sortedDynamics.begin(), sortedDynamics.end(), [](const auto* left, const auto* right) {
+            return left->tick < right->tick;
+        });
+
+        QVector<const music::NoteEvent*> sortedVelocityNotes;
+        sortedVelocityNotes.reserve(track.notes.size());
         for (const auto& note : track.notes) {
-            if (note.velocity != 90) {
-                points.push_back({timeline->outputTickToMicroseconds(note.start), note.velocity});
+            if (note.velocity != 90) sortedVelocityNotes.push_back(&note);
+        }
+        std::stable_sort(sortedVelocityNotes.begin(), sortedVelocityNotes.end(), [](const auto* left, const auto* right) {
+            return left->start < right->start;
+        });
+
+        for (const auto& segment : segments) {
+            const auto projectTick = [&segment, &timeline](music::Tick sourceTick) {
+                const music::Tick outputTick = segment.outputStart
+                                             + (sourceTick - segment.sourceStart);
+                return timeline->outputTickToMicroseconds(outputTick);
+            };
+
+            auto dynamicIt = std::lower_bound(
+                sortedDynamics.cbegin(), sortedDynamics.cend(), segment.sourceStart,
+                [](const auto* dynamic, music::Tick tick) { return dynamic->tick < tick; });
+            for (; dynamicIt != sortedDynamics.cend() && (*dynamicIt)->tick < segment.sourceEnd;
+                 ++dynamicIt) {
+                points.push_back({projectTick((*dynamicIt)->tick), (*dynamicIt)->velocity});
+            }
+
+            auto noteIt = std::lower_bound(
+                sortedVelocityNotes.cbegin(), sortedVelocityNotes.cend(), segment.sourceStart,
+                [](const auto* note, music::Tick tick) { return note->start < tick; });
+            for (; noteIt != sortedVelocityNotes.cend() && (*noteIt)->start < segment.sourceEnd;
+                 ++noteIt) {
+                points.push_back({projectTick((*noteIt)->start), (*noteIt)->velocity});
+            }
+
+            for (const auto& hairpin : track.hairpins) {
+                const music::Tick sourceLength = hairpin.end - hairpin.start;
+                if (sourceLength <= 0) continue;
+
+                const music::Tick overlapStart = std::max(hairpin.start, segment.sourceStart);
+                const music::Tick overlapEnd = std::min(hairpin.end, segment.sourceEnd);
+                if (overlapEnd <= overlapStart) continue;
+
+                const double startProgress = static_cast<double>(overlapStart - hairpin.start)
+                                           / static_cast<double>(sourceLength);
+                const double endProgress = static_cast<double>(overlapEnd - hairpin.start)
+                                         / static_cast<double>(sourceLength);
+                const qint64 startUs = projectTick(overlapStart);
+                const qint64 endUs = projectTick(overlapEnd);
+                if (endUs > startUs) {
+                    hairpins.push_back({startUs, endUs, startProgress, endProgress,
+                                        hairpin.crescendo, overlapEnd == hairpin.end});
+                }
             }
         }
-        auto& hairpins = m_hairpins[track.id];
-        for (const auto& hairpin : track.hairpins) {
-            const qint64 startUs = timeline->outputTickToMicroseconds(hairpin.start);
-            const qint64 endUs = timeline->outputTickToMicroseconds(hairpin.end);
-            if (endUs > startUs) hairpins.push_back({startUs, endUs, hairpin.crescendo});
-        }
-        std::sort(points.begin(), points.end(), [](const auto& left, const auto& right) {
+        std::stable_sort(points.begin(), points.end(), [](const auto& left, const auto& right) {
             return left.timestampUs < right.timestampUs;
+        });
+        std::stable_sort(hairpins.begin(), hairpins.end(), [](const auto& left, const auto& right) {
+            if (left.startUs != right.startUs) return left.startUs < right.startUs;
+            return left.endUs < right.endUs;
         });
     }
 }
@@ -60,9 +111,14 @@ int PlaybackContext::velocityAt(const QString& trackId, qint64 timestampUs, int 
     }
     if (hairpinIt != m_hairpins.end()) {
         for (const auto& hairpin : hairpinIt.value()) {
-            if (timestampUs < hairpin.startUs || timestampUs > hairpin.endUs) continue;
-            const double ratio = static_cast<double>(timestampUs - hairpin.startUs)
-                               / static_cast<double>(hairpin.endUs - hairpin.startUs);
+            if (timestampUs < hairpin.startUs || timestampUs > hairpin.endUs
+                || (timestampUs == hairpin.endUs && !hairpin.includeEnd)) {
+                continue;
+            }
+            const double localProgress = static_cast<double>(timestampUs - hairpin.startUs)
+                                       / static_cast<double>(hairpin.endUs - hairpin.startUs);
+            const double ratio = hairpin.startProgress
+                               + (hairpin.endProgress - hairpin.startProgress) * localProgress;
             const int startVelocity = hairpin.crescendo ? result : std::max(1, result - 36);
             const int endVelocity = hairpin.crescendo ? std::min(127, result + 36) : result;
             result = static_cast<int>(std::lround(startVelocity + (endVelocity - startVelocity) * ratio));

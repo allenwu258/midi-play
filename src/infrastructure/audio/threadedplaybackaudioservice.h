@@ -35,6 +35,7 @@ public:
 
 private:
     class Worker;
+    const std::shared_ptr<const playback::PlaybackClockSnapshot> m_clockSnapshot;
     const playback::PlaybackBackendCapabilities m_capabilities;
     QThread m_thread;
     std::unique_ptr<Worker> m_worker;

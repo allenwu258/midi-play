@@ -1,6 +1,7 @@
 #include "domain/playback/iplaybackaudioservice.h"
 #include "domain/playback/playbacksession.h"
 #include "domain/playback/playbackpositionthrottler.h"
+#include "domain/playback/playbackcontext.h"
 #include "domain/music/playbacktimeline.h"
 #include "infrastructure/audio/threadedplaybackaudioservice.h"
 
@@ -21,7 +22,9 @@ using midi_play::music::PlaybackTimeline;
 using midi_play::music::Track;
 using midi_play::playback::IPlaybackAudioService;
 using midi_play::playback::PlaybackBackendCapabilities;
+using midi_play::playback::PlaybackClockSnapshot;
 using midi_play::playback::PlaybackClockSource;
+using midi_play::playback::PlaybackContext;
 using midi_play::playback::PlaybackData;
 using midi_play::playback::PlaybackEvent;
 using midi_play::playback::PlaybackEventKind;
@@ -71,6 +74,10 @@ public:
         ++clockPositionQueryCount;
         return clockPositionUsValue;
     }
+    std::shared_ptr<const PlaybackClockSnapshot> clockSnapshot() const override
+    {
+        return sharedClockSnapshot;
+    }
     PlaybackBackendCapabilities capabilities() const override
     {
         ++capabilitiesQueryCount;
@@ -99,9 +106,10 @@ public:
     int startCount = 0;
     int pauseCount = 0;
     int flushCount = 0;
-    mutable int capabilitiesQueryCount = 0;
-    mutable int clockPositionQueryCount = 0;
+    mutable std::atomic<int> capabilitiesQueryCount {0};
+    mutable std::atomic<int> clockPositionQueryCount {0};
     qint64 clockPositionUsValue = -1;
+    std::shared_ptr<PlaybackClockSnapshot> sharedClockSnapshot;
     PlaybackBackendCapabilities reportedCapabilities;
     quint64 currentGeneration = 0;
     QVector<qint64> seekPositions;
@@ -170,6 +178,98 @@ void testThreadedAudioCapabilitiesAreImmutableSnapshot()
     }
     require(recording->capabilitiesQueryCount == 1,
             "capability reads must not cross into the audio worker");
+}
+
+void testPlaybackContextProjectsDynamicsThroughRepeats()
+{
+    auto document = std::make_shared<MusicDocument>();
+    document->setDuration(1'920);
+    document->tempos().push_back({0, 120.0, 0});
+
+    midi_play::music::Measure first;
+    first.number = 1;
+    first.start = 0;
+    first.duration = 960;
+    first.repeatStart = true;
+    midi_play::music::Measure second;
+    second.number = 2;
+    second.start = 960;
+    second.duration = 960;
+    second.repeatEnd = true;
+    second.repeatCount = 2;
+    document->measures() = {first, second};
+
+    Track dynamicsTrack;
+    dynamicsTrack.id = QStringLiteral("repeat-dynamics");
+    dynamicsTrack.dynamics = {{0, 40}, {960, 100}};
+    dynamicsTrack.hairpins.push_back({0, 960, true});
+    document->tracks().push_back(dynamicsTrack);
+
+    Track spanningHairpinTrack;
+    spanningHairpinTrack.id = QStringLiteral("spanning-hairpin");
+    spanningHairpinTrack.dynamics = {{0, 40}};
+    spanningHairpinTrack.hairpins.push_back({480, 1'440, true});
+    document->tracks().push_back(spanningHairpinTrack);
+
+    auto timeline = std::make_shared<PlaybackTimeline>(document);
+    PlaybackContext context(document, timeline);
+
+    require(context.velocityAt(dynamicsTrack.id, 1'500'000, 90) == 100,
+            "first repeat pass must apply the second-measure dynamic");
+    require(context.velocityAt(dynamicsTrack.id, 2'000'000, 90) == 40,
+            "second repeat pass must restore the first-measure dynamic");
+    require(context.velocityAt(dynamicsTrack.id, 2'500'000, 90) == 58,
+            "second repeat pass must replay its crescendo");
+
+    require(context.velocityAt(spanningHairpinTrack.id, 750'000, 90) == 49,
+            "hairpin progress before a segment boundary must be preserved");
+    require(context.velocityAt(spanningHairpinTrack.id, 1'000'000, 90) == 58,
+            "hairpin must be applied exactly once at a segment boundary");
+    require(context.velocityAt(spanningHairpinTrack.id, 1'250'000, 90) == 67,
+            "hairpin progress after a segment boundary must remain continuous");
+    require(context.velocityAt(spanningHairpinTrack.id, 2'750'000, 90) == 49,
+            "spanning hairpin must restart on the repeated pass");
+}
+
+void testThreadedAudioClockUsesAtomicSnapshot()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    auto clockSnapshot = std::make_shared<PlaybackClockSnapshot>();
+    recording->reportedCapabilities.clockSource = PlaybackClockSource::AudioDevice;
+    recording->sharedClockSnapshot = clockSnapshot;
+    clockSnapshot->publish(750'000);
+
+    midi_play::audio::ThreadedPlaybackAudioService threaded(std::move(audio));
+    require(threaded.clockSource() == PlaybackClockSource::AudioDevice,
+            "threaded service must retain a safely published audio clock");
+    for (int i = 0; i < 100; ++i) {
+        require(threaded.clockPositionUs() == 750'000,
+                "threaded clock reads must use the atomic snapshot");
+    }
+    require(recording->clockPositionQueryCount == 0,
+            "threaded clock reads must never call the worker service directly");
+
+    clockSnapshot->publish(900'000);
+    require(threaded.clockPositionUs() == 900'000,
+            "threaded clock snapshot must expose newly published positions");
+    require(recording->clockPositionQueryCount == 0,
+            "updated snapshot reads must remain independent of the worker service");
+}
+
+void testThreadedAudioClockWithoutSnapshotFallsBackSafely()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    recording->reportedCapabilities.clockSource = PlaybackClockSource::AudioDevice;
+
+    midi_play::audio::ThreadedPlaybackAudioService threaded(std::move(audio));
+    require(threaded.clockSource() == PlaybackClockSource::SoftwareMonotonic,
+            "missing atomic device snapshot must fall back to the software clock");
+    require(threaded.clockPositionUs() < 0,
+            "missing atomic device snapshot must not expose an unsafe clock");
+    require(recording->clockPositionQueryCount == 0,
+            "fallback must not call the worker service across threads");
 }
 
 std::shared_ptr<const MusicDocument> testDocument()
@@ -314,6 +414,9 @@ int main(int argc, char* argv[])
     QCoreApplication app(argc, argv);
     testPlaybackTimelineCachesRepeatExpansion();
     testThreadedAudioCapabilitiesAreImmutableSnapshot();
+    testPlaybackContextProjectsDynamicsThroughRepeats();
+    testThreadedAudioClockUsesAtomicSnapshot();
+    testThreadedAudioClockWithoutSnapshotFallsBackSafely();
     testAudioClockCapabilityEnablesClockSampling();
     testPositionThrottlerUsesLatestSample();
     testSeekPreservesTransportIntent();

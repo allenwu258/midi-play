@@ -4,6 +4,9 @@
 
 #include <QString>
 
+#include <atomic>
+#include <memory>
+
 namespace midi_play::playback {
 
 enum class PlaybackClockSource {
@@ -22,6 +25,27 @@ struct PlaybackBackendCapabilities {
     bool usesAudioClock() const { return clockSource == PlaybackClockSource::AudioDevice; }
 };
 
+// Atomic handoff owned by an AudioDevice backend and shared with its
+// scheduler-facing decorator. The backend publishes from its audio callback
+// or worker thread; realtime consumers only perform an atomic load.
+class PlaybackClockSnapshot final {
+public:
+    void publish(qint64 positionUs) noexcept
+    {
+        m_positionUs.store(positionUs, std::memory_order_release);
+    }
+
+    void invalidate() noexcept { publish(-1); }
+
+    qint64 positionUs() const noexcept
+    {
+        return m_positionUs.load(std::memory_order_acquire);
+    }
+
+private:
+    std::atomic<qint64> m_positionUs {-1};
+};
+
 class IPlaybackAudioService {
 public:
     virtual ~IPlaybackAudioService() = default;
@@ -37,10 +61,15 @@ public:
         Q_UNUSED(positionUs)
         return true;
     }
-    // AudioDevice backends must expose a lock-free or equivalently bounded,
-    // thread-safe snapshot. The playback scheduler may read it every tick and
-    // must never wait on the realtime audio thread.
+    // Direct services may resolve their clock on the caller's thread. A
+    // threaded decorator must use clockSnapshot() and must not call this
+    // virtual function across thread boundaries.
     virtual qint64 clockPositionUs() const { return -1; }
+    // AudioDevice backends create this snapshot before they are wrapped and
+    // continuously publish their frame-derived position into it. Returning an
+    // empty snapshot makes a threaded decorator fall back to the software
+    // clock instead of performing an unsafe cross-thread call.
+    virtual std::shared_ptr<const PlaybackClockSnapshot> clockSnapshot() const { return {}; }
     virtual PlaybackClockSource clockSource() const { return PlaybackClockSource::SoftwareMonotonic; }
     virtual bool supportsTimedEvents() const { return false; }
     virtual bool supportsPerNoteExpression() const { return false; }
