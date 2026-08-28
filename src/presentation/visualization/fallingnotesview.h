@@ -6,7 +6,6 @@
 #include "fallingnotesrenderer.h"
 #include "scenelayoutengine.h"
 
-#include <QTimer>
 #include <QWidget>
 
 namespace midi_play::presentation::visualization {
@@ -28,19 +27,15 @@ public slots:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
-    void showEvent(QShowEvent* event) override;
-    void hideEvent(QHideEvent* event) override;
 
 private:
     void rebuildFrameState();
-    void updateAnimationTimer();
 
     midi_play::visualization::PlaybackSceneState m_state;
     midi_play::visualization::VisibleNoteIndex m_noteIndex;
     SceneLayoutEngine m_layoutEngine;
     FallingNotesRenderer m_renderer;
     PlaybackSceneGeometry m_geometry;
-    QTimer m_repaintTimer;
     bool m_geometryDirty = true;
     bool m_frameStateDirty = true;
 };

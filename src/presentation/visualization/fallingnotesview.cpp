@@ -4,7 +4,6 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
-#include <QShowEvent>
 
 #include <algorithm>
 
@@ -16,9 +15,6 @@ FallingNotesView::FallingNotesView(QWidget* parent)
     setObjectName(QStringLiteral("fallingNotesView"));
     setAttribute(Qt::WA_OpaquePaintEvent);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    m_repaintTimer.setInterval(16);
-    m_repaintTimer.setTimerType(Qt::PreciseTimer);
-    connect(&m_repaintTimer, &QTimer::timeout, this, QOverload<>::of(&FallingNotesView::update));
 }
 
 void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
@@ -44,14 +40,16 @@ void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs
     m_state.transportPositionUs = std::clamp<qint64>(positionUs, 0, std::max<qint64>(0, durationUs));
     m_state.durationUs = std::max<qint64>(0, durationUs);
     m_frameStateDirty = true;
-    if (m_state.transportState != midi_play::playback::State::Playing) update();
+    // PlaybackController is the single UI frame clock. Every published
+    // transport sample invalidates this view; the Qt event loop coalesces
+    // multiple update requests into one paint event when the UI is busy.
+    update();
 }
 
 void FallingNotesView::setTransportState(midi_play::playback::State state)
 {
     m_state.transportState = state;
     m_frameStateDirty = true;
-    updateAnimationTimer();
     update();
 }
 
@@ -87,18 +85,6 @@ void FallingNotesView::resizeEvent(QResizeEvent* event)
     m_geometryDirty = true;
 }
 
-void FallingNotesView::showEvent(QShowEvent* event)
-{
-    QWidget::showEvent(event);
-    updateAnimationTimer();
-}
-
-void FallingNotesView::hideEvent(QHideEvent* event)
-{
-    QWidget::hideEvent(event);
-    m_repaintTimer.stop();
-}
-
 void FallingNotesView::rebuildFrameState()
 {
     if (!m_frameStateDirty) {
@@ -123,13 +109,6 @@ void FallingNotesView::rebuildFrameState()
             m_state.addActiveNote(index, note);
         }
     }
-}
-
-void FallingNotesView::updateAnimationTimer()
-{
-    const bool shouldRun = isVisible() && m_state.transportState == midi_play::playback::State::Playing;
-    if (shouldRun && !m_repaintTimer.isActive()) m_repaintTimer.start();
-    else if (!shouldRun) m_repaintTimer.stop();
 }
 
 } // namespace midi_play::presentation::visualization
