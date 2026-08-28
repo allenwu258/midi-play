@@ -25,6 +25,7 @@ public:
     playback::PlaybackClockSource clockSource() const override;
     bool supportsTimedEvents() const override;
     bool supportsPerNoteExpression() const override;
+    playback::PlaybackBackendCapabilities capabilities() const override;
     bool flush() override;
     void setEventGeneration(quint64 generation) override;
     void submit(const playback::PlaybackEvent& event) override;
@@ -34,9 +35,9 @@ public:
 
 private:
     class Worker;
-    std::unique_ptr<playback::IPlaybackAudioService> m_service;
-    std::unique_ptr<Worker> m_worker;
+    const playback::PlaybackBackendCapabilities m_capabilities;
     QThread m_thread;
+    std::unique_ptr<Worker> m_worker;
     std::atomic<quint64> m_submissionGeneration {0};
 };
 

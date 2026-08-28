@@ -1,6 +1,8 @@
 #include "domain/playback/iplaybackaudioservice.h"
 #include "domain/playback/playbacksession.h"
 #include "domain/playback/playbackpositionthrottler.h"
+#include "domain/music/playbacktimeline.h"
+#include "infrastructure/audio/threadedplaybackaudioservice.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -15,8 +17,11 @@ namespace {
 
 using midi_play::music::MusicDocument;
 using midi_play::music::NoteEvent;
+using midi_play::music::PlaybackTimeline;
 using midi_play::music::Track;
 using midi_play::playback::IPlaybackAudioService;
+using midi_play::playback::PlaybackBackendCapabilities;
+using midi_play::playback::PlaybackClockSource;
 using midi_play::playback::PlaybackData;
 using midi_play::playback::PlaybackEvent;
 using midi_play::playback::PlaybackEventKind;
@@ -61,6 +66,16 @@ public:
         transportPositions.push_back(positionUs);
         return true;
     }
+    qint64 clockPositionUs() const override
+    {
+        ++clockPositionQueryCount;
+        return clockPositionUsValue;
+    }
+    PlaybackBackendCapabilities capabilities() const override
+    {
+        ++capabilitiesQueryCount;
+        return reportedCapabilities;
+    }
     bool flush() override
     {
         ++flushCount;
@@ -84,12 +99,78 @@ public:
     int startCount = 0;
     int pauseCount = 0;
     int flushCount = 0;
+    mutable int capabilitiesQueryCount = 0;
+    mutable int clockPositionQueryCount = 0;
+    qint64 clockPositionUsValue = -1;
+    PlaybackBackendCapabilities reportedCapabilities;
     quint64 currentGeneration = 0;
     QVector<qint64> seekPositions;
     QVector<qint64> transportPositions;
     QVector<quint64> submittedGenerations;
     QVector<PlaybackEvent> submittedEvents;
 };
+
+void testPlaybackTimelineCachesRepeatExpansion()
+{
+    auto document = std::make_shared<MusicDocument>();
+    document->setDuration(1'920);
+    document->tempos().push_back({0, 120.0, 0});
+    document->tempos().push_back({960, 60.0, 1});
+
+    midi_play::music::Measure first;
+    first.number = 1;
+    first.start = 0;
+    first.duration = 960;
+    first.repeatStart = true;
+    midi_play::music::Measure second;
+    second.number = 2;
+    second.start = 960;
+    second.duration = 960;
+    second.repeatEnd = true;
+    second.repeatCount = 2;
+    document->measures() = {first, second};
+
+    PlaybackTimeline timeline(document);
+    require(timeline.segments().size() == 4,
+            "timeline must expand a two-measure repeat exactly once");
+    require(timeline.durationTicks() == 3'840,
+            "timeline must cache playback-order tick duration");
+    require(timeline.durationUs() == 6'000'000,
+            "timeline must accumulate tempo-aware repeated duration");
+    require(timeline.outputTickToMicroseconds(960) == 1'000'000,
+            "timeline must resolve the first segment boundary");
+    require(timeline.outputTickToMicroseconds(1'920) == 3'000'000,
+            "timeline must resolve the repeated section boundary");
+    require(timeline.outputTickToMicroseconds(2'880) == 4'000'000,
+            "timeline must resolve the second-pass tempo boundary");
+    require(timeline.outputTickToMicroseconds(3'840) == 6'000'000,
+            "timeline must clamp the playback endpoint to cached duration");
+}
+
+void testThreadedAudioCapabilitiesAreImmutableSnapshot()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    recording->reportedCapabilities = {
+        PlaybackClockSource::SoftwareMonotonic, false, false
+    };
+
+    midi_play::audio::ThreadedPlaybackAudioService threaded(std::move(audio));
+    require(recording->capabilitiesQueryCount == 1,
+            "threaded audio service must capture capabilities once");
+    for (int i = 0; i < 100; ++i) {
+        require(threaded.clockSource() == PlaybackClockSource::SoftwareMonotonic,
+                "cached clock source must remain stable");
+        require(!threaded.supportsTimedEvents(),
+                "cached timed-event capability must remain stable");
+        require(!threaded.supportsPerNoteExpression(),
+                "cached expression capability must remain stable");
+        require(!threaded.capabilities().usesAudioClock(),
+                "capability snapshot must remain locally readable");
+    }
+    require(recording->capabilitiesQueryCount == 1,
+            "capability reads must not cross into the audio worker");
+}
 
 std::shared_ptr<const MusicDocument> testDocument()
 {
@@ -121,6 +202,24 @@ bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 500)
     return predicate();
 }
 
+void testAudioClockCapabilityEnablesClockSampling()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    recording->reportedCapabilities.clockSource = PlaybackClockSource::AudioDevice;
+    recording->clockPositionUsValue = 750'000;
+    PlaybackSession session(testDocument(), std::move(audio));
+
+    session.play();
+    require(waitUntil([&] { return recording->clockPositionQueryCount > 0; }),
+            "audio-clock backend must be sampled while playing");
+    require(session.positionMicroseconds() == recording->clockPositionUsValue,
+            "audio-clock backend must drive the playhead position");
+    session.pause();
+    require(recording->clockPositionQueryCount > 1,
+            "pause must capture the final audio-clock position");
+}
+
 void processEventsFor(int durationMs)
 {
     QElapsedTimer duration;
@@ -149,6 +248,10 @@ void testSeekPreservesTransportIntent()
     require(session.state() == State::Playing, "play must enter Playing state");
     require(waitUntil([&] { return session.positionMicroseconds() > 0; }),
             "playing session must advance before seek");
+    require(recording->capabilitiesQueryCount == 1,
+            "playback session must capture backend capabilities once");
+    require(recording->clockPositionQueryCount == 0,
+            "software-clock playback must not query the audio clock");
 
     constexpr qint64 playingSeekTargetUs = 1'000'000;
     recording->clearSubmissions();
@@ -164,6 +267,8 @@ void testSeekPreservesTransportIntent()
 
     session.pause();
     require(session.state() == State::Paused, "pause must enter Paused state");
+    require(recording->clockPositionQueryCount == 0,
+            "software-clock pause must not query the audio clock");
     constexpr qint64 pausedSeekTargetUs = 500'000;
     recording->clearSubmissions();
     session.seek(pausedSeekTargetUs);
@@ -207,6 +312,9 @@ void testPositionThrottlerUsesLatestSample()
 int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
+    testPlaybackTimelineCachesRepeatExpansion();
+    testThreadedAudioCapabilitiesAreImmutableSnapshot();
+    testAudioClockCapabilityEnablesClockSampling();
     testPositionThrottlerUsesLatestSample();
     testSeekPreservesTransportIntent();
     std::fprintf(stdout, "playback session tests passed\n");

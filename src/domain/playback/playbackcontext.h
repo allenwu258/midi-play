@@ -1,6 +1,6 @@
 #pragma once
 
-#include "domain/music/musicdocument.h"
+#include "domain/music/playbacktimeline.h"
 
 #include <QMap>
 #include <memory>
@@ -9,7 +9,8 @@ namespace midi_play::playback {
 
 class PlaybackContext final {
 public:
-    explicit PlaybackContext(std::shared_ptr<const music::MusicDocument> document);
+    PlaybackContext(std::shared_ptr<const music::MusicDocument> document,
+                    std::shared_ptr<const music::PlaybackTimeline> timeline);
     int velocityAt(const QString& trackId, qint64 timestampUs, int fallback) const;
     double tempoAt(qint64 timestampUs) const;
 

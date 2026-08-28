@@ -15,7 +15,9 @@ public:
 };
 
 ThreadedPlaybackAudioService::ThreadedPlaybackAudioService(std::unique_ptr<playback::IPlaybackAudioService> service)
-    : m_service(std::move(service)), m_worker(std::make_unique<Worker>(std::move(m_service)))
+    : m_capabilities(service ? service->capabilities()
+                             : playback::PlaybackBackendCapabilities {})
+    , m_worker(std::make_unique<Worker>(std::move(service)))
 {
     m_worker->moveToThread(&m_thread);
     m_thread.start();
@@ -99,38 +101,32 @@ bool ThreadedPlaybackAudioService::setTransportPosition(qint64 positionUs)
 
 qint64 ThreadedPlaybackAudioService::clockPositionUs() const
 {
-    qint64 result = -1;
-    QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
-        result = m_worker->m_service->clockPositionUs();
-    }, Qt::BlockingQueuedConnection);
-    return result;
+    // clockPositionUs() is explicitly a thread-safe snapshot API. Reading it
+    // directly keeps an AudioDevice clock from adding a blocking worker hop to
+    // every scheduler tick.
+    return m_worker && m_worker->m_service
+        ? m_worker->m_service->clockPositionUs()
+        : -1;
 }
 
 playback::PlaybackClockSource ThreadedPlaybackAudioService::clockSource() const
 {
-    playback::PlaybackClockSource result = playback::PlaybackClockSource::SoftwareMonotonic;
-    QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
-        result = m_worker->m_service->clockSource();
-    }, Qt::BlockingQueuedConnection);
-    return result;
+    return m_capabilities.clockSource;
 }
 
 bool ThreadedPlaybackAudioService::supportsTimedEvents() const
 {
-    bool result = false;
-    QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
-        result = m_worker->m_service->supportsTimedEvents();
-    }, Qt::BlockingQueuedConnection);
-    return result;
+    return m_capabilities.timedEvents;
 }
 
 bool ThreadedPlaybackAudioService::supportsPerNoteExpression() const
 {
-    bool result = false;
-    QMetaObject::invokeMethod(m_worker.get(), [this, &result] {
-        result = m_worker->m_service->supportsPerNoteExpression();
-    }, Qt::BlockingQueuedConnection);
-    return result;
+    return m_capabilities.perNoteExpression;
+}
+
+playback::PlaybackBackendCapabilities ThreadedPlaybackAudioService::capabilities() const
+{
+    return m_capabilities;
 }
 
 bool ThreadedPlaybackAudioService::flush()

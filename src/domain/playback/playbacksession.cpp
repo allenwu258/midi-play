@@ -7,7 +7,12 @@ namespace midi_play::playback {
 PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> document,
                                  std::unique_ptr<IPlaybackAudioService> audioService,
                                  QObject* parent)
-    : QObject(parent), m_document(std::move(document)), m_audioService(std::move(audioService)), m_playbackModel(m_document)
+    : QObject(parent)
+    , m_document(std::move(document))
+    , m_audioService(std::move(audioService))
+    , m_playbackModel(m_document)
+    , m_audioCapabilities(m_audioService->capabilities())
+    , m_durationUs(m_playbackModel.durationUs())
 {
     m_timer = new QTimer(this);
     m_timer->setInterval(2);
@@ -20,11 +25,6 @@ PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> doc
 }
 
 PlaybackSession::~PlaybackSession() = default;
-
-qint64 PlaybackSession::durationMicroseconds() const
-{
-    return m_playbackModel.durationUs();
-}
 
 bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
 {
@@ -71,9 +71,9 @@ void PlaybackSession::pause()
     if (m_state != State::Playing) {
         return;
     }
-    const qint64 audioClockUs = m_audioService->clockPositionUs();
-    if (audioClockUs >= 0) m_playHead.setAudioPositionUs(audioClockUs);
-    else m_playHead.clearAudioPosition();
+    if (m_audioCapabilities.usesAudioClock()) {
+        updateAudioClockPosition();
+    }
     m_positionUs = m_playHead.positionUs();
     m_timer->stop();
     // Explicit note-off events are dispatched by this session. Flush them on
@@ -115,7 +115,7 @@ void PlaybackSession::seek(qint64 microseconds)
     }
     advanceEventGeneration();
     flushActiveNotes();
-    m_positionUs = std::clamp<qint64>(microseconds, 0, durationMicroseconds());
+    m_positionUs = std::clamp<qint64>(microseconds, 0, m_durationUs);
     m_audioService->seek(m_positionUs);
     m_clockBaseUs = m_positionUs;
     m_playHead.seek(m_positionUs);
@@ -132,17 +132,17 @@ void PlaybackSession::onTimer()
     if (m_state != State::Playing || !m_document) {
         return;
     }
-    const qint64 audioClockUs = m_audioService->clockPositionUs();
-    if (audioClockUs >= 0) m_playHead.setAudioPositionUs(audioClockUs);
-    else m_playHead.clearAudioPosition();
+    if (m_audioCapabilities.usesAudioClock()) {
+        updateAudioClockPosition();
+    }
     m_positionUs = m_playHead.positionUs();
     const qint64 now = m_positionUs;
-    const qint64 dispatchUntilUs = m_audioService->supportsTimedEvents() ? now + 30'000 : now;
+    const qint64 dispatchUntilUs = m_audioCapabilities.timedEvents ? now + 30'000 : now;
     const auto window = m_scheduler.collectWindow(now, dispatchUntilUs, m_eventGeneration);
     if (!window.events.isEmpty()) {
         m_audioService->submitBatch(window.events, window.generation);
     }
-    if (m_positionUs >= durationMicroseconds()) {
+    if (m_positionUs >= m_durationUs) {
         stop();
         return;
     }
@@ -310,6 +310,13 @@ void PlaybackSession::advanceEventGeneration()
     m_audioService->setEventGeneration(m_eventGeneration);
 }
 
+void PlaybackSession::updateAudioClockPosition()
+{
+    const qint64 audioClockUs = m_audioService->clockPositionUs();
+    if (audioClockUs >= 0) m_playHead.setAudioPositionUs(audioClockUs);
+    else m_playHead.clearAudioPosition();
+}
+
 void PlaybackSession::setState(State state)
 {
     if (m_state == state) {
@@ -321,7 +328,7 @@ void PlaybackSession::setState(State state)
 
 void PlaybackSession::emitPosition()
 {
-    emit positionChanged(m_positionUs, durationMicroseconds());
+    emit positionChanged(m_positionUs, m_durationUs);
 }
 
 } // namespace midi_play::playback

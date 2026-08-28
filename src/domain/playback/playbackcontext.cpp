@@ -5,31 +5,32 @@
 
 namespace midi_play::playback {
 
-PlaybackContext::PlaybackContext(std::shared_ptr<const music::MusicDocument> document)
+PlaybackContext::PlaybackContext(std::shared_ptr<const music::MusicDocument> document,
+                                 std::shared_ptr<const music::PlaybackTimeline> timeline)
 {
-    if (!document) return;
-    const auto segments = document->playbackSegments();
+    if (!document || !timeline) return;
+    const auto& segments = timeline->segments();
     for (const auto& segment : segments) {
         for (const auto& tempo : document->tempos()) {
             if (tempo.tick < segment.sourceStart || tempo.tick >= segment.sourceEnd) continue;
             const music::Tick outputTick = segment.outputStart + (tempo.tick - segment.sourceStart);
-            m_tempos.insert(document->playbackTickToMicroseconds(outputTick), tempo.bpm);
+            m_tempos.insert(timeline->outputTickToMicroseconds(outputTick), tempo.bpm);
         }
     }
     for (const auto& track : document->tracks()) {
         auto& points = m_dynamics[track.id];
         for (const auto& dynamic : track.dynamics) {
-            points.push_back({document->playbackTickToMicroseconds(dynamic.tick), dynamic.velocity});
+            points.push_back({timeline->outputTickToMicroseconds(dynamic.tick), dynamic.velocity});
         }
         for (const auto& note : track.notes) {
             if (note.velocity != 90) {
-                points.push_back({document->playbackTickToMicroseconds(note.start), note.velocity});
+                points.push_back({timeline->outputTickToMicroseconds(note.start), note.velocity});
             }
         }
         auto& hairpins = m_hairpins[track.id];
         for (const auto& hairpin : track.hairpins) {
-            const qint64 startUs = document->playbackTickToMicroseconds(hairpin.start);
-            const qint64 endUs = document->playbackTickToMicroseconds(hairpin.end);
+            const qint64 startUs = timeline->outputTickToMicroseconds(hairpin.start);
+            const qint64 endUs = timeline->outputTickToMicroseconds(hairpin.end);
             if (endUs > startUs) hairpins.push_back({startUs, endUs, hairpin.crescendo});
         }
         std::sort(points.begin(), points.end(), [](const auto& left, const auto& right) {

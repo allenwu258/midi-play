@@ -223,8 +223,7 @@ QVector<PlaybackSegment> MusicDocument::playbackSegments() const
 
 Tick MusicDocument::playbackDuration() const
 {
-    const auto segments = playbackSegments();
-    if (segments.isEmpty()) return m_duration;
+    if (m_measures.isEmpty()) return m_duration;
     return RepeatList::build(m_measures, m_duration).duration();
 }
 

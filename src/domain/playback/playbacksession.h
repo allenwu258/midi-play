@@ -24,7 +24,7 @@ public:
 
     State state() const { return m_state; }
     qint64 positionMicroseconds() const { return m_positionUs; }
-    qint64 durationMicroseconds() const;
+    qint64 durationMicroseconds() const { return m_durationUs; }
     bool loadSoundFont(const QString& path, QString* error);
 
 public slots:
@@ -48,10 +48,13 @@ private:
     void rebuildAudioState(qint64 targetUs);
     void advanceEventGeneration();
     bool startPlaybackFromCurrentPosition();
+    void updateAudioClockPosition();
 
     std::shared_ptr<const music::MusicDocument> m_document;
     std::unique_ptr<IPlaybackAudioService> m_audioService;
     PlaybackModel m_playbackModel;
+    const PlaybackBackendCapabilities m_audioCapabilities;
+    const qint64 m_durationUs;
     QTimer* m_timer = nullptr;
     State m_state = State::Ready;
     qint64 m_positionUs = 0;

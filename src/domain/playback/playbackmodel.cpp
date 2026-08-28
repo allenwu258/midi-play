@@ -172,10 +172,11 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
     : m_document(std::move(document))
 {
     if (!m_document) return;
+    m_timeline = std::make_shared<music::PlaybackTimeline>(m_document);
     m_scoreDom = music::ScorePlaybackDom::build(*m_document);
-    m_context = std::make_shared<PlaybackContext>(m_document);
+    m_context = std::make_shared<PlaybackContext>(m_document, m_timeline);
     PlaybackEventsRenderer renderer(m_context);
-    const auto segments = m_document->playbackSegments();
+    const auto& segments = m_timeline->segments();
     for (const auto& track : m_document->tracks()) {
         QMap<QString, QVector<const music::NoteEvent*>> voiceGroups;
         for (const auto& note : track.notes) {
@@ -192,8 +193,8 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 const music::Tick outputTick = segment.outputStart + (note->start - segment.sourceStart);
                 const music::Tick segmentDuration = std::max<music::Tick>(1,
                     std::min(note->duration, segment.sourceEnd - note->start));
-                const qint64 timestamp = m_document->playbackTickToMicroseconds(outputTick);
-                const qint64 end = m_document->playbackTickToMicroseconds(outputTick + segmentDuration);
+                const qint64 timestamp = m_timeline->outputTickToMicroseconds(outputTick);
+                const qint64 end = m_timeline->outputTickToMicroseconds(outputTick + segmentDuration);
                 PlaybackEvent event;
                 event.timestampUs = timestamp;
                 event.durationUs = qMax<qint64>(1'000, end - timestamp);
@@ -219,7 +220,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (change.tick - segment.sourceStart);
                 PlaybackEvent program;
-                program.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
+                program.timestampUs = m_timeline->outputTickToMicroseconds(outputTick);
                 program.channel = change.channel;
                 program.program = change.program;
                 program.bankMsb = change.bankMsb;
@@ -232,7 +233,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (change.tick - segment.sourceStart);
                 PlaybackEvent event;
-                event.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
+                event.timestampUs = m_timeline->outputTickToMicroseconds(outputTick);
                 event.channel = change.channel;
                 event.controller = change.controller;
                 event.value = change.value;
@@ -244,7 +245,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (change.tick - segment.sourceStart);
                 PlaybackEvent event;
-                event.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
+                event.timestampUs = m_timeline->outputTickToMicroseconds(outputTick);
                 event.channel = change.channel;
                 event.value = change.value;
                 event.sequence = change.sequence;
@@ -255,7 +256,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (change.tick - segment.sourceStart);
                 PlaybackEvent event;
-                event.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
+                event.timestampUs = m_timeline->outputTickToMicroseconds(outputTick);
                 event.channel = change.channel;
                 event.value = change.value;
                 event.sequence = change.sequence;
@@ -266,7 +267,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (change.tick - segment.sourceStart);
                 PlaybackEvent event;
-                event.timestampUs = m_document->playbackTickToMicroseconds(outputTick);
+                event.timestampUs = m_timeline->outputTickToMicroseconds(outputTick);
                 event.channel = change.channel;
                 event.pitch = change.pitch;
                 event.value = change.value;
@@ -335,11 +336,6 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
     });
     m_globalIndex = std::make_shared<PlaybackEventIndex>(m_globalEvents);
     buildStateSnapshots(m_globalEvents, m_globalSnapshots);
-}
-
-qint64 PlaybackModel::durationUs() const
-{
-    return m_document ? m_document->playbackTickToMicroseconds(m_document->playbackDuration()) : 0;
 }
 
 const PlaybackData* PlaybackModel::track(const QString& id) const

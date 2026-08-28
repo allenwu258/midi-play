@@ -17,6 +17,8 @@ qt_add_executable(midi_play
     src/app/playerapplicationservice.cpp
     src/domain/music/musicdocument.h
     src/domain/music/musicdocument.cpp
+    src/domain/music/playbacktimeline.h
+    src/domain/music/playbacktimeline.cpp
     src/domain/music/musicanalysis.h
     src/domain/music/musicanalysis.cpp
     src/domain/music/musicreadresult.h
@@ -167,6 +169,8 @@ if (BUILD_TESTING)
         tests/playbacksessiontests.cpp
         src/domain/music/musicdocument.h
         src/domain/music/musicdocument.cpp
+        src/domain/music/playbacktimeline.h
+        src/domain/music/playbacktimeline.cpp
         src/domain/music/scoreplaybackdom.h
         src/domain/music/scoreplaybackdom.cpp
         src/domain/playback/playbacktypes.h
@@ -187,6 +191,8 @@ if (BUILD_TESTING)
         src/domain/playback/playbacksession.cpp
         src/domain/playback/playbackpositionthrottler.h
         src/domain/playback/playbackpositionthrottler.cpp
+        src/infrastructure/audio/threadedplaybackaudioservice.h
+        src/infrastructure/audio/threadedplaybackaudioservice.cpp
     )
     target_include_directories(midi_play_playback_session_tests PRIVATE src)
     target_link_libraries(midi_play_playback_session_tests PRIVATE Qt6::Core)
