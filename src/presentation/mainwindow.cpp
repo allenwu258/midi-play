@@ -163,6 +163,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
         if (m_durationUs > 0) {
             const qint64 targetUs = static_cast<qint64>(
                 static_cast<long double>(m_positionSlider->value()) * m_durationUs / kSliderResolution);
+            m_pendingSeekUs = targetUs;
+            m_seekPending = true;
             m_service->seek(targetUs);
         }
         m_sliderDragging = false;
@@ -173,6 +175,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
                 m_fileLabel->setText(title);
                 m_fileLabel->setToolTip(m_service->fileName());
                 m_durationUs = duration;
+                m_seekPending = false;
                 m_positionSlider->setEnabled(duration > 0);
                 m_statusLabel->setText(QStringLiteral("曲目已加载"));
                 updateTransportControls();
@@ -222,6 +225,16 @@ void MainWindow::updatePosition(qint64 position, qint64 duration)
 {
     m_positionUs = std::clamp<qint64>(position, 0, std::max<qint64>(0, duration));
     m_durationUs = std::max<qint64>(0, duration);
+
+    // Position signals already queued before a blocking seek can arrive after
+    // the mouse release. Keep the release point authoritative until the seek
+    // transaction publishes its exact position.
+    if (m_seekPending) {
+        if (m_positionUs != m_pendingSeekUs) {
+            return;
+        }
+        m_seekPending = false;
+    }
     if (!m_sliderDragging) {
         const int sliderValue = m_durationUs > 0
             ? static_cast<int>(static_cast<long double>(m_positionUs) * kSliderResolution / m_durationUs)

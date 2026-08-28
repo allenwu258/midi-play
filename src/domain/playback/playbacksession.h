@@ -47,6 +47,7 @@ private:
     void flushActiveNotes();
     void rebuildAudioState(qint64 targetUs);
     void advanceEventGeneration();
+    bool startPlaybackFromCurrentPosition();
 
     std::shared_ptr<const music::MusicDocument> m_document;
     std::unique_ptr<IPlaybackAudioService> m_audioService;

@@ -44,19 +44,26 @@ void PlaybackSession::play()
     if (m_state == State::Playing || !m_document || !m_document->isValid()) {
         return;
     }
+    startPlaybackFromCurrentPosition();
+}
+
+bool PlaybackSession::startPlaybackFromCurrentPosition()
+{
+    if (!m_document || !m_document->isValid()) {
+        return false;
+    }
     if (!m_audioService->start()) {
         emit errorOccurred(QStringLiteral("无法启动音频引擎"));
         setState(State::Error);
-        return;
+        return false;
     }
     m_audioService->setTransportPosition(m_positionUs);
-    if (m_state == State::Paused) {
-        rebuildAudioState(m_positionUs);
-    }
+    rebuildAudioState(m_positionUs);
     setState(State::Playing);
     m_clockBaseUs = m_positionUs;
     m_playHead.start(m_positionUs);
     m_timer->start();
+    return true;
 }
 
 void PlaybackSession::pause()
@@ -105,15 +112,15 @@ void PlaybackSession::seek(qint64 microseconds)
     }
     advanceEventGeneration();
     flushActiveNotes();
-    m_audioService->seek(microseconds);
     m_positionUs = std::clamp<qint64>(microseconds, 0, durationMicroseconds());
+    m_audioService->seek(m_positionUs);
     m_clockBaseUs = m_positionUs;
     m_playHead.seek(m_positionUs);
     m_audioService->setTransportPosition(m_positionUs);
-    rebuildAudioState(m_positionUs);
+    m_scheduler.seek(m_positionUs);
     emitPosition();
     if (resume) {
-        play();
+        startPlaybackFromCurrentPosition();
     }
 }
 

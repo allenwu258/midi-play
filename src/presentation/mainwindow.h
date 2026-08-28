@@ -44,6 +44,8 @@ private:
     qint64 m_positionUs = 0;
     qint64 m_durationUs = 0;
     bool m_sliderDragging = false;
+    bool m_seekPending = false;
+    qint64 m_pendingSeekUs = 0;
 };
 
 } // namespace midi_play::presentation

@@ -1,6 +1,7 @@
 #include "playbackcontroller.h"
 
 #include <QMetaObject>
+#include <QThread>
 
 namespace midi_play::playback {
 
@@ -59,7 +60,19 @@ void PlaybackController::pause() { if (m_session) QMetaObject::invokeMethod(m_se
 void PlaybackController::stop() { if (m_session) QMetaObject::invokeMethod(m_session.get(), "stop", Qt::QueuedConnection); }
 void PlaybackController::seek(qint64 microseconds)
 {
-    if (m_session) QMetaObject::invokeMethod(m_session.get(), "seek", Qt::QueuedConnection, Q_ARG(qint64, microseconds));
+    if (!m_session) {
+        return;
+    }
+
+    // A seek changes the timer, playhead, scheduler and audio state as one
+    // transport transaction. Wait until the session has applied it so a UI
+    // release cannot race with stale position notifications.
+    if (QThread::currentThread() == m_session->thread()) {
+        m_session->seek(microseconds);
+        return;
+    }
+    QMetaObject::invokeMethod(m_session.get(), "seek", Qt::BlockingQueuedConnection,
+                              Q_ARG(qint64, microseconds));
 }
 
 } // namespace midi_play::playback

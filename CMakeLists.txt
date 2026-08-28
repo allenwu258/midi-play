@@ -148,4 +148,34 @@ if (BUILD_TESTING)
         target_compile_definitions(midi_play_visualization_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()
     add_test(NAME visualization_domain COMMAND midi_play_visualization_tests)
+
+    add_executable(midi_play_playback_session_tests
+        tests/playbacksessiontests.cpp
+        src/domain/music/musicdocument.h
+        src/domain/music/musicdocument.cpp
+        src/domain/music/scoreplaybackdom.h
+        src/domain/music/scoreplaybackdom.cpp
+        src/domain/playback/playbacktypes.h
+        src/domain/playback/iplaybackaudioservice.h
+        src/domain/playback/playbackmodel.h
+        src/domain/playback/playbackmodel.cpp
+        src/domain/playback/playbackcontext.h
+        src/domain/playback/playbackcontext.cpp
+        src/domain/playback/playbackeventsrenderer.h
+        src/domain/playback/playbackeventsrenderer.cpp
+        src/domain/playback/playbackeventscheduler.h
+        src/domain/playback/playbackeventscheduler.cpp
+        src/domain/playback/playbackclock.h
+        src/domain/playback/playbackclock.cpp
+        src/domain/playback/playbackplayhead.h
+        src/domain/playback/playbackplayhead.cpp
+        src/domain/playback/playbacksession.h
+        src/domain/playback/playbacksession.cpp
+    )
+    target_include_directories(midi_play_playback_session_tests PRIVATE src)
+    target_link_libraries(midi_play_playback_session_tests PRIVATE Qt6::Core)
+    if (WIN32)
+        target_compile_definitions(midi_play_playback_session_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    add_test(NAME playback_session_transport COMMAND midi_play_playback_session_tests)
 endif()
