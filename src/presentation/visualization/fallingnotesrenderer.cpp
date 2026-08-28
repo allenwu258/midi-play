@@ -36,11 +36,29 @@ void FallingNotesRenderer::render(QPainter& painter, const PlaybackSceneGeometry
 void FallingNotesRenderer::renderStaticLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                              const PlaybackSceneState& state)
 {
+    renderStaticBackgroundLayer(painter, geometry, state);
+    renderStaticKeyboardLayer(painter, geometry, state);
+}
+
+void FallingNotesRenderer::renderStaticBackgroundLayer(
+    QPainter& painter, const PlaybackSceneGeometry& geometry,
+    const PlaybackSceneState& state)
+{
     prepareScene(geometry, state);
     painter.save();
     RasterRenderPolicy::apply(painter);
     painter.fillRect(geometry.bounds, m_theme.background);
     drawPitchBands(painter, geometry);
+    painter.restore();
+}
+
+void FallingNotesRenderer::renderStaticKeyboardLayer(
+    QPainter& painter, const PlaybackSceneGeometry& geometry,
+    const PlaybackSceneState& state)
+{
+    prepareScene(geometry, state);
+    painter.save();
+    RasterRenderPolicy::apply(painter);
     drawKeyboardBase(painter, geometry, state);
     painter.restore();
 }
@@ -65,10 +83,15 @@ void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
     m_noteRenderCache.prepare(state.chart, geometry);
     if (m_keyboardGeometryBuildCount != m_noteRenderCache.geometryBuildCount()) {
         m_keyboardGeometryBuildCount = m_noteRenderCache.geometryBuildCount();
+        m_pitchBandRects.clear();
         m_blackKeyForegroundRects.clear();
+        m_pitchBandRects.reserve(geometry.pitches.size());
         m_blackKeyForegroundRects.reserve(geometry.pitches.size());
         for (const auto& slot : geometry.pitches) {
             if (slot.valid && slot.blackKey) {
+                m_pitchBandRects.push_back(QRectF(
+                    slot.keyRect.left(), geometry.fallingRect.top(),
+                    slot.keyRect.width(), geometry.fallingRect.height()));
                 m_blackKeyForegroundRects.push_back(
                     slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
             }
@@ -86,14 +109,13 @@ void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
 void FallingNotesRenderer::drawPitchBands(QPainter& painter,
                                           const PlaybackSceneGeometry& geometry) const
 {
+    if (m_pitchBandRects.isEmpty()) return;
     painter.save();
     painter.setClipRect(geometry.fallingRect);
-    for (const auto& slot : geometry.pitches) {
-        if (!slot.valid || !slot.blackKey) continue;
-        const QRectF band(slot.keyRect.left(), geometry.fallingRect.top(),
-                          slot.keyRect.width(), geometry.fallingRect.height());
-        painter.fillRect(band, QColor(255, 255, 255, 7));
-    }
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(255, 255, 255, 7));
+    painter.drawRects(m_pitchBandRects.constData(),
+                      static_cast<int>(m_pitchBandRects.size()));
     painter.restore();
 }
 

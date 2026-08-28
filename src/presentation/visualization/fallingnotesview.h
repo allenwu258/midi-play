@@ -29,22 +29,24 @@ public slots:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     void rebuildFrameState();
-    void rebuildStaticLayer(qreal devicePixelRatio);
+    void rebuildStaticKeyboard(qreal devicePixelRatio, const QRect& logicalRect);
 
     midi_play::visualization::PlaybackSceneState m_state;
     midi_play::visualization::VisibleNoteIndex m_noteIndex;
     SceneLayoutEngine m_layoutEngine;
     FallingNotesRenderer m_renderer;
     PlaybackSceneGeometry m_geometry;
-    QImage m_staticLayer;
-    QSize m_staticLayerPhysicalSize;
-    qreal m_staticLayerDevicePixelRatio = 0.0;
+    QImage m_staticKeyboard;
+    QRect m_staticKeyboardLogicalRect;
+    QSize m_staticKeyboardPhysicalSize;
+    qreal m_staticKeyboardDevicePixelRatio = 0.0;
     bool m_geometryDirty = true;
     bool m_frameStateDirty = true;
-    bool m_staticLayerDirty = true;
+    bool m_staticKeyboardDirty = true;
 };
 
 } // namespace midi_play::presentation::visualization

@@ -35,6 +35,10 @@ public:
                 const midi_play::visualization::PlaybackSceneState& state);
     void renderStaticLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
                            const midi_play::visualization::PlaybackSceneState& state);
+    void renderStaticBackgroundLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
+                                     const midi_play::visualization::PlaybackSceneState& state);
+    void renderStaticKeyboardLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
+                                   const midi_play::visualization::PlaybackSceneState& state);
     void renderDynamicLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
                             const midi_play::visualization::PlaybackSceneState& state);
 
@@ -78,6 +82,7 @@ private:
     QVector<quint32> m_batchEpochs;
     QVector<int> m_usedStyleIndices;
     QVector<QLineF> m_tremoloLines;
+    QVector<QRectF> m_pitchBandRects;
     QVector<QRectF> m_blackKeyForegroundRects;
     quint64 m_keyboardGeometryBuildCount = 0;
     quint32 m_batchEpoch = 0;

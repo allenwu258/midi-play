@@ -1,6 +1,7 @@
 #include "fallingnotesview.h"
 
 #include <QHideEvent>
+#include <QEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
@@ -33,7 +34,7 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
     m_state.resetActiveNotes(m_state.chart ? m_state.chart->drumLanes().size() : 0);
     m_geometryDirty = true;
     m_frameStateDirty = true;
-    m_staticLayerDirty = true;
+    m_staticKeyboardDirty = true;
     update();
 }
 
@@ -75,25 +76,28 @@ void FallingNotesView::paintEvent(QPaintEvent* event)
     if (m_geometryDirty) {
         m_geometry = m_layoutEngine.layout(size(), m_state.chart.get(), m_state.lookAheadUs);
         m_geometryDirty = false;
-        m_staticLayerDirty = true;
+        m_staticKeyboardDirty = true;
     }
     rebuildFrameState();
 
     const qreal dpr = std::max<qreal>(1.0, devicePixelRatioF());
+    const QRect keyboardLogicalRect = m_geometry.keyboardRect.toAlignedRect();
     const QSize physicalSize(
-        std::max(1, static_cast<int>(std::ceil(width() * dpr))),
-        std::max(1, static_cast<int>(std::ceil(height() * dpr))));
-    if (m_staticLayerPhysicalSize != physicalSize
-        || !qFuzzyCompare(m_staticLayerDevicePixelRatio, dpr)) {
-        m_staticLayerDirty = true;
+        std::max(1, static_cast<int>(std::ceil(keyboardLogicalRect.width() * dpr))),
+        std::max(1, static_cast<int>(std::ceil(keyboardLogicalRect.height() * dpr))));
+    if (m_staticKeyboardLogicalRect != keyboardLogicalRect
+        || m_staticKeyboardPhysicalSize != physicalSize
+        || !qFuzzyCompare(m_staticKeyboardDevicePixelRatio, dpr)) {
+        m_staticKeyboardDirty = true;
     }
-    if (m_staticLayerDirty) rebuildStaticLayer(dpr);
+    if (m_staticKeyboardDirty) rebuildStaticKeyboard(dpr, keyboardLogicalRect);
 
     QPainter painter(this);
-    if (!m_staticLayer.isNull()) {
-        painter.drawImage(QPointF(0.0, 0.0), m_staticLayer);
+    m_renderer.renderStaticBackgroundLayer(painter, m_geometry, m_state);
+    if (!m_staticKeyboard.isNull()) {
+        painter.drawImage(m_staticKeyboardLogicalRect.topLeft(), m_staticKeyboard);
     } else {
-        m_renderer.renderStaticLayer(painter, m_geometry, m_state);
+        m_renderer.renderStaticKeyboardLayer(painter, m_geometry, m_state);
     }
     m_renderer.renderDynamicLayer(painter, m_geometry, m_state);
 }
@@ -104,28 +108,44 @@ void FallingNotesView::resizeEvent(QResizeEvent* event)
     m_geometryDirty = true;
 }
 
-void FallingNotesView::rebuildStaticLayer(qreal devicePixelRatio)
+void FallingNotesView::changeEvent(QEvent* event)
 {
-    constexpr qsizetype kMaximumStaticLayerBytes = 64 * 1024 * 1024;
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::FontChange
+        || event->type() == QEvent::ApplicationFontChange
+        || event->type() == QEvent::StyleChange) {
+        m_staticKeyboardDirty = true;
+        update();
+    }
+}
+
+void FallingNotesView::rebuildStaticKeyboard(qreal devicePixelRatio,
+                                             const QRect& logicalRect)
+{
+    constexpr qsizetype kMaximumStaticKeyboardBytes = 16 * 1024 * 1024;
     const QSize physicalSize(
-        std::max(1, static_cast<int>(std::ceil(width() * devicePixelRatio))),
-        std::max(1, static_cast<int>(std::ceil(height() * devicePixelRatio))));
+        std::max(1, static_cast<int>(std::ceil(logicalRect.width() * devicePixelRatio))),
+        std::max(1, static_cast<int>(std::ceil(logicalRect.height() * devicePixelRatio))));
     const qsizetype requiredBytes = static_cast<qsizetype>(physicalSize.width())
                                   * static_cast<qsizetype>(physicalSize.height()) * 4;
 
-    m_staticLayer = {};
-    m_staticLayerPhysicalSize = physicalSize;
-    m_staticLayerDevicePixelRatio = devicePixelRatio;
-    m_staticLayerDirty = false;
-    if (requiredBytes > kMaximumStaticLayerBytes) return;
+    m_staticKeyboard = {};
+    m_staticKeyboardLogicalRect = logicalRect;
+    m_staticKeyboardPhysicalSize = physicalSize;
+    m_staticKeyboardDevicePixelRatio = devicePixelRatio;
+    m_staticKeyboardDirty = false;
+    if (requiredBytes > kMaximumStaticKeyboardBytes) return;
 
-    QImage layer(physicalSize, QImage::Format_RGB32);
+    QImage layer(physicalSize, QImage::Format_ARGB32_Premultiplied);
     if (layer.isNull()) return;
+    layer.fill(Qt::transparent);
     layer.setDevicePixelRatio(devicePixelRatio);
     QPainter layerPainter(&layer);
-    m_renderer.renderStaticLayer(layerPainter, m_geometry, m_state);
+    layerPainter.setFont(font());
+    layerPainter.translate(-logicalRect.topLeft());
+    m_renderer.renderStaticKeyboardLayer(layerPainter, m_geometry, m_state);
     layerPainter.end();
-    m_staticLayer = std::move(layer);
+    m_staticKeyboard = std::move(layer);
 }
 
 void FallingNotesView::rebuildFrameState()
