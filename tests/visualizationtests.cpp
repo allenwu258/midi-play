@@ -2,13 +2,16 @@
 #include "domain/visualization/activenotelookup.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "domain/visualization/visiblenoteindex.h"
+#include "domain/visualization/visiblenotewindowcache.h"
 #include "presentation/playbackmetadatapresenter.h"
+#include "presentation/visualization/playbackoverlaytimeline.h"
 #include "presentation/visualization/rasterrenderpolicy.h"
 #include "presentation/visualization/noterendercache.h"
 #include "presentation/visualization/scenelayoutengine.h"
+#include "presentation/visualization/textlayoutcache.h"
 
-#include <QCoreApplication>
 #include <QDebug>
+#include <QGuiApplication>
 #include <QImage>
 #include <QPainter>
 
@@ -26,10 +29,15 @@ using midi_play::music::Track;
 using midi_play::presentation::visualization::SceneLayoutEngine;
 using midi_play::presentation::visualization::NoteRenderCache;
 using midi_play::presentation::visualization::RasterRenderPolicy;
+using midi_play::presentation::visualization::PlaybackOverlayTimeline;
+using midi_play::presentation::visualization::TextLayoutCache;
+using midi_play::presentation::visualization::TextLayoutRole;
 using midi_play::presentation::PlaybackMetadataPresenter;
+using midi_play::presentation::PlaybackMetadataTimeline;
 using midi_play::visualization::PlaybackVisualizationProjector;
 using midi_play::visualization::ActiveNoteLookup;
 using midi_play::visualization::VisibleNoteIndex;
+using midi_play::visualization::VisibleNoteWindowCache;
 
 void require(bool condition, const char* message)
 {
@@ -123,6 +131,61 @@ void testVisibleIndex()
 
     index.query(2'100'000, 2'200'000, result);
     require(result.isEmpty(), "window after chart end must be empty");
+}
+
+void testVisibleNoteWindowCache()
+{
+    QVector<midi_play::visualization::VisualNote> notes;
+    for (int index = 0; index < 5; ++index) {
+        midi_play::visualization::VisualNote note;
+        note.startUs = index * 100;
+        note.keyEndUs = note.startUs + 40;
+        note.audibleEndUs = note.keyEndUs;
+        notes.push_back(note);
+    }
+    midi_play::visualization::VisualNote sustained;
+    sustained.startUs = 0;
+    sustained.keyEndUs = 20;
+    sustained.audibleEndUs = 1'000;
+    notes.insert(1, sustained);
+
+    VisibleNoteIndex index(notes);
+    VisibleNoteWindowCache cache;
+    require(cache.ensure(index, 100, 200, 50), "first visible window must query the index");
+    require(cache.queryCount() == 1 && cache.cachedStartUs() == 50 && cache.cachedEndUs() == 250,
+            "first query must expand both sides by the configured guard");
+    require(!cache.ensure(index, 120, 220, 50) && cache.queryCount() == 1,
+            "normal forward frames inside the guard must reuse candidates");
+    require(!cache.ensure(index, 80, 180, 50) && cache.queryCount() == 1,
+            "small backward motion inside the guard must reuse candidates");
+
+    for (int frame = 0; frame < 60; ++frame) {
+        const qint64 startUs = 80 + frame * 2;
+        cache.ensure(index, startUs, startUs + 100, 50);
+    }
+    require(cache.queryCount() == 2,
+            "sixty small frame advances must refresh only when the exact window crosses the guard");
+
+    require(cache.ensure(index, 900, 950, 50) && cache.queryCount() == 3,
+            "an arbitrary seek outside the candidate window must refresh immediately");
+    require(cache.candidateNoteIndices().contains(1),
+            "a note with an old attack and a long audible tail must remain a candidate");
+
+    const quint64 revision = index.revision();
+    index.rebuild(notes);
+    require(index.revision() == revision + 1, "index rebuild must advance its revision");
+    require(cache.ensure(index, 900, 950, 50) && cache.queryCount() == 4,
+            "index revision changes must invalidate a contained candidate window");
+
+    require(cache.ensure(index, 20, 10, 50) && !cache.isValid(),
+            "an invalid exact window must reset the candidate cache");
+    require(cache.queryCount() == 4, "invalid windows must not execute interval queries");
+
+    require(cache.ensure(index, 140, 200, 0), "zero-guard boundary query must refresh");
+    require(cache.candidateNoteIndices().contains(2),
+            "notes ending exactly at the inclusive window start must be retained");
+    require(cache.candidateNoteIndices().contains(3),
+            "notes starting exactly at the inclusive window end must be retained");
 }
 
 void testActiveNoteLookup()
@@ -400,6 +463,123 @@ void testPlaybackMetadataPresentation()
     require(empty.key == QStringLiteral("--") && empty.timeSignature == QStringLiteral("--/--")
                 && empty.tempo == QStringLiteral("-- BPM"),
             "empty metadata must use stable placeholders");
+
+    PlaybackMetadataTimeline timeline;
+    timeline.setChart(chart);
+    midi_play::presentation::PlaybackMetadata metadata;
+    require(timeline.update(0, metadata), "first metadata timeline read must publish labels");
+    require(!timeline.update(100'000, metadata),
+            "positions inside one metadata segment must not rebuild or republish labels");
+    require(timeline.update(secondSectionUs, metadata) && metadata.tempo == QStringLiteral("140 BPM"),
+            "metadata boundary must publish the preformatted next segment");
+    require(timeline.update(0, metadata) && metadata.tempo == QStringLiteral("90 BPM"),
+            "reverse seeks must locate the earlier segment correctly");
+
+    timeline.clear();
+    require(timeline.update(0, metadata), "cleared metadata timeline must publish placeholders once");
+    require(!timeline.update(1'000'000, metadata),
+            "empty metadata timeline must not republish stable placeholders");
+}
+
+void testMetadataTimelineMergesEquivalentDisplaySegments()
+{
+    MusicDocument document;
+    document.tempos() = {{0, 120.1, 0}, {240, 120.4, 1}, {480, 121.0, 2}};
+    document.setDuration(960);
+    Track track;
+    track.id = QStringLiteral("metadata-merge");
+    NoteEvent note;
+    note.noteId = 1;
+    note.start = 0;
+    note.duration = 960;
+    track.notes.push_back(note);
+    document.tracks().push_back(track);
+    document.rebuildMeasureGrid();
+    midi_play::music::MusicAnalyzer().analyze(document);
+
+    const auto chart = PlaybackVisualizationProjector().project(document, 1);
+    PlaybackMetadataTimeline timeline;
+    timeline.setChart(chart);
+    require(timeline.segmentCount() == 2,
+            "change points with identical display metadata must collapse into one segment");
+}
+
+void testPlaybackOverlayTimeline()
+{
+    MusicDocument document;
+    document.tempos().push_back({0, 120.0, 0});
+    document.setDuration(960);
+    document.markers() = {
+        {0, QStringLiteral("Intro"), 0},
+        {480, QStringLiteral("Verse"), 1}
+    };
+    document.lyrics() = {
+        {240, QStringLiteral("first"), 1, 0},
+        {480, QStringLiteral("second"), 1, 1}
+    };
+    Track track;
+    track.id = QStringLiteral("overlay");
+    NoteEvent note;
+    note.noteId = 1;
+    note.start = 0;
+    note.duration = 960;
+    track.notes.push_back(note);
+    document.tracks().push_back(track);
+    document.rebuildMeasureGrid();
+    midi_play::music::MusicAnalyzer().analyze(document);
+
+    const auto chart = PlaybackVisualizationProjector().project(document, 1);
+    PlaybackOverlayTimeline timeline;
+    timeline.setChart(chart);
+    require(timeline.segmentCount() == 3,
+            "marker and lyric change points must be merged into a compact overlay timeline");
+
+    const auto& initial = timeline.at(0);
+    require(initial.marker == QStringLiteral("Intro") && initial.lyric.isEmpty(),
+            "overlay timeline must apply events at time zero");
+    const quint64 firstSearchCount = timeline.binarySearchCount();
+    for (qint64 positionUs = 1'000; positionUs < 240'000; positionUs += 2'000) {
+        timeline.at(positionUs);
+    }
+    require(timeline.binarySearchCount() == firstSearchCount,
+            "stable overlay playback must use segment bounds without repeated binary searches");
+
+    const auto& firstLyric = timeline.at(250'000);
+    require(firstLyric.marker == QStringLiteral("Intro")
+                && firstLyric.lyric == QStringLiteral("first"),
+            "lyric boundary must preserve the current marker");
+    const auto& second = timeline.at(500'000);
+    require(second.marker == QStringLiteral("Verse")
+                && second.lyric == QStringLiteral("second"),
+            "coincident marker and lyric events must update atomically");
+    const auto& reverse = timeline.at(10'000);
+    require(reverse.marker == QStringLiteral("Intro") && reverse.lyric.isEmpty(),
+            "reverse seek must resolve the earlier overlay segment");
+}
+
+void testTextLayoutCache()
+{
+    TextLayoutCache cache(2);
+    QFont font;
+    font.setPointSizeF(9.5);
+
+    const auto& first = cache.layout(TextLayoutRole::Marker, QStringLiteral("Section A"), font);
+    require(first.displayText == QStringLiteral("Section A") && cache.buildCount() == 1,
+            "first text request must shape and cache one layout");
+    cache.layout(TextLayoutRole::Marker, QStringLiteral("Section A"), font);
+    cache.layout(TextLayoutRole::Marker, QStringLiteral("Section A"), font, -1.0, 1.001);
+    require(cache.buildCount() == 1,
+            "identical and sub-quantum DPR requests must reuse the prepared glyph layout");
+
+    cache.layout(TextLayoutRole::Lyric, QStringLiteral("A long lyric"), font, 30.0);
+    require(cache.size() == 2 && cache.buildCount() == 2,
+            "width and role must participate in the layout cache key");
+    cache.layout(TextLayoutRole::Octave, QStringLiteral("C4"), font);
+    require(cache.size() == 2 && cache.buildCount() == 3,
+            "bounded cache must evict one least-recently-used entry on overflow");
+    cache.layout(TextLayoutRole::Marker, QStringLiteral("Section A"), font);
+    require(cache.buildCount() == 4,
+            "requesting an evicted layout must rebuild it exactly once");
 }
 
 void testSimplifiedPitchSpelling()
@@ -481,9 +661,10 @@ void testLargeVisibleIndexAgainstFullScan()
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
     testRepeatProjection();
     testVisibleIndex();
+    testVisibleNoteWindowCache();
     testActiveNoteLookup();
     testNoteRenderCache();
     testNoteRenderCacheStaticFlags();
@@ -492,6 +673,9 @@ int main(int argc, char* argv[])
     testRasterRenderPolicyIsScopedByPainterState();
     testSceneGeometry();
     testPlaybackMetadataPresentation();
+    testMetadataTimelineMergesEquivalentDisplaySegments();
+    testPlaybackOverlayTimeline();
+    testTextLayoutCache();
     testSimplifiedPitchSpelling();
     testLargeVisibleIndexAgainstFullScan();
     std::fprintf(stdout, "visualization tests passed\n");

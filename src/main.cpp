@@ -93,24 +93,11 @@ int main(int argc, char* argv[])
         state.durationUs = chart->durationUs();
         state.transportPositionUs = std::clamp<qint64>(requestedPosition, 0, chart->durationUs());
         state.transportState = midi_play::playback::State::Playing;
+        state.updateVisibleWindow();
         midi_play::visualization::VisibleNoteIndex index(chart->notes());
-        index.query(state.transportPositionUs - state.afterglowUs,
-                    state.transportPositionUs + state.lookAheadUs,
-                    state.visibleNoteIndices);
-        state.resetActiveNotes(chart->drumLanes().size());
-        for (const int noteIndex : state.visibleNoteIndices) {
-            const auto& note = chart->notes().at(noteIndex);
-            if (note.startUs <= state.transportPositionUs && note.audibleEndUs > state.transportPositionUs) {
-                state.addActiveNote(noteIndex, note);
-            }
-        }
-        std::fprintf(stdout, "render chart_tracks=%lld notes=%lld visible=%lld active=%lld position_us=%lld duration_us=%lld\n",
-                     static_cast<long long>(chart->tracks().size()),
-                     static_cast<long long>(chart->notes().size()),
-                     static_cast<long long>(state.visibleNoteIndices.size()),
-                     static_cast<long long>(state.activeNoteIndices.size()),
-                     static_cast<long long>(state.transportPositionUs),
-                     static_cast<long long>(state.durationUs));
+        QVector<int> candidates;
+        index.query(state.visibleWindowStartUs, state.visibleWindowEndUs, candidates);
+        state.candidateNoteIndices = std::span<const int>(candidates.constData(), candidates.size());
         const int renderWidth = argc > 5 ? std::clamp(QString::fromLocal8Bit(argv[5]).toInt(), 320, 7680) : 1280;
         const int renderHeight = argc > 6 ? std::clamp(QString::fromLocal8Bit(argv[6]).toInt(), 240, 4320) : 720;
         QImage image(renderWidth, renderHeight, QImage::Format_ARGB32_Premultiplied);
@@ -118,8 +105,16 @@ int main(int argc, char* argv[])
         QPainter painter(&image);
         const auto geometry = midi_play::presentation::visualization::SceneLayoutEngine().layout(
             image.size(), chart.get(), state.lookAheadUs);
-        midi_play::presentation::visualization::FallingNotesRenderer().render(painter, geometry, state);
+        midi_play::presentation::visualization::FallingNotesRenderer renderer;
+        renderer.render(painter, geometry, state);
         painter.end();
+        std::fprintf(stdout, "render chart_tracks=%lld notes=%lld visible=%lld active=%lld position_us=%lld duration_us=%lld\n",
+                     static_cast<long long>(chart->tracks().size()),
+                     static_cast<long long>(chart->notes().size()),
+                     static_cast<long long>(renderer.visibleNoteCount()),
+                     static_cast<long long>(renderer.activeNoteCount()),
+                     static_cast<long long>(state.transportPositionUs),
+                     static_cast<long long>(state.durationUs));
         return image.save(outputPath) ? 0 : 1;
     }
 

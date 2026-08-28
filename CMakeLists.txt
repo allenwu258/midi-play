@@ -32,6 +32,8 @@ qt_add_executable(midi_play
     src/domain/visualization/playbackvisualizationprojector.cpp
     src/domain/visualization/visiblenoteindex.h
     src/domain/visualization/visiblenoteindex.cpp
+    src/domain/visualization/visiblenotewindowcache.h
+    src/domain/visualization/visiblenotewindowcache.cpp
     src/domain/visualization/playbackscenestate.h
     src/domain/playback/playbacktypes.h
     src/domain/playback/iplaybackaudioservice.h
@@ -93,6 +95,10 @@ qt_add_executable(midi_play
     src/presentation/visualization/fallingnotesrenderer.cpp
     src/presentation/visualization/noterendercache.h
     src/presentation/visualization/noterendercache.cpp
+    src/presentation/visualization/textlayoutcache.h
+    src/presentation/visualization/textlayoutcache.cpp
+    src/presentation/visualization/playbackoverlaytimeline.h
+    src/presentation/visualization/playbackoverlaytimeline.cpp
     src/presentation/visualization/rasterrenderpolicy.h
     src/presentation/visualization/rasterrenderpolicy.cpp
     src/presentation/visualization/fallingnotesview.h
@@ -152,6 +158,8 @@ if (BUILD_TESTING)
         src/domain/visualization/playbackvisualizationprojector.cpp
         src/domain/visualization/visiblenoteindex.h
         src/domain/visualization/visiblenoteindex.cpp
+        src/domain/visualization/visiblenotewindowcache.h
+        src/domain/visualization/visiblenotewindowcache.cpp
         src/presentation/visualization/scenegeometry.h
         src/presentation/visualization/scenelayoutengine.h
         src/presentation/visualization/scenelayoutengine.cpp
@@ -159,6 +167,10 @@ if (BUILD_TESTING)
         src/presentation/visualization/rasterrenderpolicy.cpp
         src/presentation/visualization/noterendercache.h
         src/presentation/visualization/noterendercache.cpp
+        src/presentation/visualization/textlayoutcache.h
+        src/presentation/visualization/textlayoutcache.cpp
+        src/presentation/visualization/playbackoverlaytimeline.h
+        src/presentation/visualization/playbackoverlaytimeline.cpp
         src/presentation/playbackmetadatapresenter.h
         src/presentation/playbackmetadatapresenter.cpp
     )

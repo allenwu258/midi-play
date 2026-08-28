@@ -181,7 +181,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
         if (m_durationUs <= 0) return;
         const qint64 previewUs = static_cast<qint64>(
             static_cast<long double>(value) * m_durationUs / kSliderResolution);
-        m_timeLabel->setText(QStringLiteral("%1 / %2").arg(formatTime(previewUs), formatTime(m_durationUs)));
+        updateTimeDisplay(previewUs, m_durationUs);
         updateMetadata(previewUs);
     });
     connect(m_positionSlider, &QSlider::sliderReleased, this, [this] {
@@ -200,6 +200,9 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
                 m_fileLabel->setText(title);
                 m_fileLabel->setToolTip(m_service->fileName());
                 m_durationUs = duration;
+                m_displayedPositionSecond = -1;
+                m_displayedDurationSecond = -1;
+                updateTimeDisplay(m_positionUs, m_durationUs);
                 m_seekPending = false;
                 m_positionSlider->setEnabled(duration > 0);
                 m_statusLabel->setText(QStringLiteral("曲目已加载"));
@@ -208,6 +211,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
     connect(m_service, &app::PlayerApplicationService::visualizationReady, this,
             [this](midi_play::visualization::VisualChartPtr chart) {
                 m_chart = chart;
+                m_metadataTimeline.setChart(m_chart);
                 m_visualization->setChart(std::move(chart));
                 updateMetadata(m_positionUs);
             });
@@ -276,7 +280,7 @@ void MainWindow::updatePosition(qint64 position, qint64 duration)
             ? static_cast<int>(static_cast<long double>(m_positionUs) * kSliderResolution / m_durationUs)
             : 0;
         m_positionSlider->setValue(std::clamp(sliderValue, 0, kSliderResolution));
-        m_timeLabel->setText(QStringLiteral("%1 / %2").arg(formatTime(m_positionUs), formatTime(m_durationUs)));
+        updateTimeDisplay(m_positionUs, m_durationUs);
         updateMetadata(m_positionUs);
     }
     m_visualization->setTransportPosition(m_positionUs, m_durationUs);
@@ -313,10 +317,25 @@ QString MainWindow::formatTime(qint64 microseconds)
 
 void MainWindow::updateMetadata(qint64 positionUs)
 {
-    const auto metadata = PlaybackMetadataPresenter::at(m_chart.get(), positionUs);
+    PlaybackMetadata metadata;
+    if (!m_metadataTimeline.update(positionUs, metadata)) return;
     m_keyLabel->setText(metadata.key);
     m_timeSignatureLabel->setText(metadata.timeSignature);
     m_tempoLabel->setText(metadata.tempo);
+}
+
+void MainWindow::updateTimeDisplay(qint64 positionUs, qint64 durationUs)
+{
+    const qint64 positionSecond = std::max<qint64>(0, positionUs) / 1'000'000;
+    const qint64 durationSecond = std::max<qint64>(0, durationUs) / 1'000'000;
+    if (positionSecond == m_displayedPositionSecond
+        && durationSecond == m_displayedDurationSecond) {
+        return;
+    }
+    m_displayedPositionSecond = positionSecond;
+    m_displayedDurationSecond = durationSecond;
+    m_timeLabel->setText(QStringLiteral("%1 / %2")
+        .arg(formatTime(positionUs), formatTime(durationUs)));
 }
 
 void MainWindow::updateResponsiveVisibility()

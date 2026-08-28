@@ -2,6 +2,7 @@
 
 #include "domain/playback/playbacktypes.h"
 #include "domain/visualization/visualchart.h"
+#include "playbackmetadatapresenter.h"
 
 #include <QMainWindow>
 
@@ -31,6 +32,7 @@ private slots:
 
 private:
     static QString formatTime(qint64 microseconds);
+    void updateTimeDisplay(qint64 positionUs, qint64 durationUs);
     void updateMetadata(qint64 positionUs);
     void updateResponsiveVisibility();
     void updateTransportControls();
@@ -51,12 +53,15 @@ private:
     QToolButton* m_stopButton = nullptr;
     QSlider* m_positionSlider = nullptr;
     midi_play::visualization::VisualChartPtr m_chart;
+    PlaybackMetadataTimeline m_metadataTimeline;
     playback::State m_playbackState = playback::State::Empty;
     qint64 m_positionUs = 0;
     qint64 m_durationUs = 0;
     bool m_sliderDragging = false;
     bool m_seekPending = false;
     qint64 m_pendingSeekUs = 0;
+    qint64 m_displayedPositionSecond = -1;
+    qint64 m_displayedDurationSecond = -1;
 };
 
 } // namespace midi_play::presentation

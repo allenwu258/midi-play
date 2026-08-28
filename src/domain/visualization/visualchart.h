@@ -76,6 +76,7 @@ struct VisualGridLine {
     int measureNumber = 0;
     int beatIndex = 0;
     bool measureStart = false;
+    QString measureLabel;
 };
 
 enum class MarkerKind {

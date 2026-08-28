@@ -6,6 +6,7 @@ namespace midi_play::visualization {
 
 void VisibleNoteIndex::rebuild(const QVector<VisualNote>& notes)
 {
+    ++m_revision;
     m_notes = &notes;
     m_nodes.clear();
     m_nodes.reserve(notes.size());

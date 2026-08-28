@@ -1,8 +1,11 @@
 #pragma once
 
+#include "domain/visualization/activenotelookup.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "noterendercache.h"
+#include "playbackoverlaytimeline.h"
 #include "scenegeometry.h"
+#include "textlayoutcache.h"
 
 #include <QColor>
 #include <QLineF>
@@ -41,6 +44,8 @@ public:
                                    const midi_play::visualization::PlaybackSceneState& state);
     void renderDynamicLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
                             const midi_play::visualization::PlaybackSceneState& state);
+    qsizetype visibleNoteCount() const { return m_visibleNoteCount; }
+    qsizetype activeNoteCount() const { return m_activeNoteCount; }
 
 private:
     struct NoteStyleBatch {
@@ -64,19 +69,22 @@ private:
                       const midi_play::visualization::PlaybackSceneState& state);
     void drawPitchBands(QPainter& painter, const PlaybackSceneGeometry& geometry) const;
     void drawTimeGrid(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                      const midi_play::visualization::PlaybackSceneState& state) const;
+                      const midi_play::visualization::PlaybackSceneState& state);
     void drawNotes(QPainter& painter, const PlaybackSceneGeometry& geometry,
                    const midi_play::visualization::PlaybackSceneState& state);
     void drawStrikeLine(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                        const midi_play::visualization::PlaybackSceneState& state) const;
+                        const midi_play::visualization::PlaybackSceneState& state);
     void drawKeyboardBase(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                          const midi_play::visualization::PlaybackSceneState& state) const;
+                          const midi_play::visualization::PlaybackSceneState& state);
     void drawActiveKeyboard(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                            const midi_play::visualization::PlaybackSceneState& state) const;
+                            const midi_play::visualization::PlaybackSceneState& state);
     void drawOverlay(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                     const midi_play::visualization::PlaybackSceneState& state) const;
+                     const midi_play::visualization::PlaybackSceneState& state);
 
     VisualizationTheme m_theme;
+    midi_play::visualization::ActiveNoteLookup m_activeNoteLookup;
+    PlaybackOverlayTimeline m_overlayTimeline;
+    TextLayoutCache m_textLayoutCache;
     NoteRenderCache m_noteRenderCache;
     QVector<NoteStyleBatch> m_noteBatches;
     QVector<quint32> m_batchEpochs;
@@ -86,6 +94,8 @@ private:
     QVector<QRectF> m_blackKeyForegroundRects;
     quint64 m_keyboardGeometryBuildCount = 0;
     quint32 m_batchEpoch = 0;
+    qsizetype m_visibleNoteCount = 0;
+    qsizetype m_activeNoteCount = 0;
 };
 
 } // namespace midi_play::presentation::visualization

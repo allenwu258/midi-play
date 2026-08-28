@@ -385,8 +385,13 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
     for (const auto& segment : segments) {
         for (const auto& line : sourceGrid) {
             if (line.tick < segment.sourceStart || line.tick >= segment.sourceEnd) continue;
-            chart->m_gridLines.push_back({projectedTimeUs(document, segment, line.tick),
-                                          line.measureNumber, line.beatIndex, line.measureStart});
+            chart->m_gridLines.push_back({
+                projectedTimeUs(document, segment, line.tick),
+                line.measureNumber,
+                line.beatIndex,
+                line.measureStart,
+                line.measureStart ? QStringLiteral("M%1").arg(line.measureNumber) : QString {}
+            });
         }
     }
     std::sort(chart->m_gridLines.begin(), chart->m_gridLines.end(), [](const auto& left, const auto& right) {

@@ -3,6 +3,7 @@
 #include "domain/playback/playbacktypes.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "domain/visualization/visiblenoteindex.h"
+#include "domain/visualization/visiblenotewindowcache.h"
 #include "fallingnotesrenderer.h"
 #include "scenelayoutengine.h"
 
@@ -37,6 +38,7 @@ private:
 
     midi_play::visualization::PlaybackSceneState m_state;
     midi_play::visualization::VisibleNoteIndex m_noteIndex;
+    midi_play::visualization::VisibleNoteWindowCache m_noteWindowCache;
     SceneLayoutEngine m_layoutEngine;
     FallingNotesRenderer m_renderer;
     PlaybackSceneGeometry m_geometry;

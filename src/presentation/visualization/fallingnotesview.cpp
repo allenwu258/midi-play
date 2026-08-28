@@ -30,8 +30,8 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
         m_noteIndex = {};
         m_state.durationUs = 0;
     }
-    m_state.visibleNoteIndices.clear();
-    m_state.resetActiveNotes(m_state.chart ? m_state.chart->drumLanes().size() : 0);
+    m_noteWindowCache.reset();
+    m_state.candidateNoteIndices = {};
     m_geometryDirty = true;
     m_frameStateDirty = true;
     m_staticKeyboardDirty = true;
@@ -155,23 +155,15 @@ void FallingNotesView::rebuildFrameState()
     }
     m_frameStateDirty = false;
 
-    const qsizetype drumLaneCount = m_state.chart ? m_state.chart->drumLanes().size() : 0;
-    m_state.resetActiveNotes(drumLaneCount);
     if (!m_state.chart || m_noteIndex.isEmpty()) {
-        m_state.visibleNoteIndices.clear();
+        m_state.candidateNoteIndices = {};
         return;
     }
-    m_noteIndex.query(m_state.transportPositionUs - m_state.afterglowUs,
-                      m_state.transportPositionUs + m_state.lookAheadUs,
-                      m_state.visibleNoteIndices);
-    if (m_state.transportState != midi_play::playback::State::Playing) return;
-    m_state.activeNoteIndices.reserve(std::min<qsizetype>(64, m_state.visibleNoteIndices.size()));
-    for (const int index : m_state.visibleNoteIndices) {
-        const auto& note = m_state.chart->notes().at(index);
-        if (note.startUs <= m_state.transportPositionUs && note.audibleEndUs > m_state.transportPositionUs) {
-            m_state.addActiveNote(index, note);
-        }
-    }
+    m_state.updateVisibleWindow();
+    m_noteWindowCache.ensure(m_noteIndex, m_state.visibleWindowStartUs,
+                             m_state.visibleWindowEndUs, m_state.visibilityGuardUs);
+    const auto& candidates = m_noteWindowCache.candidateNoteIndices();
+    m_state.candidateNoteIndices = std::span<const int>(candidates.constData(), candidates.size());
 }
 
 } // namespace midi_play::presentation::visualization

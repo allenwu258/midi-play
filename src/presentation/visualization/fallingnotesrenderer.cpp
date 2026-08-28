@@ -1,10 +1,10 @@
 #include "fallingnotesrenderer.h"
 #include "rasterrenderpolicy.h"
 
-#include <QFontMetricsF>
 #include <QPainter>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace midi_play::presentation::visualization {
@@ -22,6 +22,36 @@ qreal yForTime(const PlaybackSceneGeometry& geometry, qint64 timeUs, qint64 posi
 bool isActive(const VisualNote& note, qint64 positionUs)
 {
     return note.startUs <= positionUs && note.audibleEndUs > positionUs;
+}
+
+qreal painterDevicePixelRatio(const QPainter& painter)
+{
+    return painter.device() ? painter.device()->devicePixelRatioF() : 1.0;
+}
+
+const QString& octaveLabelForPitch(int pitch)
+{
+    static const std::array<QString, 128> labels = [] {
+        std::array<QString, 128> result;
+        for (int value = 0; value < static_cast<int>(result.size()); ++value) {
+            result[value] = QStringLiteral("C%1").arg(value / 12 - 1);
+        }
+        return result;
+    }();
+    static const QString empty;
+    return pitch >= 0 && pitch < static_cast<int>(labels.size()) ? labels[pitch] : empty;
+}
+
+void drawPreparedText(QPainter& painter, const PreparedTextLayout& text,
+                      const QRectF& rect, Qt::Alignment alignment)
+{
+    qreal x = rect.left();
+    qreal y = rect.top();
+    if (alignment.testFlag(Qt::AlignHCenter)) x += (rect.width() - text.size.width()) * 0.5;
+    else if (alignment.testFlag(Qt::AlignRight)) x = rect.right() - text.size.width();
+    if (alignment.testFlag(Qt::AlignVCenter)) y += (rect.height() - text.size.height()) * 0.5;
+    else if (alignment.testFlag(Qt::AlignBottom)) y = rect.bottom() - text.size.height();
+    painter.drawStaticText(QPointF(x, y), text.staticText);
 }
 
 } // namespace
@@ -67,6 +97,9 @@ void FallingNotesRenderer::renderDynamicLayer(QPainter& painter, const PlaybackS
                                               const PlaybackSceneState& state)
 {
     prepareScene(geometry, state);
+    m_activeNoteLookup.reset(state.chart ? state.chart->drumLanes().size() : 0);
+    m_visibleNoteCount = 0;
+    m_activeNoteCount = 0;
     painter.save();
     RasterRenderPolicy::apply(painter);
     drawTimeGrid(painter, geometry, state);
@@ -80,6 +113,7 @@ void FallingNotesRenderer::renderDynamicLayer(QPainter& painter, const PlaybackS
 void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
                                         const PlaybackSceneState& state)
 {
+    m_overlayTimeline.setChart(state.chart);
     m_noteRenderCache.prepare(state.chart, geometry,
                               {m_theme.keyboardBackground, m_theme.whiteKey});
     if (m_keyboardGeometryBuildCount != m_noteRenderCache.geometryBuildCount()) {
@@ -121,7 +155,7 @@ void FallingNotesRenderer::drawPitchBands(QPainter& painter,
 }
 
 void FallingNotesRenderer::drawTimeGrid(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                        const PlaybackSceneState& state) const
+                                        const PlaybackSceneState& state)
 {
     painter.save();
     painter.setClipRect(geometry.fallingRect);
@@ -148,9 +182,11 @@ void FallingNotesRenderer::drawTimeGrid(QPainter& painter, const PlaybackSceneGe
         painter.drawLine(QPointF(gridLeft, y), QPointF(gridRight, y));
         if (it->measureStart) {
             painter.setPen(m_theme.subtleText);
-            painter.drawText(QRectF(4.0, y - 10.0, gridLeft - 9.0, 20.0),
-                             Qt::AlignRight | Qt::AlignVCenter,
-                             QStringLiteral("M%1").arg(it->measureNumber));
+            const auto& text = m_textLayoutCache.layout(
+                TextLayoutRole::Measure, it->measureLabel,
+                labelFont, -1.0, painterDevicePixelRatio(painter));
+            drawPreparedText(painter, text, QRectF(4.0, y - 10.0, gridLeft - 9.0, 20.0),
+                             Qt::AlignRight | Qt::AlignVCenter);
         }
     }
     painter.restore();
@@ -171,9 +207,19 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
     m_usedStyleIndices.clear();
     m_tremoloLines.clear();
 
-    for (const int noteIndex : state.visibleNoteIndices) {
+    for (const int noteIndex : state.candidateNoteIndices) {
         if (noteIndex < 0 || noteIndex >= state.chart->notes().size()) continue;
         const auto& note = state.chart->notes()[noteIndex];
+        if (note.startUs > state.visibleWindowEndUs
+            || note.audibleEndUs < state.visibleWindowStartUs) {
+            continue;
+        }
+        ++m_visibleNoteCount;
+        if (state.transportState == midi_play::playback::State::Playing
+            && isActive(note, state.transportPositionUs)) {
+            m_activeNoteLookup.add(noteIndex, note);
+            ++m_activeNoteCount;
+        }
         const auto* prepared = m_noteRenderCache.note(noteIndex);
         if (!prepared || !prepared->validGeometry || prepared->styleIndex < 0
             || prepared->styleIndex >= m_noteBatches.size()) {
@@ -264,7 +310,7 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
 }
 
 void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                          const PlaybackSceneState& state) const
+                                          const PlaybackSceneState& state)
 {
     const qreal left = geometry.pianoRect.left();
     const qreal right = geometry.drumRect.isEmpty() ? geometry.pianoRect.right() : geometry.drumRect.right();
@@ -275,21 +321,23 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     painter.drawLine(QPointF(left, geometry.strikeLineY), QPointF(right, geometry.strikeLineY));
 
     if (!state.chart) return;
-    const auto& labelNoteIndices = state.activeNoteLookup.melodicLabelNoteIndices();
+    const auto& labelNoteIndices = m_activeNoteLookup.melodicLabelNoteIndices();
     if (labelNoteIndices.isEmpty()) return;
     QFont font = painter.font();
     font.setPointSizeF(10.0);
     font.setWeight(QFont::DemiBold);
     painter.setFont(font);
     painter.setPen(m_theme.primaryText);
-    const QFontMetricsF metrics(font);
     qreal x = left + 8.0;
     for (const int noteIndex : labelNoteIndices) {
         const auto& note = state.chart->notes().at(noteIndex);
-        const qreal textWidth = metrics.horizontalAdvance(note.simplifiedLabel);
+        const auto& label = m_textLayoutCache.layout(
+            TextLayoutRole::Strike, note.simplifiedLabel, font, -1.0,
+            painterDevicePixelRatio(painter));
+        const qreal textWidth = label.advance;
         if (x + textWidth > right - 8.0) break;
         const QRectF textRect(x, geometry.strikeLineY + 5.0, textWidth + 1.0, 19.0);
-        painter.drawText(textRect, Qt::AlignCenter, note.simplifiedLabel);
+        drawPreparedText(painter, label, textRect, Qt::AlignCenter);
         const int dotCount = std::min(3, std::abs(note.octaveOffset));
         if (dotCount > 0) {
             painter.setBrush(m_theme.primaryText);
@@ -307,7 +355,7 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
 }
 
 void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                            const PlaybackSceneState& state) const
+                                            const PlaybackSceneState& state)
 {
     painter.fillRect(geometry.keyboardRect, m_theme.keyboardBackground);
 
@@ -330,8 +378,11 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
     painter.setPen(QColor(44, 47, 46));
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || slot.blackKey || slot.pitch % 12 != 0 || slot.keyRect.width() < 12.0) continue;
-        painter.drawText(slot.keyRect.adjusted(1.0, 0.0, -1.0, -5.0), Qt::AlignHCenter | Qt::AlignBottom,
-                         QStringLiteral("C%1").arg(slot.pitch / 12 - 1));
+        const auto& text = m_textLayoutCache.layout(
+            TextLayoutRole::Octave, octaveLabelForPitch(slot.pitch),
+            keyFont, -1.0, painterDevicePixelRatio(painter));
+        drawPreparedText(painter, text, slot.keyRect.adjusted(1.0, 0.0, -1.0, -5.0),
+                         Qt::AlignHCenter | Qt::AlignBottom);
     }
 
     if (state.chart && !geometry.drumRect.isEmpty()) {
@@ -341,13 +392,13 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
             painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
         }
         painter.setPen(m_theme.primaryText);
-        const QFontMetricsF metrics(keyFont);
         for (const auto& slot : geometry.drumSlots) {
             if (slot.lane < state.chart->drumLanes().size() && slot.keyRect.width() >= 18.0) {
-                const QString text = metrics.elidedText(
-                    state.chart->drumLanes()[slot.lane].name, Qt::ElideRight, slot.keyRect.width() - 5.0);
-                painter.drawText(slot.keyRect.adjusted(3.0, 4.0, -3.0, -4.0),
-                                 Qt::AlignHCenter | Qt::AlignBottom, text);
+                const auto& text = m_textLayoutCache.layout(
+                    TextLayoutRole::Drum, state.chart->drumLanes()[slot.lane].name,
+                    keyFont, slot.keyRect.width() - 5.0, painterDevicePixelRatio(painter));
+                drawPreparedText(painter, text, slot.keyRect.adjusted(3.0, 4.0, -3.0, -4.0),
+                                 Qt::AlignHCenter | Qt::AlignBottom);
             }
         }
     }
@@ -355,7 +406,7 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
 
 void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
                                               const PlaybackSceneGeometry& geometry,
-                                              const PlaybackSceneState& state) const
+                                              const PlaybackSceneState& state)
 {
     if (!state.chart) return;
 
@@ -364,12 +415,12 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
         return style;
     };
 
-    const auto& activePitches = state.activeNoteLookup.activePitches();
+    const auto& activePitches = m_activeNoteLookup.activePitches();
     bool paintedActiveWhiteKey = false;
     painter.setPen(QPen(m_theme.whiteKeyBorder, 1));
     for (const int pitch : activePitches) {
         const auto* slot = geometry.pitchSlot(pitch);
-        const auto* style = styleForNote(state.activeNoteLookup.noteIndexForPitch(pitch));
+        const auto* style = styleForNote(m_activeNoteLookup.noteIndexForPitch(pitch));
         if (!slot || slot->blackKey || !style) continue;
         painter.setBrush(style->activeWhiteKeyBrush);
         painter.drawRect(slot->keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
@@ -387,7 +438,7 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
     painter.setPen(QPen(m_theme.blackKeyBorder, 1));
     for (const int pitch : activePitches) {
         const auto* slot = geometry.pitchSlot(pitch);
-        const auto* style = styleForNote(state.activeNoteLookup.noteIndexForPitch(pitch));
+        const auto* style = styleForNote(m_activeNoteLookup.noteIndexForPitch(pitch));
         if (!slot || !slot->blackKey || !style) continue;
         painter.setBrush(style->activeBlackKeyBrush);
         painter.drawRect(slot->keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
@@ -400,51 +451,64 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
     for (const int pitch : activePitches) {
         const auto* slot = geometry.pitchSlot(pitch);
         if (!slot || slot->blackKey || pitch % 12 != 0 || slot->keyRect.width() < 12.0) continue;
-        painter.drawText(slot->keyRect.adjusted(1.0, 0.0, -1.0, -5.0),
-                         Qt::AlignHCenter | Qt::AlignBottom,
-                         QStringLiteral("C%1").arg(pitch / 12 - 1));
+        const auto& text = m_textLayoutCache.layout(
+            TextLayoutRole::Octave, octaveLabelForPitch(pitch),
+            keyFont, -1.0, painterDevicePixelRatio(painter));
+        drawPreparedText(painter, text, slot->keyRect.adjusted(1.0, 0.0, -1.0, -5.0),
+                         Qt::AlignHCenter | Qt::AlignBottom);
     }
 
     if (geometry.drumRect.isEmpty()) return;
-    const QFontMetricsF metrics(keyFont);
-    for (const int lane : state.activeNoteLookup.activeDrumLanes()) {
+    for (const int lane : m_activeNoteLookup.activeDrumLanes()) {
         const auto* slot = geometry.drumSlot(lane);
-        const auto* style = styleForNote(state.activeNoteLookup.noteIndexForDrumLane(lane));
+        const auto* style = styleForNote(m_activeNoteLookup.noteIndexForDrumLane(lane));
         if (!slot || !style) continue;
         painter.setPen(QPen(QColor(255, 255, 255, 35), 1));
         painter.setBrush(style->activeDrumKeyBrush);
         painter.drawRect(slot->keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
         if (lane < state.chart->drumLanes().size() && slot->keyRect.width() >= 18.0) {
             painter.setPen(m_theme.primaryText);
-            const QString text = metrics.elidedText(
-                state.chart->drumLanes()[lane].name, Qt::ElideRight, slot->keyRect.width() - 5.0);
-            painter.drawText(slot->keyRect.adjusted(3.0, 4.0, -3.0, -4.0),
-                             Qt::AlignHCenter | Qt::AlignBottom, text);
+            const auto& text = m_textLayoutCache.layout(
+                TextLayoutRole::Drum, state.chart->drumLanes()[lane].name,
+                keyFont, slot->keyRect.width() - 5.0, painterDevicePixelRatio(painter));
+            drawPreparedText(painter, text, slot->keyRect.adjusted(3.0, 4.0, -3.0, -4.0),
+                             Qt::AlignHCenter | Qt::AlignBottom);
         }
     }
 }
 
 void FallingNotesRenderer::drawOverlay(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                       const PlaybackSceneState& state) const
+                                       const PlaybackSceneState& state)
 {
     if (state.chart) {
-        const QString marker = state.chart->markerAt(state.transportPositionUs);
-        const QString lyric = state.chart->lyricAt(state.transportPositionUs);
-        QFont overlayFont = painter.font();
-        overlayFont.setPointSizeF(9.5);
-        painter.setFont(overlayFont);
-        if (!marker.isEmpty()) {
-            painter.setPen(m_theme.secondaryText);
-            painter.drawText(QRectF(geometry.pianoRect.left(), geometry.fallingRect.top() + 8.0,
-                                    geometry.pianoRect.width(), 24.0), Qt::AlignHCenter | Qt::AlignVCenter,
-                             marker);
-        }
-        if (!lyric.isEmpty()) {
-            painter.setPen(m_theme.primaryText);
-            painter.drawText(QRectF(geometry.pianoRect.left(), geometry.strikeLineY - 34.0,
-                                    geometry.pianoRect.width(), 24.0), Qt::AlignHCenter | Qt::AlignVCenter,
-                             QFontMetricsF(overlayFont).elidedText(lyric, Qt::ElideRight,
-                                                                  geometry.pianoRect.width() * 0.8));
+        const auto& overlay = m_overlayTimeline.at(state.transportPositionUs);
+        const auto& marker = overlay.marker;
+        const auto& lyric = overlay.lyric;
+        if (!marker.isEmpty() || !lyric.isEmpty()) {
+            QFont overlayFont = painter.font();
+            overlayFont.setPointSizeF(9.5);
+            painter.setFont(overlayFont);
+            const qreal dpr = painterDevicePixelRatio(painter);
+            if (!marker.isEmpty()) {
+                painter.setPen(m_theme.secondaryText);
+                const auto& text = m_textLayoutCache.layout(
+                    TextLayoutRole::Marker, marker, overlayFont,
+                    geometry.pianoRect.width(), dpr);
+                drawPreparedText(painter, text,
+                    QRectF(geometry.pianoRect.left(), geometry.fallingRect.top() + 8.0,
+                           geometry.pianoRect.width(), 24.0),
+                    Qt::AlignHCenter | Qt::AlignVCenter);
+            }
+            if (!lyric.isEmpty()) {
+                painter.setPen(m_theme.primaryText);
+                const auto& text = m_textLayoutCache.layout(
+                    TextLayoutRole::Lyric, lyric, overlayFont,
+                    geometry.pianoRect.width() * 0.8, dpr);
+                drawPreparedText(painter, text,
+                    QRectF(geometry.pianoRect.left(), geometry.strikeLineY - 34.0,
+                           geometry.pianoRect.width(), 24.0),
+                    Qt::AlignHCenter | Qt::AlignVCenter);
+            }
         }
     }
 

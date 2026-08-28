@@ -1,24 +1,17 @@
 #pragma once
 
 #include "domain/playback/playbacktypes.h"
-#include "activenotelookup.h"
 #include "visualchart.h"
 
-#include <QVector>
+#include <span>
 
 namespace midi_play::visualization {
 
 struct PlaybackSceneState {
-    void resetActiveNotes(qsizetype drumLaneCount)
+    void updateVisibleWindow()
     {
-        activeNoteIndices.clear();
-        activeNoteLookup.reset(drumLaneCount);
-    }
-
-    void addActiveNote(int noteIndex, const VisualNote& note)
-    {
-        activeNoteIndices.push_back(noteIndex);
-        activeNoteLookup.add(noteIndex, note);
+        visibleWindowStartUs = transportPositionUs - afterglowUs;
+        visibleWindowEndUs = transportPositionUs + lookAheadUs;
     }
 
     VisualChartPtr chart;
@@ -27,9 +20,10 @@ struct PlaybackSceneState {
     VisualTime durationUs = 0;
     VisualTime lookAheadUs = 5'000'000;
     VisualTime afterglowUs = 160'000;
-    QVector<int> visibleNoteIndices;
-    QVector<int> activeNoteIndices;
-    ActiveNoteLookup activeNoteLookup;
+    VisualTime visibilityGuardUs = 250'000;
+    VisualTime visibleWindowStartUs = -160'000;
+    VisualTime visibleWindowEndUs = 5'000'000;
+    std::span<const int> candidateNoteIndices;
     bool loading = false;
     QString errorMessage;
 };

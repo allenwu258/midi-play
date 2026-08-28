@@ -17,6 +17,7 @@ public:
     void query(VisualTime windowStartUs, VisualTime windowEndUs,
                QVector<int>& result) const;
     bool isEmpty() const { return m_nodes.isEmpty(); }
+    quint64 revision() const { return m_revision; }
 
 private:
     struct Node {
@@ -33,6 +34,7 @@ private:
     const QVector<VisualNote>* m_notes = nullptr;
     QVector<Node> m_nodes;
     int m_root = -1;
+    quint64 m_revision = 0;
 };
 
 } // namespace midi_play::visualization
