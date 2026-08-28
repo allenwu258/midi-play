@@ -2,8 +2,10 @@
 
 #include "iplaybackaudioservice.h"
 #include "playbacksession.h"
+#include "playbackpositionthrottler.h"
 
 #include <QObject>
+#include <QTimer>
 #include <memory>
 #include <QThread>
 
@@ -29,12 +31,23 @@ public slots:
 
 signals:
     void stateChanged(midi_play::playback::State state);
+    // Coalesced transport samples, normally published once per controller
+    // frame interval. Transport boundaries may publish an immediate endpoint;
+    // audio scheduling remains owned by PlaybackSession.
     void positionChanged(qint64 position, qint64 duration);
     void errorOccurred(const QString& message);
 
 private:
+    void flushPositionUpdate();
+
+private slots:
+    void onPositionTimer();
+
+private:
     std::unique_ptr<PlaybackSession> m_session;
     QThread m_playbackThread;
+    QTimer m_positionTimer;
+    PlaybackPositionThrottler m_positionThrottler;
 };
 
 } // namespace midi_play::playback

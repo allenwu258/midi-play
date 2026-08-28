@@ -81,6 +81,9 @@ void PlaybackSession::pause()
     flushActiveNotes();
     m_audioService->pause();
     m_playHead.pause(m_positionUs);
+    // Pause is a transport boundary. Publish the exact final position before
+    // the state transition so throttled consumers do not retain a stale frame.
+    emitPosition();
     setState(State::Paused);
 }
 

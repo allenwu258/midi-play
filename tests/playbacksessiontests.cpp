@@ -1,5 +1,6 @@
 #include "domain/playback/iplaybackaudioservice.h"
 #include "domain/playback/playbacksession.h"
+#include "domain/playback/playbackpositionthrottler.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -19,6 +20,7 @@ using midi_play::playback::IPlaybackAudioService;
 using midi_play::playback::PlaybackData;
 using midi_play::playback::PlaybackEvent;
 using midi_play::playback::PlaybackEventKind;
+using midi_play::playback::PlaybackPositionThrottler;
 using midi_play::playback::PlaybackSession;
 using midi_play::playback::State;
 
@@ -182,11 +184,30 @@ void testSeekPreservesTransportIntent()
             "play after paused seek must advance from the selected position");
 }
 
+void testPositionThrottlerUsesLatestSample()
+{
+    PlaybackPositionThrottler throttler;
+    PlaybackPositionThrottler::Snapshot snapshot;
+    require(!throttler.takeLatest(snapshot), "empty position throttler must not publish");
+
+    throttler.publish(10, 1000);
+    throttler.publish(20, 2000);
+    require(throttler.takeLatest(snapshot), "published position must be consumable");
+    require(snapshot.positionUs == 20 && snapshot.durationUs == 2000,
+            "position throttler must coalesce to the latest sample");
+    require(!throttler.takeLatest(snapshot), "consumed sample must not be repeated");
+
+    throttler.publish(30, 3000);
+    throttler.reset();
+    require(!throttler.takeLatest(snapshot), "reset must discard pending samples");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
+    testPositionThrottlerUsesLatestSample();
     testSeekPreservesTransportIntent();
     std::fprintf(stdout, "playback session tests passed\n");
     return EXIT_SUCCESS;

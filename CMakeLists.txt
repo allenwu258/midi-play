@@ -43,6 +43,8 @@ qt_add_executable(midi_play
     src/domain/playback/soundprofilerepository.cpp
     src/domain/playback/playbacksession.h
     src/domain/playback/playbacksession.cpp
+    src/domain/playback/playbackpositionthrottler.h
+    src/domain/playback/playbackpositionthrottler.cpp
     src/domain/playback/playbackclock.h
     src/domain/playback/playbackclock.cpp
     src/domain/playback/itransporteventsdispatcher.h
@@ -175,6 +177,8 @@ if (BUILD_TESTING)
         src/domain/playback/playbackplayhead.cpp
         src/domain/playback/playbacksession.h
         src/domain/playback/playbacksession.cpp
+        src/domain/playback/playbackpositionthrottler.h
+        src/domain/playback/playbackpositionthrottler.cpp
     )
     target_include_directories(midi_play_playback_session_tests PRIVATE src)
     target_link_libraries(midi_play_playback_session_tests PRIVATE Qt6::Core)
