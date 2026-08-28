@@ -89,6 +89,8 @@ qt_add_executable(midi_play
     src/presentation/visualization/scenelayoutengine.cpp
     src/presentation/visualization/fallingnotesrenderer.h
     src/presentation/visualization/fallingnotesrenderer.cpp
+    src/presentation/visualization/rasterrenderpolicy.h
+    src/presentation/visualization/rasterrenderpolicy.cpp
     src/presentation/visualization/fallingnotesview.h
     src/presentation/visualization/fallingnotesview.cpp
 )
@@ -149,11 +151,13 @@ if (BUILD_TESTING)
         src/presentation/visualization/scenegeometry.h
         src/presentation/visualization/scenelayoutengine.h
         src/presentation/visualization/scenelayoutengine.cpp
+        src/presentation/visualization/rasterrenderpolicy.h
+        src/presentation/visualization/rasterrenderpolicy.cpp
         src/presentation/playbackmetadatapresenter.h
         src/presentation/playbackmetadatapresenter.cpp
     )
     target_include_directories(midi_play_visualization_tests PRIVATE src)
-    target_link_libraries(midi_play_visualization_tests PRIVATE Qt6::Core)
+    target_link_libraries(midi_play_visualization_tests PRIVATE Qt6::Core Qt6::Gui)
     if (WIN32)
         target_compile_definitions(midi_play_visualization_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()

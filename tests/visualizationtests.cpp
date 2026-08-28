@@ -3,10 +3,13 @@
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "domain/visualization/visiblenoteindex.h"
 #include "presentation/playbackmetadatapresenter.h"
+#include "presentation/visualization/rasterrenderpolicy.h"
 #include "presentation/visualization/scenelayoutengine.h"
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QImage>
+#include <QPainter>
 
 #include <cmath>
 #include <cstdio>
@@ -20,6 +23,7 @@ using midi_play::music::MusicDocument;
 using midi_play::music::NoteEvent;
 using midi_play::music::Track;
 using midi_play::presentation::visualization::SceneLayoutEngine;
+using midi_play::presentation::visualization::RasterRenderPolicy;
 using midi_play::presentation::PlaybackMetadataPresenter;
 using midi_play::visualization::PlaybackVisualizationProjector;
 using midi_play::visualization::ActiveNoteLookup;
@@ -151,6 +155,55 @@ void testActiveNoteLookup()
     require(lookup.noteIndexForPitch(60) == -1 && lookup.noteIndexForDrumLane(0) == -1
                 && lookup.melodicLabelNoteIndices().isEmpty(),
             "frame reset must clear all active-note lookup state");
+}
+
+void testRasterRenderPolicy()
+{
+    QImage image(8, 8, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::black);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, false);
+
+    RasterRenderPolicy::apply(painter);
+
+    require(!painter.testRenderHint(QPainter::Antialiasing),
+            "raster geometry antialiasing must be disabled");
+    require(!painter.testRenderHint(QPainter::SmoothPixmapTransform),
+            "unused smooth image transforms must be disabled");
+    require(painter.testRenderHint(QPainter::TextAntialiasing),
+            "text antialiasing must remain enabled independently");
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::white);
+    painter.drawRect(QRectF(1.25, 1.25, 4.5, 4.5));
+    painter.end();
+
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QRgb pixel = image.pixel(x, y);
+            require(pixel == qRgb(0, 0, 0) || pixel == qRgb(255, 255, 255),
+                    "aliased rectangle must not generate blended edge pixels");
+        }
+    }
+}
+
+void testRasterRenderPolicyIsScopedByPainterState()
+{
+    QImage image(8, 8, QImage::Format_ARGB32_Premultiplied);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, false);
+
+    painter.save();
+    RasterRenderPolicy::apply(painter);
+    painter.restore();
+
+    require(painter.testRenderHint(QPainter::Antialiasing),
+            "restoring painter state must recover the caller's geometry hint");
+    require(!painter.testRenderHint(QPainter::TextAntialiasing),
+            "restoring painter state must recover the caller's text hint");
 }
 
 void testSceneGeometry()
@@ -303,6 +356,8 @@ int main(int argc, char* argv[])
     testRepeatProjection();
     testVisibleIndex();
     testActiveNoteLookup();
+    testRasterRenderPolicy();
+    testRasterRenderPolicyIsScopedByPainterState();
     testSceneGeometry();
     testPlaybackMetadataPresentation();
     testSimplifiedPitchSpelling();

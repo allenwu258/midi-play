@@ -1,8 +1,8 @@
 #include "fallingnotesrenderer.h"
+#include "rasterrenderpolicy.h"
 
 #include <QFontMetricsF>
 #include <QPainter>
-#include <QPainterPath>
 
 #include <algorithm>
 #include <cmath>
@@ -69,7 +69,7 @@ void FallingNotesRenderer::render(QPainter& painter, const PlaybackSceneGeometry
                                   const PlaybackSceneState& state) const
 {
     painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, true);
+    RasterRenderPolicy::apply(painter);
     painter.fillRect(geometry.bounds, m_theme.background);
     drawGrid(painter, geometry, state);
     drawNotes(painter, geometry, state);
@@ -110,7 +110,7 @@ void FallingNotesRenderer::drawGrid(QPainter& painter, const PlaybackSceneGeomet
     for (; it != lines.cend() && it->timeUs <= windowEnd; ++it) {
         const qreal y = yForTime(geometry, it->timeUs, state.transportPositionUs);
         QPen pen(it->measureStart ? m_theme.measureLine : m_theme.beatLine);
-        pen.setWidthF(it->measureStart ? 1.25 : 1.0);
+        pen.setWidth(it->measureStart ? 2 : 1);
         painter.setPen(pen);
         painter.drawLine(QPointF(gridLeft, y), QPointF(gridRight, y));
         if (it->measureStart) {
@@ -157,18 +157,18 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
 
         QColor border = color.lighter(isActive(note, state.transportPositionUs) ? 145 : 112);
         border.setAlpha(240);
-        QPen pen(border, isActive(note, state.transportPositionUs) ? 1.8 : 1.0);
+        QPen pen(border, isActive(note, state.transportPositionUs) ? 2 : 1);
         if (note.isGhost()) pen.setStyle(Qt::DashLine);
         painter.setPen(pen);
         painter.setBrush(color);
         painter.drawRect(primary);
 
-        painter.setPen(QPen(border, 1.3));
+        painter.setPen(QPen(border, 1));
         painter.drawLine(QPointF(primary.left() + 1.0, startY),
                          QPointF(primary.right() - 1.0, startY));
 
         if ((note.flags & midi_play::visualization::TremoloNote) != 0 && primary.height() > 14.0) {
-            painter.setPen(QPen(QColor(255, 255, 255, 110), 1.0));
+            painter.setPen(QPen(QColor(255, 255, 255, 110), 1));
             const qreal centerY = std::clamp(primary.center().y(), primary.top() + 5.0, primary.bottom() - 5.0);
             painter.drawLine(QPointF(primary.left() + 3.0, centerY + 3.0),
                              QPointF(primary.right() - 3.0, centerY - 3.0));
@@ -186,7 +186,7 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     QColor glow = m_theme.strikeLine;
     glow.setAlpha(45);
     painter.fillRect(QRectF(left, geometry.strikeLineY - 5.0, right - left, 10.0), glow);
-    painter.setPen(QPen(m_theme.strikeLine, 2.0));
+    painter.setPen(QPen(m_theme.strikeLine, 2));
     painter.drawLine(QPointF(left, geometry.strikeLineY), QPointF(right, geometry.strikeLineY));
 
     if (!state.chart) return;
@@ -238,7 +238,7 @@ void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGe
         if (!slot.valid || slot.blackKey) continue;
         QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForPitch(slot.pitch));
         if (!fill.isValid()) fill = m_theme.whiteKey;
-        painter.setPen(QPen(m_theme.whiteKeyBorder, 0.8));
+        painter.setPen(QPen(m_theme.whiteKeyBorder, 1));
         painter.setBrush(fill);
         painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
     }
@@ -246,7 +246,7 @@ void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGe
         if (!slot.valid || !slot.blackKey) continue;
         QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForPitch(slot.pitch));
         if (!fill.isValid()) fill = m_theme.blackKey;
-        painter.setPen(QPen(m_theme.blackKeyBorder, 1.0));
+        painter.setPen(QPen(m_theme.blackKeyBorder, 1));
         painter.setBrush(fill);
         painter.drawRect(slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
     }
@@ -265,7 +265,7 @@ void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGe
         for (const auto& slot : geometry.drumSlots) {
             QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForDrumLane(slot.lane));
             if (!fill.isValid()) fill = QColor("#292d30");
-            painter.setPen(QPen(QColor(255, 255, 255, 35), 0.8));
+            painter.setPen(QPen(QColor(255, 255, 255, 35), 1));
             painter.setBrush(fill);
             painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
             if (slot.lane < state.chart->drumLanes().size() && slot.keyRect.width() >= 18.0) {
