@@ -24,6 +24,8 @@ qt_add_executable(midi_play
     src/domain/music/scoreplaybackdom.cpp
     src/domain/visualization/visualchart.h
     src/domain/visualization/visualchart.cpp
+    src/domain/visualization/activenotelookup.h
+    src/domain/visualization/activenotelookup.cpp
     src/domain/visualization/playbackvisualizationprojector.h
     src/domain/visualization/playbackvisualizationprojector.cpp
     src/domain/visualization/visiblenoteindex.h
@@ -138,6 +140,8 @@ if (BUILD_TESTING)
         src/domain/music/musicanalysis.cpp
         src/domain/visualization/visualchart.h
         src/domain/visualization/visualchart.cpp
+        src/domain/visualization/activenotelookup.h
+        src/domain/visualization/activenotelookup.cpp
         src/domain/visualization/playbackvisualizationprojector.h
         src/domain/visualization/playbackvisualizationprojector.cpp
         src/domain/visualization/visiblenoteindex.h

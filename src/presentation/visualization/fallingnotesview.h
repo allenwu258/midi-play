@@ -42,6 +42,7 @@ private:
     PlaybackSceneGeometry m_geometry;
     QTimer m_repaintTimer;
     bool m_geometryDirty = true;
+    bool m_frameStateDirty = true;
 };
 
 } // namespace midi_play::presentation::visualization

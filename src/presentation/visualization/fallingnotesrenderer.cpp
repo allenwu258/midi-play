@@ -189,16 +189,9 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     painter.setPen(QPen(m_theme.strikeLine, 2.0));
     painter.drawLine(QPointF(left, geometry.strikeLineY), QPointF(right, geometry.strikeLineY));
 
-    if (!state.chart || state.activeNoteIndices.isEmpty()) return;
-    QVector<const VisualNote*> labels;
-    QVector<int> pitches;
-    for (const int index : state.activeNoteIndices) {
-        const auto& note = state.chart->notes().at(index);
-        if (note.isPercussion() || note.simplifiedLabel.isEmpty() || pitches.contains(note.pitch)) continue;
-        pitches.push_back(note.pitch);
-        labels.push_back(&note);
-    }
-    if (labels.isEmpty()) return;
+    if (!state.chart) return;
+    const auto& labelNoteIndices = state.activeNoteLookup.melodicLabelNoteIndices();
+    if (labelNoteIndices.isEmpty()) return;
     QFont font = painter.font();
     font.setPointSizeF(10.0);
     font.setWeight(QFont::DemiBold);
@@ -206,18 +199,19 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     painter.setPen(m_theme.primaryText);
     const QFontMetricsF metrics(font);
     qreal x = left + 8.0;
-    for (const auto* note : labels) {
-        const qreal textWidth = metrics.horizontalAdvance(note->simplifiedLabel);
+    for (const int noteIndex : labelNoteIndices) {
+        const auto& note = state.chart->notes().at(noteIndex);
+        const qreal textWidth = metrics.horizontalAdvance(note.simplifiedLabel);
         if (x + textWidth > right - 8.0) break;
         const QRectF textRect(x, geometry.strikeLineY + 5.0, textWidth + 1.0, 19.0);
-        painter.drawText(textRect, Qt::AlignCenter, note->simplifiedLabel);
-        const int dotCount = std::min(3, std::abs(note->octaveOffset));
+        painter.drawText(textRect, Qt::AlignCenter, note.simplifiedLabel);
+        const int dotCount = std::min(3, std::abs(note.octaveOffset));
         if (dotCount > 0) {
             painter.setBrush(m_theme.primaryText);
             painter.setPen(Qt::NoPen);
             const qreal totalWidth = dotCount * 3.5 - 1.5;
             const qreal dotsLeft = textRect.center().x() - totalWidth * 0.5;
-            const qreal dotY = note->octaveOffset > 0 ? textRect.top() - 1.5 : textRect.bottom() + 0.5;
+            const qreal dotY = note.octaveOffset > 0 ? textRect.top() - 1.5 : textRect.bottom() + 0.5;
             for (int dot = 0; dot < dotCount; ++dot) {
                 painter.drawEllipse(QRectF(dotsLeft + dot * 3.5, dotY, 2.0, 2.0));
             }
@@ -232,22 +226,17 @@ void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGe
 {
     painter.fillRect(geometry.keyboardRect, m_theme.keyboardBackground);
 
-    auto activeColorForPitch = [&](int pitch, bool percussion, int lane) -> QColor {
+    auto activeColorForNoteIndex = [&](int noteIndex) -> QColor {
         if (!state.chart) return {};
-        for (auto it = state.activeNoteIndices.crbegin(); it != state.activeNoteIndices.crend(); ++it) {
-            const auto& note = state.chart->notes().at(*it);
-            if ((percussion && note.isPercussion() && note.drumLane == lane)
-                || (!percussion && !note.isPercussion() && note.pitch == pitch)) {
-                return noteColor(*state.chart, note);
-            }
-        }
-        return {};
+        return noteIndex >= 0 && noteIndex < state.chart->notes().size()
+            ? noteColor(*state.chart, state.chart->notes().at(noteIndex))
+            : QColor {};
     };
 
     // White keys establish the base; black keys are painted afterwards.
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || slot.blackKey) continue;
-        QColor fill = activeColorForPitch(slot.pitch, false, -1);
+        QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForPitch(slot.pitch));
         if (!fill.isValid()) fill = m_theme.whiteKey;
         painter.setPen(QPen(m_theme.whiteKeyBorder, 0.8));
         painter.setBrush(fill);
@@ -255,7 +244,7 @@ void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGe
     }
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || !slot.blackKey) continue;
-        QColor fill = activeColorForPitch(slot.pitch, false, -1);
+        QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForPitch(slot.pitch));
         if (!fill.isValid()) fill = m_theme.blackKey;
         painter.setPen(QPen(m_theme.blackKeyBorder, 1.0));
         painter.setBrush(fill);
@@ -274,7 +263,7 @@ void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGe
 
     if (state.chart && !geometry.drumRect.isEmpty()) {
         for (const auto& slot : geometry.drumSlots) {
-            QColor fill = activeColorForPitch(0, true, slot.lane);
+            QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForDrumLane(slot.lane));
             if (!fill.isValid()) fill = QColor("#292d30");
             painter.setPen(QPen(QColor(255, 255, 255, 35), 0.8));
             painter.setBrush(fill);

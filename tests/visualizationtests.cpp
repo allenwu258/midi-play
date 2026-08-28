@@ -1,4 +1,5 @@
 #include "domain/music/musicanalysis.h"
+#include "domain/visualization/activenotelookup.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "domain/visualization/visiblenoteindex.h"
 #include "presentation/playbackmetadatapresenter.h"
@@ -21,6 +22,7 @@ using midi_play::music::Track;
 using midi_play::presentation::visualization::SceneLayoutEngine;
 using midi_play::presentation::PlaybackMetadataPresenter;
 using midi_play::visualization::PlaybackVisualizationProjector;
+using midi_play::visualization::ActiveNoteLookup;
 using midi_play::visualization::VisibleNoteIndex;
 
 void require(bool condition, const char* message)
@@ -103,6 +105,52 @@ void testVisibleIndex()
 
     index.query(2'100'000, 2'200'000, result);
     require(result.isEmpty(), "window after chart end must be empty");
+}
+
+void testActiveNoteLookup()
+{
+    ActiveNoteLookup lookup;
+    lookup.reset(3);
+
+    midi_play::visualization::VisualNote first;
+    first.pitch = 60;
+    first.simplifiedLabel = QStringLiteral("1");
+    lookup.add(4, first);
+
+    midi_play::visualization::VisualNote replacement = first;
+    replacement.simplifiedLabel = QStringLiteral("1-high-priority");
+    lookup.add(9, replacement);
+
+    midi_play::visualization::VisualNote second;
+    second.pitch = 64;
+    second.simplifiedLabel = QStringLiteral("3");
+    lookup.add(12, second);
+
+    midi_play::visualization::VisualNote percussion;
+    percussion.flags = midi_play::visualization::PercussionNote;
+    percussion.drumLane = 1;
+    lookup.add(15, percussion);
+
+    midi_play::visualization::VisualNote invalidIndexNote = first;
+    invalidIndexNote.pitch = 61;
+    lookup.add(-1, invalidIndexNote);
+
+    require(lookup.noteIndexForPitch(60) == 9,
+            "later active note must retain reverse-scan keyboard priority");
+    require(lookup.noteIndexForPitch(64) == 12, "second pitch must be indexed");
+    require(lookup.noteIndexForPitch(61) == -1, "negative note index must be rejected");
+    require(lookup.noteIndexForDrumLane(1) == 15, "active drum lane must be indexed");
+    require(lookup.melodicLabelNoteIndices() == QVector<int>({4, 12}),
+            "melodic labels must preserve first-pitch order and remove duplicates");
+    require(lookup.noteIndexForPitch(-1) == -1 && lookup.noteIndexForPitch(128) == -1,
+            "out-of-range MIDI pitches must be rejected");
+    require(lookup.noteIndexForDrumLane(-1) == -1 && lookup.noteIndexForDrumLane(3) == -1,
+            "out-of-range drum lanes must be rejected");
+
+    lookup.reset(1);
+    require(lookup.noteIndexForPitch(60) == -1 && lookup.noteIndexForDrumLane(0) == -1
+                && lookup.melodicLabelNoteIndices().isEmpty(),
+            "frame reset must clear all active-note lookup state");
 }
 
 void testSceneGeometry()
@@ -254,6 +302,7 @@ int main(int argc, char* argv[])
     QCoreApplication app(argc, argv);
     testRepeatProjection();
     testVisibleIndex();
+    testActiveNoteLookup();
     testSceneGeometry();
     testPlaybackMetadataPresentation();
     testSimplifiedPitchSpelling();

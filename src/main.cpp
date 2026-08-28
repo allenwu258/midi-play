@@ -97,10 +97,11 @@ int main(int argc, char* argv[])
         index.query(state.transportPositionUs - state.afterglowUs,
                     state.transportPositionUs + state.lookAheadUs,
                     state.visibleNoteIndices);
+        state.resetActiveNotes(chart->drumLanes().size());
         for (const int noteIndex : state.visibleNoteIndices) {
             const auto& note = chart->notes().at(noteIndex);
             if (note.startUs <= state.transportPositionUs && note.audibleEndUs > state.transportPositionUs) {
-                state.activeNoteIndices.push_back(noteIndex);
+                state.addActiveNote(noteIndex, note);
             }
         }
         std::fprintf(stdout, "render chart_tracks=%lld notes=%lld visible=%lld active=%lld position_us=%lld duration_us=%lld\n",

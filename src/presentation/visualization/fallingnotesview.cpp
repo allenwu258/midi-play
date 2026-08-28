@@ -33,9 +33,9 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
         m_state.durationUs = 0;
     }
     m_state.visibleNoteIndices.clear();
-    m_state.activeNoteIndices.clear();
+    m_state.resetActiveNotes(m_state.chart ? m_state.chart->drumLanes().size() : 0);
     m_geometryDirty = true;
-    rebuildFrameState();
+    m_frameStateDirty = true;
     update();
 }
 
@@ -43,14 +43,14 @@ void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs
 {
     m_state.transportPositionUs = std::clamp<qint64>(positionUs, 0, std::max<qint64>(0, durationUs));
     m_state.durationUs = std::max<qint64>(0, durationUs);
-    rebuildFrameState();
+    m_frameStateDirty = true;
     if (m_state.transportState != midi_play::playback::State::Playing) update();
 }
 
 void FallingNotesView::setTransportState(midi_play::playback::State state)
 {
     m_state.transportState = state;
-    rebuildFrameState();
+    m_frameStateDirty = true;
     updateAnimationTimer();
     update();
 }
@@ -101,21 +101,26 @@ void FallingNotesView::hideEvent(QHideEvent* event)
 
 void FallingNotesView::rebuildFrameState()
 {
+    if (!m_frameStateDirty) {
+        return;
+    }
+    m_frameStateDirty = false;
+
+    const qsizetype drumLaneCount = m_state.chart ? m_state.chart->drumLanes().size() : 0;
+    m_state.resetActiveNotes(drumLaneCount);
     if (!m_state.chart || m_noteIndex.isEmpty()) {
         m_state.visibleNoteIndices.clear();
-        m_state.activeNoteIndices.clear();
         return;
     }
     m_noteIndex.query(m_state.transportPositionUs - m_state.afterglowUs,
                       m_state.transportPositionUs + m_state.lookAheadUs,
                       m_state.visibleNoteIndices);
-    m_state.activeNoteIndices.clear();
     if (m_state.transportState != midi_play::playback::State::Playing) return;
     m_state.activeNoteIndices.reserve(std::min<qsizetype>(64, m_state.visibleNoteIndices.size()));
     for (const int index : m_state.visibleNoteIndices) {
         const auto& note = m_state.chart->notes().at(index);
         if (note.startUs <= m_state.transportPositionUs && note.audibleEndUs > m_state.transportPositionUs) {
-            m_state.activeNoteIndices.push_back(index);
+            m_state.addActiveNote(index, note);
         }
     }
 }
