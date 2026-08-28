@@ -18,6 +18,18 @@ QColor toColor(const ColorRgba& color)
     return QColor(color.red, color.green, color.blue, color.alpha);
 }
 
+QColor compositeOverOpaque(const QColor& foreground, const QColor& background)
+{
+    const int alpha = foreground.alpha();
+    const int inverseAlpha = 255 - alpha;
+    const auto channel = [alpha, inverseAlpha](int foregroundValue, int backgroundValue) {
+        return (foregroundValue * alpha + backgroundValue * inverseAlpha + 127) / 255;
+    };
+    return QColor(channel(foreground.red(), background.red()),
+                  channel(foreground.green(), background.green()),
+                  channel(foreground.blue(), background.blue()), 255);
+}
+
 quint64 styleKey(const VisualNote& note)
 {
     const quint64 track = static_cast<quint64>(std::max(0, note.trackIndex));
@@ -29,7 +41,8 @@ quint64 styleKey(const VisualNote& note)
         | static_cast<quint64>(note.isGhost());
 }
 
-NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note)
+NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note,
+                          const NoteRenderPalette& palette)
 {
     QColor fill = note.trackIndex >= 0 && note.trackIndex < chart.tracks().size()
         ? toColor(chart.tracks().at(note.trackIndex).color)
@@ -48,6 +61,9 @@ NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note)
     NoteRenderStyle style;
     style.fillBrush = QBrush(fill);
     style.tailBrush = QBrush(tail);
+    style.activeWhiteKeyBrush = QBrush(compositeOverOpaque(fill, palette.keyboardBackground));
+    style.activeBlackKeyBrush = QBrush(compositeOverOpaque(fill, palette.whiteKey));
+    style.activeDrumKeyBrush = style.activeWhiteKeyBrush;
     style.inactiveBorderPen = QPen(inactiveBorder, 1);
     style.activeBorderPen = QPen(activeBorder, 2);
     style.inactiveAttackLinePen = QPen(inactiveBorder, 1);
@@ -62,10 +78,11 @@ NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note)
 } // namespace
 
 void NoteRenderCache::prepare(const midi_play::visualization::VisualChartPtr& chart,
-                              const PlaybackSceneGeometry& geometry)
+                              const PlaybackSceneGeometry& geometry,
+                              const NoteRenderPalette& palette)
 {
-    if (m_chart.get() != chart.get()) {
-        rebuildChart(chart);
+    if (m_chart.get() != chart.get() || !m_hasPalette || m_palette != palette) {
+        rebuildChart(chart, palette);
         m_geometrySize = {};
     }
     if (m_geometrySize != geometry.bounds.size()) {
@@ -76,6 +93,7 @@ void NoteRenderCache::prepare(const midi_play::visualization::VisualChartPtr& ch
 void NoteRenderCache::clear()
 {
     m_chart = nullptr;
+    m_hasPalette = false;
     m_geometrySize = {};
     m_styles.clear();
     m_notes.clear();
@@ -94,9 +112,12 @@ const NoteRenderStyle* NoteRenderCache::styleForNote(int noteIndex) const
         : nullptr;
 }
 
-void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPtr& chart)
+void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPtr& chart,
+                                   const NoteRenderPalette& palette)
 {
     m_chart = chart;
+    m_palette = palette;
+    m_hasPalette = true;
     m_styles.clear();
     m_notes.clear();
     ++m_chartBuildCount;
@@ -113,7 +134,7 @@ void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPt
         if (styleIt == styleIndices.cend()) {
             styleIndex = m_styles.size();
             styleIndices.insert(key, styleIndex);
-            m_styles.push_back(makeStyle(*m_chart, source));
+            m_styles.push_back(makeStyle(*m_chart, source, m_palette));
         } else {
             styleIndex = styleIt.value();
         }

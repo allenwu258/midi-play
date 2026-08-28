@@ -80,7 +80,8 @@ void FallingNotesRenderer::renderDynamicLayer(QPainter& painter, const PlaybackS
 void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
                                         const PlaybackSceneState& state)
 {
-    m_noteRenderCache.prepare(state.chart, geometry);
+    m_noteRenderCache.prepare(state.chart, geometry,
+                              {m_theme.keyboardBackground, m_theme.whiteKey});
     if (m_keyboardGeometryBuildCount != m_noteRenderCache.geometryBuildCount()) {
         m_keyboardGeometryBuildCount = m_noteRenderCache.geometryBuildCount();
         m_pitchBandRects.clear();
@@ -358,9 +359,9 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
 {
     if (!state.chart) return;
 
-    const auto fillForNote = [this](int noteIndex) -> const QBrush* {
+    const auto styleForNote = [this](int noteIndex) -> const NoteRenderStyle* {
         const auto* style = m_noteRenderCache.styleForNote(noteIndex);
-        return style ? &style->fillBrush : nullptr;
+        return style;
     };
 
     const auto& activePitches = state.activeNoteLookup.activePitches();
@@ -368,9 +369,9 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
     painter.setPen(QPen(m_theme.whiteKeyBorder, 1));
     for (const int pitch : activePitches) {
         const auto* slot = geometry.pitchSlot(pitch);
-        const auto* fill = fillForNote(state.activeNoteLookup.noteIndexForPitch(pitch));
-        if (!slot || slot->blackKey || !fill) continue;
-        painter.setBrush(*fill);
+        const auto* style = styleForNote(state.activeNoteLookup.noteIndexForPitch(pitch));
+        if (!slot || slot->blackKey || !style) continue;
+        painter.setBrush(style->activeWhiteKeyBrush);
         painter.drawRect(slot->keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
         paintedActiveWhiteKey = true;
     }
@@ -386,9 +387,9 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
     painter.setPen(QPen(m_theme.blackKeyBorder, 1));
     for (const int pitch : activePitches) {
         const auto* slot = geometry.pitchSlot(pitch);
-        const auto* fill = fillForNote(state.activeNoteLookup.noteIndexForPitch(pitch));
-        if (!slot || !slot->blackKey || !fill) continue;
-        painter.setBrush(*fill);
+        const auto* style = styleForNote(state.activeNoteLookup.noteIndexForPitch(pitch));
+        if (!slot || !slot->blackKey || !style) continue;
+        painter.setBrush(style->activeBlackKeyBrush);
         painter.drawRect(slot->keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
     }
 
@@ -408,10 +409,10 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
     const QFontMetricsF metrics(keyFont);
     for (const int lane : state.activeNoteLookup.activeDrumLanes()) {
         const auto* slot = geometry.drumSlot(lane);
-        const auto* fill = fillForNote(state.activeNoteLookup.noteIndexForDrumLane(lane));
-        if (!slot || !fill) continue;
+        const auto* style = styleForNote(state.activeNoteLookup.noteIndexForDrumLane(lane));
+        if (!slot || !style) continue;
         painter.setPen(QPen(QColor(255, 255, 255, 35), 1));
-        painter.setBrush(*fill);
+        painter.setBrush(style->activeDrumKeyBrush);
         painter.drawRect(slot->keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
         if (lane < state.chart->drumLanes().size() && slot->keyRect.width() >= 18.0) {
             painter.setPen(m_theme.primaryText);

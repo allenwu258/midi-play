@@ -10,9 +10,19 @@
 
 namespace midi_play::presentation::visualization {
 
+struct NoteRenderPalette {
+    QColor keyboardBackground = QColor("#101214");
+    QColor whiteKey = QColor("#dedfd9");
+
+    bool operator==(const NoteRenderPalette&) const = default;
+};
+
 struct NoteRenderStyle {
     QBrush fillBrush;
     QBrush tailBrush;
+    QBrush activeWhiteKeyBrush;
+    QBrush activeBlackKeyBrush;
+    QBrush activeDrumKeyBrush;
     QPen inactiveBorderPen;
     QPen activeBorderPen;
     QPen inactiveAttackLinePen;
@@ -34,7 +44,8 @@ struct PreparedNoteRenderData {
 class NoteRenderCache final {
 public:
     void prepare(const midi_play::visualization::VisualChartPtr& chart,
-                 const PlaybackSceneGeometry& geometry);
+                 const PlaybackSceneGeometry& geometry,
+                 const NoteRenderPalette& palette = {});
     void clear();
 
     const QVector<NoteRenderStyle>& styles() const { return m_styles; }
@@ -47,10 +58,13 @@ public:
     quint64 geometryBuildCount() const { return m_geometryBuildCount; }
 
 private:
-    void rebuildChart(const midi_play::visualization::VisualChartPtr& chart);
+    void rebuildChart(const midi_play::visualization::VisualChartPtr& chart,
+                      const NoteRenderPalette& palette);
     void rebuildGeometry(const PlaybackSceneGeometry& geometry);
 
     midi_play::visualization::VisualChartPtr m_chart;
+    NoteRenderPalette m_palette;
+    bool m_hasPalette = false;
     QSizeF m_geometrySize;
     QVector<NoteRenderStyle> m_styles;
     QVector<PreparedNoteRenderData> m_notes;
