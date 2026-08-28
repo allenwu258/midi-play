@@ -20,39 +20,6 @@ QColor toColor(const ColorRgba& color)
     return QColor(color.red, color.green, color.blue, color.alpha);
 }
 
-QString formatTime(qint64 microseconds)
-{
-    const qint64 totalSeconds = std::max<qint64>(0, microseconds) / 1'000'000;
-    const qint64 hours = totalSeconds / 3600;
-    const qint64 minutes = (totalSeconds / 60) % 60;
-    const qint64 seconds = totalSeconds % 60;
-    if (hours > 0) {
-        return QStringLiteral("%1:%2:%3").arg(hours).arg(minutes, 2, 10, QLatin1Char('0'))
-            .arg(seconds, 2, 10, QLatin1Char('0'));
-    }
-    return QStringLiteral("%1:%2").arg(minutes, 2, 10, QLatin1Char('0'))
-        .arg(seconds, 2, 10, QLatin1Char('0'));
-}
-
-QString keyName(int fifths, const QString& mode)
-{
-    static const QStringList majorNames {
-        QStringLiteral("Cb"), QStringLiteral("Gb"), QStringLiteral("Db"), QStringLiteral("Ab"),
-        QStringLiteral("Eb"), QStringLiteral("Bb"), QStringLiteral("F"), QStringLiteral("C"),
-        QStringLiteral("G"), QStringLiteral("D"), QStringLiteral("A"), QStringLiteral("E"),
-        QStringLiteral("B"), QStringLiteral("F#"), QStringLiteral("C#")
-    };
-    static const QStringList minorNames {
-        QStringLiteral("Ab"), QStringLiteral("Eb"), QStringLiteral("Bb"), QStringLiteral("F"),
-        QStringLiteral("C"), QStringLiteral("G"), QStringLiteral("D"), QStringLiteral("A"),
-        QStringLiteral("E"), QStringLiteral("B"), QStringLiteral("F#"), QStringLiteral("C#"),
-        QStringLiteral("G#"), QStringLiteral("D#"), QStringLiteral("A#")
-    };
-    const int index = std::clamp(fifths, -7, 7) + 7;
-    const bool minor = mode.compare(QStringLiteral("minor"), Qt::CaseInsensitive) == 0;
-    return (minor ? minorNames[index] : majorNames[index]) + (minor ? QStringLiteral(" min") : QStringLiteral(" maj"));
-}
-
 qreal yForTime(const PlaybackSceneGeometry& geometry, qint64 timeUs, qint64 positionUs)
 {
     return geometry.strikeLineY
@@ -104,57 +71,12 @@ void FallingNotesRenderer::render(QPainter& painter, const PlaybackSceneGeometry
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.fillRect(geometry.bounds, m_theme.background);
-    drawInformation(painter, geometry, state);
     drawGrid(painter, geometry, state);
     drawNotes(painter, geometry, state);
     drawStrikeLine(painter, geometry, state);
     drawKeyboard(painter, geometry, state);
     drawOverlay(painter, geometry, state);
     painter.restore();
-}
-
-void FallingNotesRenderer::drawInformation(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                           const PlaybackSceneState& state) const
-{
-    painter.fillRect(geometry.informationRect, m_theme.informationBackground);
-    painter.setPen(QColor(255, 255, 255, 24));
-    painter.drawLine(geometry.informationRect.bottomLeft(), geometry.informationRect.bottomRight());
-
-    QFont titleFont = painter.font();
-    titleFont.setPointSizeF(11.0);
-    titleFont.setWeight(QFont::DemiBold);
-    painter.setFont(titleFont);
-    painter.setPen(m_theme.primaryText);
-    const QString title = state.chart && !state.chart->title().isEmpty()
-        ? state.chart->title() : QStringLiteral("MIDI Play");
-    QRectF titleRect = geometry.informationRect.adjusted(16.0, 0.0, -310.0, 0.0);
-    painter.drawText(titleRect, Qt::AlignVCenter | Qt::AlignLeft,
-                     QFontMetricsF(titleFont).elidedText(title, Qt::ElideRight, titleRect.width()));
-
-    if (!state.chart) return;
-    QFont contextFont = painter.font();
-    contextFont.setPointSizeF(9.0);
-    contextFont.setWeight(QFont::Normal);
-    painter.setFont(contextFont);
-    painter.setPen(m_theme.secondaryText);
-    const auto key = state.chart->keyAt(state.transportPositionUs);
-    const auto signature = state.chart->timeSignatureAt(state.transportPositionUs);
-    const QString context = QStringLiteral("%1    %2/%3    %4 BPM")
-        .arg(keyName(key.fifths, key.mode))
-        .arg(signature.beats).arg(signature.beatType)
-        .arg(qRound(state.chart->tempoAt(state.transportPositionUs)));
-    const qreal contextWidth = geometry.viewportSize.width() < 720.0 ? 0.0 : 220.0;
-    if (contextWidth > 0.0) {
-        painter.drawText(QRectF(geometry.informationRect.right() - 390.0, 0.0, contextWidth,
-                                geometry.informationRect.height()),
-                         Qt::AlignVCenter | Qt::AlignRight, context);
-    }
-    painter.setPen(m_theme.primaryText);
-    painter.drawText(QRectF(geometry.informationRect.right() - 160.0, 0.0, 144.0,
-                            geometry.informationRect.height()),
-                     Qt::AlignVCenter | Qt::AlignRight,
-                     QStringLiteral("%1 / %2").arg(formatTime(state.transportPositionUs),
-                                                    formatTime(state.durationUs)));
 }
 
 void FallingNotesRenderer::drawGrid(QPainter& painter, const PlaybackSceneGeometry& geometry,

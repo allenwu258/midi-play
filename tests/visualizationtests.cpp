@@ -1,6 +1,7 @@
 #include "domain/music/musicanalysis.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "domain/visualization/visiblenoteindex.h"
+#include "presentation/playbackmetadatapresenter.h"
 #include "presentation/visualization/scenelayoutengine.h"
 
 #include <QCoreApplication>
@@ -18,6 +19,7 @@ using midi_play::music::MusicDocument;
 using midi_play::music::NoteEvent;
 using midi_play::music::Track;
 using midi_play::presentation::visualization::SceneLayoutEngine;
+using midi_play::presentation::PlaybackMetadataPresenter;
 using midi_play::visualization::PlaybackVisualizationProjector;
 using midi_play::visualization::VisibleNoteIndex;
 
@@ -108,6 +110,8 @@ void testSceneGeometry()
     auto document = repeatedDocument();
     const auto chart = PlaybackVisualizationProjector().project(document, 1);
     const auto geometry = SceneLayoutEngine().layout(QSizeF(1280.0, 720.0), chart.get(), 5'000'000);
+    require(geometry.fallingRect.top() == 0.0,
+            "falling field must start at the viewport top after removing the duplicate information bar");
     require(geometry.strikeLineY > geometry.fallingRect.top(), "strike line must be inside falling field");
     require(geometry.strikeLineY < geometry.keyboardRect.top(), "strike line must be above keyboard");
     require(geometry.pixelsPerMicrosecond > 0.0, "time scale must be positive");
@@ -122,6 +126,50 @@ void testSceneGeometry()
     const qreal expected = (geometry.strikeLineY - geometry.fallingRect.top()) / 5'000'000.0;
     require(std::abs(geometry.pixelsPerMicrosecond - expected) < 1e-12,
             "time scale must derive from look-ahead and available height");
+}
+
+void testPlaybackMetadataPresentation()
+{
+    MusicDocument document;
+    document.setTitle(QStringLiteral("Metadata timeline"));
+    document.tempos().push_back({0, 90.0, 0});
+    document.tempos().push_back({480, 140.0, 0});
+    document.keySignatures().push_back({0, -3, QStringLiteral("minor")});
+    document.keySignatures().push_back({480, 2, QStringLiteral("major")});
+    document.setDuration(960);
+
+    Track track;
+    track.id = QStringLiteral("metadata");
+    track.timeSignatures.push_back({0, 3, 4});
+    track.timeSignatures.push_back({480, 6, 8});
+    NoteEvent note;
+    note.noteId = 1;
+    note.start = 0;
+    note.duration = 960;
+    note.pitch = 60;
+    track.notes.push_back(note);
+    document.tracks().push_back(track);
+    document.rebuildMeasureGrid();
+    midi_play::music::MusicAnalyzer().analyze(document);
+
+    const auto chart = PlaybackVisualizationProjector().project(document, 1);
+    require(chart != nullptr, "metadata test chart must be projected");
+
+    const auto initial = PlaybackMetadataPresenter::at(chart.get(), 0);
+    require(initial.key == QStringLiteral("C min"), "initial key label must resolve from fifths and mode");
+    require(initial.timeSignature == QStringLiteral("3/4"), "initial time signature label");
+    require(initial.tempo == QStringLiteral("90 BPM"), "initial tempo label");
+
+    const qint64 secondSectionUs = document.playbackTickToMicroseconds(480);
+    const auto changed = PlaybackMetadataPresenter::at(chart.get(), secondSectionUs);
+    require(changed.key == QStringLiteral("D maj"), "changed key label must follow the playback timeline");
+    require(changed.timeSignature == QStringLiteral("6/8"), "changed time signature label");
+    require(changed.tempo == QStringLiteral("140 BPM"), "changed tempo label");
+
+    const auto empty = PlaybackMetadataPresenter::at(nullptr, 0);
+    require(empty.key == QStringLiteral("--") && empty.timeSignature == QStringLiteral("--/--")
+                && empty.tempo == QStringLiteral("-- BPM"),
+            "empty metadata must use stable placeholders");
 }
 
 void testSimplifiedPitchSpelling()
@@ -207,6 +255,7 @@ int main(int argc, char* argv[])
     testRepeatProjection();
     testVisibleIndex();
     testSceneGeometry();
+    testPlaybackMetadataPresentation();
     testSimplifiedPitchSpelling();
     testLargeVisibleIndexAgainstFullScan();
     std::fprintf(stdout, "visualization tests passed\n");

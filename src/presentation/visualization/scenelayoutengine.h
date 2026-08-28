@@ -3,6 +3,8 @@
 #include "domain/visualization/visualchart.h"
 #include "scenegeometry.h"
 
+#include <QSizeF>
+
 namespace midi_play::presentation::visualization {
 
 class SceneLayoutEngine final {

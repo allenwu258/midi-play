@@ -1,12 +1,14 @@
 #pragma once
 
 #include "domain/playback/playbacktypes.h"
+#include "domain/visualization/visualchart.h"
 
 #include <QMainWindow>
 
 class QLabel;
 class QSlider;
 class QToolButton;
+class QResizeEvent;
 
 namespace midi_play::app { class PlayerApplicationService; }
 namespace midi_play::presentation::visualization { class FallingNotesView; }
@@ -18,6 +20,9 @@ class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(app::PlayerApplicationService* service, QWidget* parent = nullptr);
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private slots:
     void openMusicFile();
     void openSoundFont();
@@ -26,6 +31,8 @@ private slots:
 
 private:
     static QString formatTime(qint64 microseconds);
+    void updateMetadata(qint64 positionUs);
+    void updateResponsiveVisibility();
     void updateTransportControls();
 
     static constexpr int kSliderResolution = 1'000'000;
@@ -34,12 +41,16 @@ private:
     visualization::FallingNotesView* m_visualization = nullptr;
     QLabel* m_fileLabel = nullptr;
     QLabel* m_soundFontLabel = nullptr;
+    QLabel* m_keyLabel = nullptr;
+    QLabel* m_timeSignatureLabel = nullptr;
+    QLabel* m_tempoLabel = nullptr;
     QLabel* m_timeLabel = nullptr;
     QLabel* m_statusLabel = nullptr;
     QToolButton* m_playButton = nullptr;
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_stopButton = nullptr;
     QSlider* m_positionSlider = nullptr;
+    midi_play::visualization::VisualChartPtr m_chart;
     playback::State m_playbackState = playback::State::Empty;
     qint64 m_positionUs = 0;
     qint64 m_durationUs = 0;

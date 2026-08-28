@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QRectF>
-#include <QSizeF>
 #include <QVector>
 
 namespace midi_play::presentation::visualization {
@@ -23,9 +22,7 @@ struct DrumSlotGeometry {
 };
 
 struct PlaybackSceneGeometry {
-    QSizeF viewportSize;
     QRectF bounds;
-    QRectF informationRect;
     QRectF fallingRect;
     QRectF keyboardRect;
     QRectF pianoRect;

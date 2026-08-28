@@ -78,6 +78,8 @@ qt_add_executable(midi_play
     src/infrastructure/midi/mididocumentbuilder.cpp
     src/presentation/mainwindow.h
     src/presentation/mainwindow.cpp
+    src/presentation/playbackmetadatapresenter.h
+    src/presentation/playbackmetadatapresenter.cpp
     src/presentation/visualization/scenegeometry.h
     src/presentation/visualization/scenelayoutengine.h
     src/presentation/visualization/scenelayoutengine.cpp
@@ -141,6 +143,8 @@ if (BUILD_TESTING)
         src/presentation/visualization/scenegeometry.h
         src/presentation/visualization/scenelayoutengine.h
         src/presentation/visualization/scenelayoutengine.cpp
+        src/presentation/playbackmetadatapresenter.h
+        src/presentation/playbackmetadatapresenter.cpp
     )
     target_include_directories(midi_play_visualization_tests PRIVATE src)
     target_link_libraries(midi_play_visualization_tests PRIVATE Qt6::Core)

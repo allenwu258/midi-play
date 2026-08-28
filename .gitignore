@@ -33,7 +33,7 @@ compile_commands.json
 # CMake preset overrides and local tool configuration
 CMakeUserPresets.json
 .cache/
-.vscode/settings.json
+.vscode/
 .idea/
 
 # Qt and local deployment artifacts

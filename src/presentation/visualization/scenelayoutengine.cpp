@@ -33,18 +33,15 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
                                                 qint64 lookAheadUs) const
 {
     PlaybackSceneGeometry geometry;
-    geometry.viewportSize = viewport;
     geometry.bounds = QRectF(QPointF(0.0, 0.0), viewport);
 
     const qreal width = std::max<qreal>(1.0, viewport.width());
     const qreal height = std::max<qreal>(1.0, viewport.height());
-    const qreal informationHeight = height < 420.0 ? 40.0 : 48.0;
     const qreal keyboardHeight = std::clamp(height * 0.17, 88.0, 132.0);
     const qreal bottom = height;
-    geometry.informationRect = QRectF(0.0, 0.0, width, informationHeight);
     geometry.keyboardRect = QRectF(0.0, bottom - keyboardHeight, width, keyboardHeight);
-    geometry.fallingRect = QRectF(0.0, informationHeight, width,
-                                  std::max<qreal>(1.0, geometry.keyboardRect.top() - informationHeight));
+    geometry.fallingRect = QRectF(0.0, 0.0, width,
+                                  std::max<qreal>(1.0, geometry.keyboardRect.top()));
     geometry.strikeLineY = geometry.fallingRect.bottom() - std::clamp(height * 0.045, 24.0, 38.0);
     geometry.pixelsPerMicrosecond = std::max<qreal>(0.000001,
         (geometry.strikeLineY - geometry.fallingRect.top()) / std::max<qint64>(1, lookAheadUs));

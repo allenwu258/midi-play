@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include "app/playerapplicationservice.h"
+#include "playbackmetadatapresenter.h"
 #include "presentation/visualization/fallingnotesview.h"
 
 #include <QFileDialog>
@@ -9,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QResizeEvent>
 #include <QSlider>
 #include <QStyle>
 #include <QToolButton>
@@ -71,9 +73,35 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
     topLayout->addWidget(verticalSeparator(topBar));
     m_fileLabel = new QLabel(QStringLiteral("未加载音乐文件"), topBar);
     m_fileLabel->setObjectName(QStringLiteral("fileLabel"));
-    m_fileLabel->setMinimumWidth(160);
+    m_fileLabel->setMinimumWidth(100);
     m_fileLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     topLayout->addWidget(m_fileLabel, 1);
+
+    m_keyLabel = new QLabel(QStringLiteral("--"), topBar);
+    m_keyLabel->setObjectName(QStringLiteral("metricLabel"));
+    m_keyLabel->setAccessibleName(QStringLiteral("当前调号"));
+    m_keyLabel->setToolTip(QStringLiteral("当前调号"));
+    m_timeSignatureLabel = new QLabel(QStringLiteral("--/--"), topBar);
+    m_timeSignatureLabel->setObjectName(QStringLiteral("metricLabel"));
+    m_timeSignatureLabel->setAccessibleName(QStringLiteral("当前拍号"));
+    m_timeSignatureLabel->setToolTip(QStringLiteral("当前拍号"));
+    m_tempoLabel = new QLabel(QStringLiteral("-- BPM"), topBar);
+    m_tempoLabel->setObjectName(QStringLiteral("metricLabel"));
+    m_tempoLabel->setAccessibleName(QStringLiteral("当前速度"));
+    m_tempoLabel->setToolTip(QStringLiteral("当前速度"));
+    topLayout->addWidget(m_keyLabel);
+    topLayout->addWidget(m_timeSignatureLabel);
+    topLayout->addWidget(m_tempoLabel);
+    topLayout->addWidget(verticalSeparator(topBar));
+
+    m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"), topBar);
+    m_timeLabel->setObjectName(QStringLiteral("timeLabel"));
+    m_timeLabel->setAccessibleName(QStringLiteral("播放时间"));
+    m_timeLabel->setMinimumWidth(118);
+    m_timeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    topLayout->addWidget(m_timeLabel);
+    topLayout->addWidget(verticalSeparator(topBar));
+
     m_soundFontLabel = new QLabel(QStringLiteral("SF2 未加载"), topBar);
     m_soundFontLabel->setObjectName(QStringLiteral("soundFontLabel"));
     topLayout->addWidget(m_soundFontLabel);
@@ -114,11 +142,6 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
     controlRow->addWidget(m_playButton);
     controlRow->addWidget(m_pauseButton);
     controlRow->addWidget(m_stopButton);
-    controlRow->addWidget(verticalSeparator(transport));
-    m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"), transport);
-    m_timeLabel->setObjectName(QStringLiteral("timeLabel"));
-    m_timeLabel->setMinimumWidth(118);
-    controlRow->addWidget(m_timeLabel);
     controlRow->addStretch();
     m_statusLabel = new QLabel(QStringLiteral("就绪"), transport);
     m_statusLabel->setObjectName(QStringLiteral("statusLabel"));
@@ -135,6 +158,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
         QLabel#brandLabel { color: #f0f1ed; font-size: 17px; font-weight: 600; }
         QLabel#fileLabel { color: #c8cbc7; font-size: 12px; }
         QLabel#soundFontLabel, QLabel#statusLabel { color: #8f9691; font-size: 11px; }
+        QLabel#metricLabel { color: #bfc3bf; font-size: 11px; }
         QLabel#timeLabel { color: #e6e7e2; font-family: Consolas, monospace; font-size: 11px; }
         QFrame#toolbarSeparator { color: #3a3d40; max-height: 26px; }
         QToolButton { color: #dfe1dc; border: 1px solid transparent; padding: 6px 8px; }
@@ -158,6 +182,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
         const qint64 previewUs = static_cast<qint64>(
             static_cast<long double>(value) * m_durationUs / kSliderResolution);
         m_timeLabel->setText(QStringLiteral("%1 / %2").arg(formatTime(previewUs), formatTime(m_durationUs)));
+        updateMetadata(previewUs);
     });
     connect(m_positionSlider, &QSlider::sliderReleased, this, [this] {
         if (m_durationUs > 0) {
@@ -180,8 +205,12 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
                 m_statusLabel->setText(QStringLiteral("曲目已加载"));
                 updateTransportControls();
             });
-    connect(m_service, &app::PlayerApplicationService::visualizationReady,
-            m_visualization, &visualization::FallingNotesView::setChart);
+    connect(m_service, &app::PlayerApplicationService::visualizationReady, this,
+            [this](midi_play::visualization::VisualChartPtr chart) {
+                m_chart = chart;
+                m_visualization->setChart(std::move(chart));
+                updateMetadata(m_positionUs);
+            });
     connect(m_service, &app::PlayerApplicationService::positionChanged,
             this, &MainWindow::updatePosition);
     connect(m_service, &app::PlayerApplicationService::playbackStateChanged,
@@ -203,6 +232,13 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
     });
 
     updateTransportControls();
+    updateResponsiveVisibility();
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    QMainWindow::resizeEvent(event);
+    updateResponsiveVisibility();
 }
 
 void MainWindow::openMusicFile()
@@ -241,6 +277,7 @@ void MainWindow::updatePosition(qint64 position, qint64 duration)
             : 0;
         m_positionSlider->setValue(std::clamp(sliderValue, 0, kSliderResolution));
         m_timeLabel->setText(QStringLiteral("%1 / %2").arg(formatTime(m_positionUs), formatTime(m_durationUs)));
+        updateMetadata(m_positionUs);
     }
     m_visualization->setTransportPosition(m_positionUs, m_durationUs);
 }
@@ -272,6 +309,22 @@ QString MainWindow::formatTime(qint64 microseconds)
     }
     return QStringLiteral("%1:%2").arg(minutes, 2, 10, QLatin1Char('0'))
         .arg(seconds, 2, 10, QLatin1Char('0'));
+}
+
+void MainWindow::updateMetadata(qint64 positionUs)
+{
+    const auto metadata = PlaybackMetadataPresenter::at(m_chart.get(), positionUs);
+    m_keyLabel->setText(metadata.key);
+    m_timeSignatureLabel->setText(metadata.timeSignature);
+    m_tempoLabel->setText(metadata.tempo);
+}
+
+void MainWindow::updateResponsiveVisibility()
+{
+    // Preserve transport-critical information on narrow windows. File and
+    // SoundFont paths remain available through tooltips and file actions.
+    m_soundFontLabel->setVisible(width() >= 1080);
+    m_keyLabel->setVisible(width() >= 860);
 }
 
 void MainWindow::updateTransportControls()

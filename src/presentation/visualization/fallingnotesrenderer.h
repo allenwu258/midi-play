@@ -11,7 +11,6 @@ namespace midi_play::presentation::visualization {
 
 struct VisualizationTheme {
     QColor background = QColor("#121416");
-    QColor informationBackground = QColor("#191c1f");
     QColor keyboardBackground = QColor("#101214");
     QColor primaryText = QColor("#f0f1ed");
     QColor secondaryText = QColor("#9da29f");
@@ -32,8 +31,6 @@ public:
                 const midi_play::visualization::PlaybackSceneState& state) const;
 
 private:
-    void drawInformation(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                         const midi_play::visualization::PlaybackSceneState& state) const;
     void drawGrid(QPainter& painter, const PlaybackSceneGeometry& geometry,
                   const midi_play::visualization::PlaybackSceneState& state) const;
     void drawNotes(QPainter& painter, const PlaybackSceneGeometry& geometry,
