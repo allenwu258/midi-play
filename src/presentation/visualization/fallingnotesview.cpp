@@ -6,6 +6,7 @@
 #include <QResizeEvent>
 
 #include <algorithm>
+#include <cmath>
 
 namespace midi_play::presentation::visualization {
 
@@ -32,6 +33,7 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
     m_state.resetActiveNotes(m_state.chart ? m_state.chart->drumLanes().size() : 0);
     m_geometryDirty = true;
     m_frameStateDirty = true;
+    m_staticLayerDirty = true;
     update();
 }
 
@@ -73,16 +75,57 @@ void FallingNotesView::paintEvent(QPaintEvent* event)
     if (m_geometryDirty) {
         m_geometry = m_layoutEngine.layout(size(), m_state.chart.get(), m_state.lookAheadUs);
         m_geometryDirty = false;
+        m_staticLayerDirty = true;
     }
     rebuildFrameState();
+
+    const qreal dpr = std::max<qreal>(1.0, devicePixelRatioF());
+    const QSize physicalSize(
+        std::max(1, static_cast<int>(std::ceil(width() * dpr))),
+        std::max(1, static_cast<int>(std::ceil(height() * dpr))));
+    if (m_staticLayerPhysicalSize != physicalSize
+        || !qFuzzyCompare(m_staticLayerDevicePixelRatio, dpr)) {
+        m_staticLayerDirty = true;
+    }
+    if (m_staticLayerDirty) rebuildStaticLayer(dpr);
+
     QPainter painter(this);
-    m_renderer.render(painter, m_geometry, m_state);
+    if (!m_staticLayer.isNull()) {
+        painter.drawImage(QPointF(0.0, 0.0), m_staticLayer);
+    } else {
+        m_renderer.renderStaticLayer(painter, m_geometry, m_state);
+    }
+    m_renderer.renderDynamicLayer(painter, m_geometry, m_state);
 }
 
 void FallingNotesView::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     m_geometryDirty = true;
+}
+
+void FallingNotesView::rebuildStaticLayer(qreal devicePixelRatio)
+{
+    constexpr qsizetype kMaximumStaticLayerBytes = 64 * 1024 * 1024;
+    const QSize physicalSize(
+        std::max(1, static_cast<int>(std::ceil(width() * devicePixelRatio))),
+        std::max(1, static_cast<int>(std::ceil(height() * devicePixelRatio))));
+    const qsizetype requiredBytes = static_cast<qsizetype>(physicalSize.width())
+                                  * static_cast<qsizetype>(physicalSize.height()) * 4;
+
+    m_staticLayer = {};
+    m_staticLayerPhysicalSize = physicalSize;
+    m_staticLayerDevicePixelRatio = devicePixelRatio;
+    m_staticLayerDirty = false;
+    if (requiredBytes > kMaximumStaticLayerBytes) return;
+
+    QImage layer(physicalSize, QImage::Format_RGB32);
+    if (layer.isNull()) return;
+    layer.setDevicePixelRatio(devicePixelRatio);
+    QPainter layerPainter(&layer);
+    m_renderer.renderStaticLayer(layerPainter, m_geometry, m_state);
+    layerPainter.end();
+    m_staticLayer = std::move(layer);
 }
 
 void FallingNotesView::rebuildFrameState()

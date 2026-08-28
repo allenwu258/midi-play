@@ -6,6 +6,8 @@
 #include "fallingnotesrenderer.h"
 #include "scenelayoutengine.h"
 
+#include <QImage>
+#include <QSize>
 #include <QWidget>
 
 namespace midi_play::presentation::visualization {
@@ -30,14 +32,19 @@ protected:
 
 private:
     void rebuildFrameState();
+    void rebuildStaticLayer(qreal devicePixelRatio);
 
     midi_play::visualization::PlaybackSceneState m_state;
     midi_play::visualization::VisibleNoteIndex m_noteIndex;
     SceneLayoutEngine m_layoutEngine;
     FallingNotesRenderer m_renderer;
     PlaybackSceneGeometry m_geometry;
+    QImage m_staticLayer;
+    QSize m_staticLayerPhysicalSize;
+    qreal m_staticLayerDevicePixelRatio = 0.0;
     bool m_geometryDirty = true;
     bool m_frameStateDirty = true;
+    bool m_staticLayerDirty = true;
 };
 
 } // namespace midi_play::presentation::visualization

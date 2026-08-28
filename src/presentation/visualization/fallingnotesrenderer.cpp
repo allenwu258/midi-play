@@ -10,15 +10,8 @@
 namespace midi_play::presentation::visualization {
 namespace {
 
-using midi_play::visualization::ColorRgba;
 using midi_play::visualization::PlaybackSceneState;
-using midi_play::visualization::VisualChart;
 using midi_play::visualization::VisualNote;
-
-QColor toColor(const ColorRgba& color)
-{
-    return QColor(color.red, color.green, color.blue, color.alpha);
-}
 
 qreal yForTime(const PlaybackSceneGeometry& geometry, qint64 timeUs, qint64 positionUs)
 {
@@ -26,74 +19,91 @@ qreal yForTime(const PlaybackSceneGeometry& geometry, qint64 timeUs, qint64 posi
         - static_cast<qreal>(timeUs - positionUs) * geometry.pixelsPerMicrosecond;
 }
 
-QRectF horizontalRect(const PlaybackSceneGeometry& geometry, const VisualNote& note)
-{
-    qreal center = 0.0;
-    qreal width = 0.0;
-    if (note.isPercussion()) {
-        const auto* slot = geometry.drumSlot(note.drumLane);
-        if (!slot) return {};
-        center = slot->centerX;
-        width = slot->noteWidth;
-    } else {
-        const auto* slot = geometry.pitchSlot(note.pitch);
-        if (!slot) return {};
-        center = slot->centerX;
-        width = slot->noteWidth;
-    }
-    if (note.coincidentCount > 1) {
-        const qreal partWidth = width / note.coincidentCount;
-        const qreal left = center - width * 0.5 + note.coincidentIndex * partWidth;
-        return QRectF(left + 0.5, 0.0, std::max<qreal>(1.0, partWidth - 1.0), 0.0);
-    }
-    return QRectF(center - width * 0.5, 0.0, width, 0.0);
-}
-
 bool isActive(const VisualNote& note, qint64 positionUs)
 {
     return note.startUs <= positionUs && note.audibleEndUs > positionUs;
 }
 
-QColor noteColor(const VisualChart& chart, const VisualNote& note)
-{
-    QColor color = toColor(chart.tracks().at(note.trackIndex).color);
-    const qreal velocity = std::clamp(note.velocity / 127.0, 0.0, 1.0);
-    color = color.lighter(static_cast<int>(88.0 + velocity * 30.0));
-    color.setAlpha(note.isGhost() ? 120 : static_cast<int>(190 + velocity * 55));
-    return color;
-}
-
 } // namespace
 
 void FallingNotesRenderer::render(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                  const PlaybackSceneState& state) const
+                                  const PlaybackSceneState& state)
 {
+    renderStaticLayer(painter, geometry, state);
+    renderDynamicLayer(painter, geometry, state);
+}
+
+void FallingNotesRenderer::renderStaticLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
+                                             const PlaybackSceneState& state)
+{
+    prepareScene(geometry, state);
     painter.save();
     RasterRenderPolicy::apply(painter);
     painter.fillRect(geometry.bounds, m_theme.background);
-    drawGrid(painter, geometry, state);
+    drawPitchBands(painter, geometry);
+    drawKeyboardBase(painter, geometry, state);
+    painter.restore();
+}
+
+void FallingNotesRenderer::renderDynamicLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
+                                              const PlaybackSceneState& state)
+{
+    prepareScene(geometry, state);
+    painter.save();
+    RasterRenderPolicy::apply(painter);
+    drawTimeGrid(painter, geometry, state);
     drawNotes(painter, geometry, state);
     drawStrikeLine(painter, geometry, state);
-    drawKeyboard(painter, geometry, state);
+    drawActiveKeyboard(painter, geometry, state);
     drawOverlay(painter, geometry, state);
     painter.restore();
 }
 
-void FallingNotesRenderer::drawGrid(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                    const PlaybackSceneState& state) const
+void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
+                                        const PlaybackSceneState& state)
+{
+    m_noteRenderCache.prepare(state.chart, geometry);
+    if (m_keyboardGeometryBuildCount != m_noteRenderCache.geometryBuildCount()) {
+        m_keyboardGeometryBuildCount = m_noteRenderCache.geometryBuildCount();
+        m_blackKeyForegroundRects.clear();
+        m_blackKeyForegroundRects.reserve(geometry.pitches.size());
+        for (const auto& slot : geometry.pitches) {
+            if (slot.valid && slot.blackKey) {
+                m_blackKeyForegroundRects.push_back(
+                    slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
+            }
+        }
+    }
+    const qsizetype styleCount = m_noteRenderCache.styles().size();
+    if (m_noteBatches.size() != styleCount) {
+        m_noteBatches.resize(styleCount);
+        m_batchEpochs.fill(0, styleCount);
+        m_batchEpoch = 0;
+        m_usedStyleIndices.clear();
+    }
+}
+
+void FallingNotesRenderer::drawPitchBands(QPainter& painter,
+                                          const PlaybackSceneGeometry& geometry) const
 {
     painter.save();
     painter.setClipRect(geometry.fallingRect);
-    const qreal gridLeft = geometry.pianoRect.left();
-    const qreal gridRight = geometry.drumRect.isEmpty() ? geometry.pianoRect.right() : geometry.drumRect.right();
-
-    // Subtle pitch bands preserve keyboard alignment without recreating a spreadsheet.
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || !slot.blackKey) continue;
         const QRectF band(slot.keyRect.left(), geometry.fallingRect.top(),
                           slot.keyRect.width(), geometry.fallingRect.height());
         painter.fillRect(band, QColor(255, 255, 255, 7));
     }
+    painter.restore();
+}
+
+void FallingNotesRenderer::drawTimeGrid(QPainter& painter, const PlaybackSceneGeometry& geometry,
+                                        const PlaybackSceneState& state) const
+{
+    painter.save();
+    painter.setClipRect(geometry.fallingRect);
+    const qreal gridLeft = geometry.pianoRect.left();
+    const qreal gridRight = geometry.drumRect.isEmpty() ? geometry.pianoRect.right() : geometry.drumRect.right();
     if (!state.chart) {
         painter.restore();
         return;
@@ -124,56 +134,108 @@ void FallingNotesRenderer::drawGrid(QPainter& painter, const PlaybackSceneGeomet
 }
 
 void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                     const PlaybackSceneState& state) const
+                                     const PlaybackSceneState& state)
 {
     if (!state.chart) return;
     painter.save();
     painter.setClipRect(geometry.fallingRect);
 
+    ++m_batchEpoch;
+    if (m_batchEpoch == 0) {
+        m_batchEpochs.fill(0);
+        m_batchEpoch = 1;
+    }
+    m_usedStyleIndices.clear();
+    m_tremoloLines.clear();
+
     for (const int noteIndex : state.visibleNoteIndices) {
         if (noteIndex < 0 || noteIndex >= state.chart->notes().size()) continue;
         const auto& note = state.chart->notes()[noteIndex];
-        QRectF xRect = horizontalRect(geometry, note);
-        if (xRect.width() <= 0.0) continue;
+        const auto* prepared = m_noteRenderCache.note(noteIndex);
+        if (!prepared || !prepared->validGeometry || prepared->styleIndex < 0
+            || prepared->styleIndex >= m_noteBatches.size()) {
+            continue;
+        }
+
+        const int styleIndex = prepared->styleIndex;
+        if (m_batchEpochs[styleIndex] != m_batchEpoch) {
+            m_batchEpochs[styleIndex] = m_batchEpoch;
+            m_noteBatches[styleIndex].clear();
+            m_usedStyleIndices.push_back(styleIndex);
+        }
+        auto& batch = m_noteBatches[styleIndex];
 
         const qreal startY = yForTime(geometry, note.startUs, state.transportPositionUs);
         const qreal keyEndY = yForTime(geometry, note.keyEndUs, state.transportPositionUs);
-        const qreal audibleEndY = yForTime(geometry, note.audibleEndUs, state.transportPositionUs);
         const qreal primaryTop = std::min(keyEndY, startY - 4.0);
-        const qreal primaryBottom = startY;
-        QRectF primary(xRect.left(), primaryTop, xRect.width(),
-                       std::max<qreal>(4.0, primaryBottom - primaryTop));
-        const QColor color = noteColor(*state.chart, note);
+        const QRectF primary(prepared->left, primaryTop, prepared->width,
+                             std::max<qreal>(4.0, startY - primaryTop));
 
-        if (note.audibleEndUs > note.keyEndUs) {
-            QRectF tail(xRect.left() + xRect.width() * 0.2, audibleEndY,
-                        xRect.width() * 0.6, std::max<qreal>(2.0, keyEndY - audibleEndY));
-            QColor tailColor = color;
-            tailColor.setAlpha(std::max(38, color.alpha() / 3));
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(tailColor);
-            painter.drawRect(tail);
+        if (prepared->hasTail) {
+            const qreal audibleEndY = yForTime(
+                geometry, note.audibleEndUs, state.transportPositionUs);
+            batch.tails.push_back(QRectF(
+                prepared->left + prepared->width * 0.2, audibleEndY,
+                prepared->width * 0.6, std::max<qreal>(2.0, keyEndY - audibleEndY)));
         }
 
-        QColor border = color.lighter(isActive(note, state.transportPositionUs) ? 145 : 112);
-        border.setAlpha(240);
-        QPen pen(border, isActive(note, state.transportPositionUs) ? 2 : 1);
-        if (note.isGhost()) pen.setStyle(Qt::DashLine);
-        painter.setPen(pen);
-        painter.setBrush(color);
-        painter.drawRect(primary);
+        const bool active = isActive(note, state.transportPositionUs);
+        auto& bodies = active ? batch.activeBodies : batch.inactiveBodies;
+        auto& attackLines = active ? batch.activeAttackLines : batch.inactiveAttackLines;
+        bodies.push_back(primary);
+        attackLines.push_back(QLineF(primary.left() + 1.0, startY,
+                                     primary.right() - 1.0, startY));
 
-        painter.setPen(QPen(border, 1));
-        painter.drawLine(QPointF(primary.left() + 1.0, startY),
-                         QPointF(primary.right() - 1.0, startY));
-
-        if ((note.flags & midi_play::visualization::TremoloNote) != 0 && primary.height() > 14.0) {
-            painter.setPen(QPen(QColor(255, 255, 255, 110), 1));
+        if (prepared->tremolo && primary.height() > 14.0) {
             const qreal centerY = std::clamp(primary.center().y(), primary.top() + 5.0, primary.bottom() - 5.0);
-            painter.drawLine(QPointF(primary.left() + 3.0, centerY + 3.0),
-                             QPointF(primary.right() - 3.0, centerY - 3.0));
+            m_tremoloLines.push_back(QLineF(primary.left() + 3.0, centerY + 3.0,
+                                            primary.right() - 3.0, centerY - 3.0));
         }
+    }
 
+    const auto& styles = m_noteRenderCache.styles();
+    painter.setPen(Qt::NoPen);
+    for (const int styleIndex : m_usedStyleIndices) {
+        const auto& batch = m_noteBatches[styleIndex];
+        if (batch.tails.isEmpty()) continue;
+        painter.setBrush(styles[styleIndex].tailBrush);
+        painter.drawRects(batch.tails.constData(), static_cast<int>(batch.tails.size()));
+    }
+
+    for (const int styleIndex : m_usedStyleIndices) {
+        const auto& style = styles[styleIndex];
+        const auto& batch = m_noteBatches[styleIndex];
+        painter.setBrush(style.fillBrush);
+        if (!batch.inactiveBodies.isEmpty()) {
+            painter.setPen(style.inactiveBorderPen);
+            painter.drawRects(batch.inactiveBodies.constData(),
+                              static_cast<int>(batch.inactiveBodies.size()));
+        }
+        if (!batch.activeBodies.isEmpty()) {
+            painter.setPen(style.activeBorderPen);
+            painter.drawRects(batch.activeBodies.constData(),
+                              static_cast<int>(batch.activeBodies.size()));
+        }
+    }
+
+    painter.setBrush(Qt::NoBrush);
+    for (const int styleIndex : m_usedStyleIndices) {
+        const auto& style = styles[styleIndex];
+        const auto& batch = m_noteBatches[styleIndex];
+        if (!batch.inactiveAttackLines.isEmpty()) {
+            painter.setPen(style.inactiveAttackLinePen);
+            painter.drawLines(batch.inactiveAttackLines.constData(),
+                              static_cast<int>(batch.inactiveAttackLines.size()));
+        }
+        if (!batch.activeAttackLines.isEmpty()) {
+            painter.setPen(style.activeAttackLinePen);
+            painter.drawLines(batch.activeAttackLines.constData(),
+                              static_cast<int>(batch.activeAttackLines.size()));
+        }
+    }
+    if (!m_tremoloLines.isEmpty()) {
+        painter.setPen(QPen(QColor(255, 255, 255, 110), 1));
+        painter.drawLines(m_tremoloLines.constData(), static_cast<int>(m_tremoloLines.size()));
     }
     painter.restore();
 }
@@ -221,33 +283,21 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     }
 }
 
-void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                        const PlaybackSceneState& state) const
+void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSceneGeometry& geometry,
+                                            const PlaybackSceneState& state) const
 {
     painter.fillRect(geometry.keyboardRect, m_theme.keyboardBackground);
 
-    auto activeColorForNoteIndex = [&](int noteIndex) -> QColor {
-        if (!state.chart) return {};
-        return noteIndex >= 0 && noteIndex < state.chart->notes().size()
-            ? noteColor(*state.chart, state.chart->notes().at(noteIndex))
-            : QColor {};
-    };
-
-    // White keys establish the base; black keys are painted afterwards.
+    painter.setPen(QPen(m_theme.whiteKeyBorder, 1));
+    painter.setBrush(m_theme.whiteKey);
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || slot.blackKey) continue;
-        QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForPitch(slot.pitch));
-        if (!fill.isValid()) fill = m_theme.whiteKey;
-        painter.setPen(QPen(m_theme.whiteKeyBorder, 1));
-        painter.setBrush(fill);
         painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
     }
+    painter.setPen(QPen(m_theme.blackKeyBorder, 1));
+    painter.setBrush(m_theme.blackKey);
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || !slot.blackKey) continue;
-        QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForPitch(slot.pitch));
-        if (!fill.isValid()) fill = m_theme.blackKey;
-        painter.setPen(QPen(m_theme.blackKeyBorder, 1));
-        painter.setBrush(fill);
         painter.drawRect(slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
     }
 
@@ -262,19 +312,91 @@ void FallingNotesRenderer::drawKeyboard(QPainter& painter, const PlaybackSceneGe
     }
 
     if (state.chart && !geometry.drumRect.isEmpty()) {
+        painter.setPen(QPen(QColor(255, 255, 255, 35), 1));
+        painter.setBrush(QColor("#292d30"));
         for (const auto& slot : geometry.drumSlots) {
-            QColor fill = activeColorForNoteIndex(state.activeNoteLookup.noteIndexForDrumLane(slot.lane));
-            if (!fill.isValid()) fill = QColor("#292d30");
-            painter.setPen(QPen(QColor(255, 255, 255, 35), 1));
-            painter.setBrush(fill);
             painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
+        }
+        painter.setPen(m_theme.primaryText);
+        const QFontMetricsF metrics(keyFont);
+        for (const auto& slot : geometry.drumSlots) {
             if (slot.lane < state.chart->drumLanes().size() && slot.keyRect.width() >= 18.0) {
-                painter.setPen(m_theme.primaryText);
-                const QString text = QFontMetricsF(keyFont).elidedText(
+                const QString text = metrics.elidedText(
                     state.chart->drumLanes()[slot.lane].name, Qt::ElideRight, slot.keyRect.width() - 5.0);
                 painter.drawText(slot.keyRect.adjusted(3.0, 4.0, -3.0, -4.0),
                                  Qt::AlignHCenter | Qt::AlignBottom, text);
             }
+        }
+    }
+}
+
+void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
+                                              const PlaybackSceneGeometry& geometry,
+                                              const PlaybackSceneState& state) const
+{
+    if (!state.chart) return;
+
+    const auto fillForNote = [this](int noteIndex) -> const QBrush* {
+        const auto* style = m_noteRenderCache.styleForNote(noteIndex);
+        return style ? &style->fillBrush : nullptr;
+    };
+
+    const auto& activePitches = state.activeNoteLookup.activePitches();
+    bool paintedActiveWhiteKey = false;
+    painter.setPen(QPen(m_theme.whiteKeyBorder, 1));
+    for (const int pitch : activePitches) {
+        const auto* slot = geometry.pitchSlot(pitch);
+        const auto* fill = fillForNote(state.activeNoteLookup.noteIndexForPitch(pitch));
+        if (!slot || slot->blackKey || !fill) continue;
+        painter.setBrush(*fill);
+        painter.drawRect(slot->keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
+        paintedActiveWhiteKey = true;
+    }
+
+    // White keys extend underneath adjacent black keys. Restore the immutable
+    // black-key foreground in one batch before painting active black keys.
+    if (paintedActiveWhiteKey && !m_blackKeyForegroundRects.isEmpty()) {
+        painter.setPen(QPen(m_theme.blackKeyBorder, 1));
+        painter.setBrush(m_theme.blackKey);
+        painter.drawRects(m_blackKeyForegroundRects.constData(),
+                          static_cast<int>(m_blackKeyForegroundRects.size()));
+    }
+    painter.setPen(QPen(m_theme.blackKeyBorder, 1));
+    for (const int pitch : activePitches) {
+        const auto* slot = geometry.pitchSlot(pitch);
+        const auto* fill = fillForNote(state.activeNoteLookup.noteIndexForPitch(pitch));
+        if (!slot || !slot->blackKey || !fill) continue;
+        painter.setBrush(*fill);
+        painter.drawRect(slot->keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
+    }
+
+    QFont keyFont = painter.font();
+    keyFont.setPointSizeF(7.5);
+    painter.setFont(keyFont);
+    painter.setPen(QColor(44, 47, 46));
+    for (const int pitch : activePitches) {
+        const auto* slot = geometry.pitchSlot(pitch);
+        if (!slot || slot->blackKey || pitch % 12 != 0 || slot->keyRect.width() < 12.0) continue;
+        painter.drawText(slot->keyRect.adjusted(1.0, 0.0, -1.0, -5.0),
+                         Qt::AlignHCenter | Qt::AlignBottom,
+                         QStringLiteral("C%1").arg(pitch / 12 - 1));
+    }
+
+    if (geometry.drumRect.isEmpty()) return;
+    const QFontMetricsF metrics(keyFont);
+    for (const int lane : state.activeNoteLookup.activeDrumLanes()) {
+        const auto* slot = geometry.drumSlot(lane);
+        const auto* fill = fillForNote(state.activeNoteLookup.noteIndexForDrumLane(lane));
+        if (!slot || !fill) continue;
+        painter.setPen(QPen(QColor(255, 255, 255, 35), 1));
+        painter.setBrush(*fill);
+        painter.drawRect(slot->keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
+        if (lane < state.chart->drumLanes().size() && slot->keyRect.width() >= 18.0) {
+            painter.setPen(m_theme.primaryText);
+            const QString text = metrics.elidedText(
+                state.chart->drumLanes()[lane].name, Qt::ElideRight, slot->keyRect.width() - 5.0);
+            painter.drawText(slot->keyRect.adjusted(3.0, 4.0, -3.0, -4.0),
+                             Qt::AlignHCenter | Qt::AlignBottom, text);
         }
     }
 }

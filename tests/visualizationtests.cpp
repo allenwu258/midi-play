@@ -4,6 +4,7 @@
 #include "domain/visualization/visiblenoteindex.h"
 #include "presentation/playbackmetadatapresenter.h"
 #include "presentation/visualization/rasterrenderpolicy.h"
+#include "presentation/visualization/noterendercache.h"
 #include "presentation/visualization/scenelayoutengine.h"
 
 #include <QCoreApplication>
@@ -23,6 +24,7 @@ using midi_play::music::MusicDocument;
 using midi_play::music::NoteEvent;
 using midi_play::music::Track;
 using midi_play::presentation::visualization::SceneLayoutEngine;
+using midi_play::presentation::visualization::NoteRenderCache;
 using midi_play::presentation::visualization::RasterRenderPolicy;
 using midi_play::presentation::PlaybackMetadataPresenter;
 using midi_play::visualization::PlaybackVisualizationProjector;
@@ -144,6 +146,10 @@ void testActiveNoteLookup()
     require(lookup.noteIndexForPitch(64) == 12, "second pitch must be indexed");
     require(lookup.noteIndexForPitch(61) == -1, "negative note index must be rejected");
     require(lookup.noteIndexForDrumLane(1) == 15, "active drum lane must be indexed");
+    require(lookup.activePitches() == QVector<int>({60, 64}),
+            "active pitch iteration must be unique and preserve discovery order");
+    require(lookup.activeDrumLanes() == QVector<int>({1}),
+            "active drum iteration must contain each lane once");
     require(lookup.melodicLabelNoteIndices() == QVector<int>({4, 12}),
             "melodic labels must preserve first-pitch order and remove duplicates");
     require(lookup.noteIndexForPitch(-1) == -1 && lookup.noteIndexForPitch(128) == -1,
@@ -153,8 +159,108 @@ void testActiveNoteLookup()
 
     lookup.reset(1);
     require(lookup.noteIndexForPitch(60) == -1 && lookup.noteIndexForDrumLane(0) == -1
+                && lookup.activePitches().isEmpty() && lookup.activeDrumLanes().isEmpty()
                 && lookup.melodicLabelNoteIndices().isEmpty(),
             "frame reset must clear all active-note lookup state");
+}
+
+void testNoteRenderCache()
+{
+    auto document = repeatedDocument();
+    const auto chart = PlaybackVisualizationProjector().project(document, 1);
+    const auto geometry = SceneLayoutEngine().layout(QSizeF(960.0, 640.0), chart.get(), 5'000'000);
+
+    NoteRenderCache cache;
+    cache.prepare(chart, geometry);
+    require(cache.chartBuildCount() == 1 && cache.geometryBuildCount() == 1,
+            "initial render preparation must build chart and geometry caches once");
+    require(cache.notes().size() == chart->notes().size(),
+            "render cache must keep one direct record per projected note");
+    require(cache.styles().size() == 1,
+            "identical repeated notes must share one immutable render style");
+    require(cache.note(0) && cache.note(0)->validGeometry && cache.note(0)->width > 0.0,
+            "render cache must precompute valid horizontal note geometry");
+    require(cache.note(0)->styleIndex == cache.note(2)->styleIndex,
+            "repeat instances with equal style inputs must reuse the same style");
+
+    cache.prepare(chart, geometry);
+    require(cache.chartBuildCount() == 1 && cache.geometryBuildCount() == 1,
+            "stable chart and layout must not rebuild render caches per frame");
+    const auto resizedGeometry = SceneLayoutEngine().layout(
+        QSizeF(1'080.0, 640.0), chart.get(), 5'000'000);
+    cache.prepare(chart, resizedGeometry);
+    require(cache.chartBuildCount() == 1 && cache.geometryBuildCount() == 2,
+            "resize must rebuild only horizontal geometry, not immutable styles");
+}
+
+void testNoteRenderCacheStaticFlags()
+{
+    MusicDocument document;
+    document.tempos().push_back({0, 120.0, 0});
+    document.setDuration(480);
+    Track track;
+    track.id = QStringLiteral("render-flags");
+    NoteEvent note;
+    note.noteId = 1;
+    note.start = 0;
+    note.duration = 240;
+    note.pitch = 60;
+    note.velocity = 72;
+    note.ghost = true;
+    note.tremolo = true;
+    track.notes.push_back(note);
+    track.controlChanges.push_back({0, 0, 64, 127, 0});
+    track.controlChanges.push_back({400, 0, 64, 0, 1});
+    document.tracks().push_back(track);
+    document.rebuildMeasureGrid();
+    midi_play::music::MusicAnalyzer().analyze(document);
+
+    const auto chart = PlaybackVisualizationProjector().project(document, 1);
+    const auto geometry = SceneLayoutEngine().layout(QSizeF(800.0, 600.0), chart.get(), 5'000'000);
+    NoteRenderCache cache;
+    cache.prepare(chart, geometry);
+
+    const auto* prepared = cache.note(0);
+    const auto* style = cache.styleForNote(0);
+    require(prepared && prepared->hasTail && prepared->tremolo,
+            "tail and tremolo flags must be resolved once during chart preparation");
+    require(style && style->fillBrush.color().alpha() == 120,
+            "ghost alpha must be precomputed in the shared fill style");
+    require(style->inactiveBorderPen.style() == Qt::DashLine
+                && style->activeBorderPen.style() == Qt::DashLine,
+            "ghost border pens must be precomputed for both transport states");
+}
+
+void testNoteRenderCacheDeduplicatesResolvedVelocityColor()
+{
+    MusicDocument document;
+    document.tempos().push_back({0, 120.0, 0});
+    document.setDuration(480);
+    Track track;
+    track.id = QStringLiteral("render-velocity-buckets");
+    NoteEvent first;
+    first.noteId = 1;
+    first.start = 0;
+    first.duration = 120;
+    first.pitch = 60;
+    first.velocity = 1;
+    NoteEvent second = first;
+    second.noteId = 2;
+    second.start = 240;
+    second.velocity = 2;
+    track.notes = {first, second};
+    document.tracks().push_back(track);
+    document.rebuildMeasureGrid();
+    midi_play::music::MusicAnalyzer().analyze(document);
+
+    const auto chart = PlaybackVisualizationProjector().project(document, 1);
+    const auto geometry = SceneLayoutEngine().layout(QSizeF(800.0, 600.0), chart.get(), 5'000'000);
+    NoteRenderCache cache;
+    cache.prepare(chart, geometry);
+
+    require(cache.styles().size() == 1
+                && cache.note(0)->styleIndex == cache.note(1)->styleIndex,
+            "velocities resolving to the same color must share one render style");
 }
 
 void testRasterRenderPolicy()
@@ -356,6 +462,9 @@ int main(int argc, char* argv[])
     testRepeatProjection();
     testVisibleIndex();
     testActiveNoteLookup();
+    testNoteRenderCache();
+    testNoteRenderCacheStaticFlags();
+    testNoteRenderCacheDeduplicatesResolvedVelocityColor();
     testRasterRenderPolicy();
     testRasterRenderPolicyIsScopedByPainterState();
     testSceneGeometry();

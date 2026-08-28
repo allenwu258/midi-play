@@ -91,6 +91,8 @@ qt_add_executable(midi_play
     src/presentation/visualization/scenelayoutengine.cpp
     src/presentation/visualization/fallingnotesrenderer.h
     src/presentation/visualization/fallingnotesrenderer.cpp
+    src/presentation/visualization/noterendercache.h
+    src/presentation/visualization/noterendercache.cpp
     src/presentation/visualization/rasterrenderpolicy.h
     src/presentation/visualization/rasterrenderpolicy.cpp
     src/presentation/visualization/fallingnotesview.h
@@ -155,6 +157,8 @@ if (BUILD_TESTING)
         src/presentation/visualization/scenelayoutengine.cpp
         src/presentation/visualization/rasterrenderpolicy.h
         src/presentation/visualization/rasterrenderpolicy.cpp
+        src/presentation/visualization/noterendercache.h
+        src/presentation/visualization/noterendercache.cpp
         src/presentation/playbackmetadatapresenter.h
         src/presentation/playbackmetadatapresenter.cpp
     )

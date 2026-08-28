@@ -25,11 +25,15 @@ public:
 
     int noteIndexForPitch(int pitch) const;
     int noteIndexForDrumLane(int lane) const;
+    const QVector<int>& activePitches() const { return m_activePitches; }
+    const QVector<int>& activeDrumLanes() const { return m_activeDrumLanes; }
     const QVector<int>& melodicLabelNoteIndices() const { return m_melodicLabelNoteIndices; }
 
 private:
     std::array<int, MidiPitchCount> m_pitchNoteIndices;
     QVector<int> m_drumLaneNoteIndices;
+    QVector<int> m_activePitches;
+    QVector<int> m_activeDrumLanes;
     std::bitset<MidiPitchCount> m_labelPitches;
     QVector<int> m_melodicLabelNoteIndices;
 };
