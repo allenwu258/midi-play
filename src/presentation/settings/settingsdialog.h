@@ -1,0 +1,30 @@
+#pragma once
+
+#include <QDialog>
+
+class QComboBox;
+class QLabel;
+
+namespace midi_play::app { class SettingsService; }
+
+namespace midi_play::presentation::settings {
+
+class SettingsDialog final : public QDialog {
+    Q_OBJECT
+public:
+    explicit SettingsDialog(app::SettingsService* settingsService, QWidget* parent = nullptr);
+
+private slots:
+    void applyRefreshRateFromUi();
+    void updateRefreshRateSelection(int refreshRate);
+    void showSaveError(const QString& message);
+
+private:
+    void initializeRefreshRateOptions();
+
+    app::SettingsService* m_settingsService = nullptr;
+    QComboBox* m_refreshRateCombo = nullptr;
+    QLabel* m_errorLabel = nullptr;
+};
+
+} // namespace midi_play::presentation::settings

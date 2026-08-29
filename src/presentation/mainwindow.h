@@ -5,6 +5,7 @@
 #include "playbackmetadatapresenter.h"
 
 #include <QMainWindow>
+#include <QPointer>
 
 class QLabel;
 class QSlider;
@@ -12,6 +13,8 @@ class QToolButton;
 class QResizeEvent;
 
 namespace midi_play::app { class PlayerApplicationService; }
+namespace midi_play::app { class SettingsService; }
+namespace midi_play::presentation::settings { class SettingsDialog; }
 namespace midi_play::presentation::visualization { class FallingNotesView; }
 
 namespace midi_play::presentation {
@@ -19,7 +22,9 @@ namespace midi_play::presentation {
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(app::PlayerApplicationService* service, QWidget* parent = nullptr);
+    explicit MainWindow(app::PlayerApplicationService* service,
+                        app::SettingsService* settingsService,
+                        QWidget* parent = nullptr);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -27,6 +32,7 @@ protected:
 private slots:
     void openMusicFile();
     void openSoundFont();
+    void showSettings();
     void updatePosition(qint64 position, qint64 duration);
     void updatePlaybackState(midi_play::playback::State state);
 
@@ -40,6 +46,8 @@ private:
     static constexpr int kSliderResolution = 1'000'000;
 
     app::PlayerApplicationService* m_service = nullptr;
+    app::SettingsService* m_settingsService = nullptr;
+    QPointer<settings::SettingsDialog> m_settingsDialog;
     visualization::FallingNotesView* m_visualization = nullptr;
     QLabel* m_fileLabel = nullptr;
     QLabel* m_soundFontLabel = nullptr;

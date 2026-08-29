@@ -15,6 +15,9 @@ qt_add_executable(midi_play
     src/main.cpp
     src/app/playerapplicationservice.h
     src/app/playerapplicationservice.cpp
+    src/app/isettingsstore.h
+    src/app/settingsservice.h
+    src/app/settingsservice.cpp
     src/domain/music/musicdocument.h
     src/domain/music/musicdocument.cpp
     src/domain/music/playbacktimeline.h
@@ -58,6 +61,8 @@ qt_add_executable(midi_play
     src/domain/playback/playbackplayhead.cpp
     src/domain/playback/playbackcontroller.h
     src/domain/playback/playbackcontroller.cpp
+    src/domain/settings/playersettings.h
+    src/domain/settings/playersettings.cpp
     src/infrastructure/musicxml/musicxmlreader.h
     src/infrastructure/musicxml/musicxmlreader.cpp
     src/infrastructure/audio/fluidsynthengine.h
@@ -68,6 +73,8 @@ qt_add_executable(midi_play
     src/infrastructure/audio/threadedplaybackaudioservice.cpp
     src/infrastructure/resources/projectaudiosettings.h
     src/infrastructure/resources/projectaudiosettings.cpp
+    src/infrastructure/settings/qsettingsstore.h
+    src/infrastructure/settings/qsettingsstore.cpp
     src/infrastructure/readers/imusicreader.h
     src/infrastructure/readers/musicreaderregistry.h
     src/infrastructure/readers/musicreaderregistry.cpp
@@ -88,6 +95,8 @@ qt_add_executable(midi_play
     src/presentation/mainwindow.cpp
     src/presentation/playbackmetadatapresenter.h
     src/presentation/playbackmetadatapresenter.cpp
+    src/presentation/settings/settingsdialog.h
+    src/presentation/settings/settingsdialog.cpp
     src/presentation/visualization/scenegeometry.h
     src/presentation/visualization/scenelayoutengine.h
     src/presentation/visualization/scenelayoutengine.cpp
@@ -207,6 +216,15 @@ if (BUILD_TESTING)
         src/domain/playback/playbacksession.cpp
         src/domain/playback/playbackpositionthrottler.h
         src/domain/playback/playbackpositionthrottler.cpp
+        src/domain/playback/playbackcontroller.h
+        src/domain/playback/playbackcontroller.cpp
+        src/domain/settings/playersettings.h
+        src/domain/settings/playersettings.cpp
+        src/app/isettingsstore.h
+        src/app/settingsservice.h
+        src/app/settingsservice.cpp
+        src/infrastructure/settings/qsettingsstore.h
+        src/infrastructure/settings/qsettingsstore.cpp
         src/infrastructure/audio/threadedplaybackaudioservice.h
         src/infrastructure/audio/threadedplaybackaudioservice.cpp
     )

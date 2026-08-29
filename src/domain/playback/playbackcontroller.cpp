@@ -1,20 +1,17 @@
 #include "playbackcontroller.h"
 
+#include "domain/settings/playersettings.h"
+
 #include <QMetaObject>
 #include <QThread>
 
 namespace midi_play::playback {
-namespace {
-
-constexpr int kPositionPublishIntervalMs = 16;
-
-} // namespace
 
 PlaybackController::PlaybackController(QObject* parent)
     : QObject(parent)
 {
     m_playbackThread.setObjectName(QStringLiteral("PlaybackThread"));
-    m_positionTimer.setInterval(kPositionPublishIntervalMs);
+    m_positionTimer.setInterval(settings::visualizationRefreshIntervalMs(m_positionPublishRate));
     m_positionTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_positionTimer, &QTimer::timeout, this, &PlaybackController::onPositionTimer);
 }
@@ -82,6 +79,18 @@ bool PlaybackController::loadSoundFont(const QString& path, QString* error)
     }, Qt::BlockingQueuedConnection);
     if (error) *error = localError;
     return result;
+}
+
+void PlaybackController::setPositionPublishRate(int refreshRate)
+{
+    const int normalizedRefreshRate = settings::normalizeVisualizationRefreshRate(refreshRate);
+    if (m_positionPublishRate == normalizedRefreshRate) {
+        return;
+    }
+
+    m_positionPublishRate = normalizedRefreshRate;
+    m_positionTimer.setInterval(settings::visualizationRefreshIntervalMs(m_positionPublishRate));
+    flushPositionUpdate();
 }
 
 void PlaybackController::play() { if (m_session) QMetaObject::invokeMethod(m_session.get(), "play", Qt::QueuedConnection); }

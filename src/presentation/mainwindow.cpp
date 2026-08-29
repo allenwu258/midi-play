@@ -1,7 +1,9 @@
 #include "mainwindow.h"
 
 #include "app/playerapplicationservice.h"
+#include "app/settingsservice.h"
 #include "playbackmetadatapresenter.h"
+#include "presentation/settings/settingsdialog.h"
 #include "presentation/visualization/fallingnotesview.h"
 
 #include <QFileDialog>
@@ -47,8 +49,10 @@ QToolButton* toolButton(QWidget* parent, const QIcon& icon, const QString& text,
 
 } // namespace
 
-MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
-    : QMainWindow(parent), m_service(service)
+MainWindow::MainWindow(app::PlayerApplicationService* service,
+                       app::SettingsService* settingsService,
+                       QWidget* parent)
+    : QMainWindow(parent), m_service(service), m_settingsService(settingsService)
 {
     setWindowTitle(QStringLiteral("MIDI Play"));
     resize(1180, 760);
@@ -110,8 +114,11 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
                                  QStringLiteral("打开乐曲"), QStringLiteral("打开 MusicXML 或 MIDI 文件"));
     auto* openSf2 = toolButton(topBar, style()->standardIcon(QStyle::SP_DriveHDIcon),
                                QStringLiteral("加载 SF2"), QStringLiteral("加载 SoundFont 音源"));
+    auto* settingsButton = toolButton(topBar, style()->standardIcon(QStyle::SP_FileDialogDetailedView),
+                                      QStringLiteral("设置"), QStringLiteral("打开播放器设置"));
     topLayout->addWidget(openMusic);
     topLayout->addWidget(openSf2);
+    topLayout->addWidget(settingsButton);
     root->addWidget(topBar);
 
     m_visualization = new visualization::FallingNotesView(central);
@@ -173,6 +180,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
 
     connect(openMusic, &QToolButton::clicked, this, &MainWindow::openMusicFile);
     connect(openSf2, &QToolButton::clicked, this, &MainWindow::openSoundFont);
+    connect(settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
     connect(m_playButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::play);
     connect(m_pauseButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::pause);
     connect(m_stopButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::stop);
@@ -234,6 +242,16 @@ MainWindow::MainWindow(app::PlayerApplicationService* service, QWidget* parent)
         m_visualization->setErrorMessage(message);
         QMessageBox::warning(this, QStringLiteral("播放器错误"), message);
     });
+    if (m_settingsService) {
+        connect(m_settingsService, &app::SettingsService::settingsLoadWarning, this,
+                [this](const QString& message) {
+                    m_statusLabel->setText(message);
+                });
+        connect(m_settingsService, &app::SettingsService::settingsSaveFailed, this,
+                [this](const QString& message) {
+                    m_statusLabel->setText(message);
+                });
+    }
 
     updateTransportControls();
     updateResponsiveVisibility();
@@ -259,6 +277,17 @@ void MainWindow::openSoundFont()
         this, QStringLiteral("加载 SoundFont"), {},
         QStringLiteral("SoundFont (*.sf2 *.sf3);;所有文件 (*.*)"));
     if (!path.isEmpty()) m_service->loadSoundFont(path);
+}
+
+void MainWindow::showSettings()
+{
+    if (!m_settingsDialog) {
+        m_settingsDialog = new settings::SettingsDialog(m_settingsService, this);
+    }
+
+    m_settingsDialog->show();
+    m_settingsDialog->raise();
+    m_settingsDialog->activateWindow();
 }
 
 void MainWindow::updatePosition(qint64 position, qint64 duration)

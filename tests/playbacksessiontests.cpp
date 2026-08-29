@@ -2,13 +2,21 @@
 #include "domain/playback/playbacksession.h"
 #include "domain/playback/playbackpositionthrottler.h"
 #include "domain/playback/playbackcontext.h"
+#include "domain/playback/playbackcontroller.h"
 #include "domain/music/playbacktimeline.h"
+#include "domain/settings/playersettings.h"
+#include "app/isettingsstore.h"
+#include "app/settingsservice.h"
 #include "infrastructure/audio/threadedplaybackaudioservice.h"
+#include "infrastructure/settings/qsettingsstore.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QSettings>
 #include <QThread>
+#include <QTemporaryDir>
 
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +39,7 @@ using midi_play::playback::PlaybackEventKind;
 using midi_play::playback::PlaybackPositionThrottler;
 using midi_play::playback::PlaybackSession;
 using midi_play::playback::State;
+using midi_play::settings::PlayerSettings;
 
 [[noreturn]] void fail(const char* message)
 {
@@ -117,6 +126,122 @@ public:
     QVector<quint64> submittedGenerations;
     QVector<PlaybackEvent> submittedEvents;
 };
+
+class MemorySettingsStore final : public midi_play::app::ISettingsStore {
+public:
+    PlayerSettings load(QString* warning) override
+    {
+        ++loadCount;
+        if (warning) *warning = loadWarning;
+        return loadedSettings;
+    }
+
+    bool save(const PlayerSettings& settings, QString* error) override
+    {
+        ++saveCount;
+        savedSettings = settings;
+        if (error) *error = saveError;
+        return saveResult;
+    }
+
+    PlayerSettings loadedSettings;
+    PlayerSettings savedSettings;
+    QString loadWarning;
+    QString saveError;
+    bool saveResult = true;
+    int loadCount = 0;
+    int saveCount = 0;
+};
+
+void testVisualizationRefreshRateSettingsNormalizeInts()
+{
+    require(midi_play::settings::normalizeVisualizationRefreshRate(30) == 30,
+            "30 FPS must be accepted");
+    require(midi_play::settings::normalizeVisualizationRefreshRate(60) == 60,
+            "60 FPS must be accepted");
+    require(midi_play::settings::normalizeVisualizationRefreshRate(120) == 120,
+            "120 FPS must be accepted");
+    require(midi_play::settings::normalizeVisualizationRefreshRate(0) == 60,
+            "unsupported FPS must fall back to 60");
+    require(midi_play::settings::visualizationRefreshIntervalMs(30) == 33,
+            "30 FPS must map to the expected timer interval");
+    require(midi_play::settings::visualizationRefreshIntervalMs(60) == 16,
+            "60 FPS must map to the expected timer interval");
+    require(midi_play::settings::visualizationRefreshIntervalMs(120) == 8,
+            "120 FPS must map to the expected timer interval");
+}
+
+void testSettingsServicePersistsOnlyEffectiveChanges()
+{
+    auto store = std::make_unique<MemorySettingsStore>();
+    auto* rawStore = store.get();
+    rawStore->loadedSettings.visualizationRefreshRate = 120;
+    midi_play::app::SettingsService service(std::move(store));
+
+    int changeCount = 0;
+    int saveFailureCount = 0;
+    QObject::connect(&service, &midi_play::app::SettingsService::visualizationRefreshRateChanged,
+                     [&changeCount](int) { ++changeCount; });
+    QObject::connect(&service, &midi_play::app::SettingsService::settingsSaveFailed,
+                     [&saveFailureCount](const QString&) { ++saveFailureCount; });
+
+    service.load();
+    require(service.visualizationRefreshRate() == 120,
+            "settings service must expose the loaded refresh rate");
+    require(rawStore->loadCount == 1, "settings service must load exactly once");
+
+    service.setVisualizationRefreshRate(120);
+    require(changeCount == 0, "same refresh rate must not emit a change");
+    require(rawStore->saveCount == 0, "same refresh rate must not be saved again");
+
+    service.setVisualizationRefreshRate(30);
+    require(service.visualizationRefreshRate() == 30,
+            "settings service must apply a supported refresh rate");
+    require(changeCount == 1, "effective refresh rate changes must emit once");
+    require(rawStore->saveCount == 1, "effective refresh rate changes must be saved once");
+    require(rawStore->savedSettings.visualizationRefreshRate == 30,
+            "settings service must save the normalized refresh rate");
+
+    rawStore->saveResult = false;
+    rawStore->saveError = QStringLiteral("save failed");
+    service.setVisualizationRefreshRate(999);
+    require(service.visualizationRefreshRate() == 60,
+            "invalid runtime refresh rate must fall back to 60");
+    require(saveFailureCount == 1, "save failures must be reported");
+}
+
+void testQSettingsStorePersistsUserRefreshRate()
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary settings directory must be available");
+
+    const QString settingsPath = QDir(directory.path()).filePath(QStringLiteral("settings.ini"));
+    midi_play::infrastructure::settings::QSettingsStore store(settingsPath);
+
+    QString warning;
+    PlayerSettings loaded = store.load(&warning);
+    require(loaded.visualizationRefreshRate == 60,
+            "missing settings file must load the default refresh rate");
+
+    PlayerSettings saved;
+    saved.visualizationRefreshRate = 120;
+    QString error;
+    require(store.save(saved, &error), "settings store must save a valid refresh rate");
+    require(error.isEmpty(), "successful settings save must not report an error");
+
+    loaded = store.load(&warning);
+    require(loaded.visualizationRefreshRate == 120,
+            "settings store must reload the persisted refresh rate");
+
+    QSettings file(settingsPath, QSettings::IniFormat);
+    file.setValue(QStringLiteral("General/visualizationRefreshRate"), 144);
+    file.sync();
+
+    loaded = store.load(&warning);
+    require(loaded.visualizationRefreshRate == 60,
+            "invalid persisted refresh rate must fall back to 60");
+    require(!warning.isEmpty(), "invalid persisted refresh rate should report a warning");
+}
 
 void testPlaybackTimelineCachesRepeatExpansion()
 {
@@ -412,6 +537,9 @@ void testPositionThrottlerUsesLatestSample()
 int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
+    testVisualizationRefreshRateSettingsNormalizeInts();
+    testSettingsServicePersistsOnlyEffectiveChanges();
+    testQSettingsStorePersistsUserRefreshRate();
     testPlaybackTimelineCachesRepeatExpansion();
     testThreadedAudioCapabilitiesAreImmutableSnapshot();
     testPlaybackContextProjectsDynamicsThroughRepeats();

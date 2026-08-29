@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/playback/playbackcontroller.h"
+#include "domain/settings/playersettings.h"
 #include "domain/visualization/visualchart.h"
 #include "infrastructure/readers/musicreaderregistry.h"
 
@@ -19,11 +20,13 @@ public:
     playback::State playbackState() const { return m_playbackState; }
     qint64 positionMicroseconds() const { return m_positionUs; }
     qint64 durationMicroseconds() const { return m_durationUs; }
+    int visualizationRefreshRate() const noexcept { return m_visualizationRefreshRate; }
 
 public slots:
     void openFile(const QString& path);
     void openMusicXml(const QString& path);
     void loadSoundFont(const QString& path);
+    void setVisualizationRefreshRate(int refreshRate);
     void play();
     void pause();
     void stop();
@@ -49,6 +52,7 @@ private:
     qint64 m_positionUs = 0;
     qint64 m_durationUs = 0;
     quint64 m_loadGeneration = 0;
+    int m_visualizationRefreshRate = settings::kDefaultVisualizationRefreshRate;
 };
 
 } // namespace midi_play::app

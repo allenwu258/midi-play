@@ -1,6 +1,8 @@
 #include "app/playerapplicationservice.h"
+#include "app/settingsservice.h"
 #include "infrastructure/musicxml/musicxmlreader.h"
 #include "infrastructure/audio/fluidsynthengine.h"
+#include "infrastructure/settings/qsettingsstore.h"
 #include "infrastructure/midi/midireader.h"
 #include "infrastructure/readers/musicreaderregistry.h"
 #include "infrastructure/readers/musicxmlreaderadapter.h"
@@ -31,10 +33,16 @@ int main(int argc, char* argv[])
         QApplication::addLibraryPath(bundledPlatforms);
     }
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("MIDI Play"));
-    app.setOrganizationName(QStringLiteral("MIDI Play"));
+    app.setApplicationName(QStringLiteral("MidiPlay"));
+    app.setOrganizationName(QStringLiteral("MidiPlay"));
 
     midi_play::app::PlayerApplicationService service;
+    auto settingsStore = std::make_unique<midi_play::infrastructure::settings::QSettingsStore>();
+    midi_play::app::SettingsService settingsService(std::move(settingsStore));
+    settingsService.load();
+    service.setVisualizationRefreshRate(settingsService.visualizationRefreshRate());
+    QObject::connect(&settingsService, &midi_play::app::SettingsService::visualizationRefreshRateChanged,
+                     &service, &midi_play::app::PlayerApplicationService::setVisualizationRefreshRate);
 
     if (argc > 2 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--audio-test")) {
         midi_play::audio::FluidSynthEngine engine;
@@ -139,7 +147,7 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    midi_play::presentation::MainWindow window(&service);
+    midi_play::presentation::MainWindow window(&service, &settingsService);
     window.show();
 
     const QString defaultSoundFontRelativePath = QStringLiteral("assets/midisound.sf2");

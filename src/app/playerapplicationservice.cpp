@@ -65,6 +65,7 @@ void PlayerApplicationService::openFile(const QString& path)
         auto fluidsynthService = std::make_unique<audio::FluidSynthAudioService>(std::move(engine));
         auto audioService = std::make_unique<audio::ThreadedPlaybackAudioService>(std::move(fluidsynthService));
         m_controller = std::make_unique<playback::PlaybackController>(this);
+        m_controller->setPositionPublishRate(m_visualizationRefreshRate);
         QString controllerError;
         if (!m_controller->setDocument(result.readResult.document, std::move(audioService), &controllerError)) {
             emit errorOccurred(controllerError);
@@ -112,6 +113,19 @@ void PlayerApplicationService::loadSoundFont(const QString& path)
         return;
     }
     emit soundFontLoaded(path);
+}
+
+void PlayerApplicationService::setVisualizationRefreshRate(int refreshRate)
+{
+    const int normalizedRefreshRate = settings::normalizeVisualizationRefreshRate(refreshRate);
+    if (m_visualizationRefreshRate == normalizedRefreshRate) {
+        return;
+    }
+
+    m_visualizationRefreshRate = normalizedRefreshRate;
+    if (m_controller) {
+        m_controller->setPositionPublishRate(m_visualizationRefreshRate);
+    }
 }
 
 void PlayerApplicationService::play() { if (m_controller) m_controller->play(); }
