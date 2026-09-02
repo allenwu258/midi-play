@@ -55,7 +55,8 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
 
     setStyleSheet(QStringLiteral(R"(
         QDialog { background: #1b1d20; color: #f0f1ed; }
-        QLabel#settingsTitle { font-size: 16px; font-weight: 600; }
+        QLabel { color: #f0f1ed; }
+        QLabel#settingsTitle { color: #f0f1ed; font-size: 16px; font-weight: 600; }
         QLabel#settingsHint { color: #aeb4af; font-size: 12px; }
         QLabel#settingsError { color: #ffb4a8; font-size: 12px; }
         QComboBox { min-height: 28px; padding: 2px 8px; background: #25282b; color: #f0f1ed; border: 1px solid #3a3e41; }
