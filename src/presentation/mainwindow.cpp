@@ -387,7 +387,34 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
 
             const int globalX = GET_X_LPARAM(nativeMessage->lParam);
             const int globalY = GET_Y_LPARAM(nativeMessage->lParam);
-            const int margin = std::max(4, qRound(8.0 * devicePixelRatioF()));
+            // Keep title-bar controls in the Qt client area even when their
+            // upper edge falls inside the native resize hit-test band.
+            if (m_topBar) {
+                const auto controls = m_topBar->findChildren<QToolButton*>(
+                    QString(), Qt::FindDirectChildrenOnly);
+                const qreal deviceRatio = devicePixelRatioF();
+                for (const auto* control : controls) {
+                    if (!control->isVisible()) {
+                        continue;
+                    }
+                    const QPoint logicalPosition = control->mapTo(this, QPoint(0, 0));
+                    const QRect physicalRect(
+                        windowRect.left + qRound(logicalPosition.x() * deviceRatio),
+                        windowRect.top + qRound(logicalPosition.y() * deviceRatio),
+                        qRound(control->width() * deviceRatio),
+                        qRound(control->height() * deviceRatio));
+                    if (physicalRect.contains(QPoint(globalX, globalY))) {
+                        *result = HTCLIENT;
+                        return true;
+                    }
+                }
+            }
+
+            // Use a fixed physical-pixel border. Scaling this value by the Qt
+            // device ratio makes the hit band grow into the title-bar controls
+            // on high-DPI displays.
+            constexpr int kResizeHitTestMarginPx = 6;
+            const int margin = kResizeHitTestMarginPx;
             const bool maximized = isMaximized() || isFullScreen();
             if (!maximized) {
                 Qt::Edges edges;
@@ -426,8 +453,12 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
 void MainWindow::applyTitleBarMode(midi_play::settings::TitleBarMode mode)
 {
     const auto normalizedMode = midi_play::settings::normalizeTitleBarMode(mode);
+    const bool custom = normalizedMode == midi_play::settings::TitleBarMode::Custom;
+    if (m_topBar) {
+        m_topBar->setDragEnabled(custom);
+    }
     if (m_titleBarMode == normalizedMode && windowFlags().testFlag(Qt::FramelessWindowHint)
-        == (normalizedMode == midi_play::settings::TitleBarMode::Custom)) {
+        == custom) {
         updateWindowControlButtons();
         return;
     }
@@ -439,9 +470,7 @@ void MainWindow::applyTitleBarMode(midi_play::settings::TitleBarMode mode)
     if (visible) hide();
 
     m_titleBarMode = normalizedMode;
-    setWindowFlag(Qt::FramelessWindowHint,
-                  normalizedMode == midi_play::settings::TitleBarMode::Custom);
-    const bool custom = normalizedMode == midi_play::settings::TitleBarMode::Custom;
+    setWindowFlag(Qt::FramelessWindowHint, custom);
     m_windowControlsSeparator->setVisible(custom);
     m_minimizeButton->setVisible(custom);
     m_maximizeButton->setVisible(custom);

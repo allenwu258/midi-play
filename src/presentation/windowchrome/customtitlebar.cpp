@@ -53,7 +53,7 @@ bool CustomTitleBar::eventFilter(QObject* watched, QEvent* event)
 
 bool CustomTitleBar::handleMousePress(QMouseEvent* event)
 {
-    if (!event || event->button() != Qt::LeftButton) {
+    if (!m_dragEnabled || !event || event->button() != Qt::LeftButton) {
         return false;
     }
     auto* widgetWindow = QWidget::window();
@@ -70,7 +70,7 @@ bool CustomTitleBar::handleMousePress(QMouseEvent* event)
 
 bool CustomTitleBar::handleMouseDoubleClick(QMouseEvent* event)
 {
-    if (!event || event->button() != Qt::LeftButton) {
+    if (!m_dragEnabled || !event || event->button() != Qt::LeftButton) {
         return false;
     }
     toggleMaximized();
