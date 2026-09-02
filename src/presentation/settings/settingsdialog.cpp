@@ -1,12 +1,14 @@
 #include "settingsdialog.h"
 
 #include "app/settingsservice.h"
+#include "domain/settings/playersettings.h"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 namespace midi_play::presentation::settings {
@@ -17,7 +19,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
     setWindowTitle(QStringLiteral("设置"));
     setWindowFlag(Qt::Window, true);
     setModal(false);
-    resize(360, 180);
+    resize(360, 220);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(18, 16, 18, 14);
@@ -36,6 +38,16 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
     m_refreshRateCombo->setObjectName(QStringLiteral("refreshRateCombo"));
     initializeRefreshRateOptions();
     form->addRow(QStringLiteral("视觉刷新率"), m_refreshRateCombo);
+
+    m_customRefreshRateLabel = new QLabel(QStringLiteral("自定义刷新率"), this);
+    m_customRefreshRateSpinBox = new QSpinBox(this);
+    m_customRefreshRateSpinBox->setObjectName(QStringLiteral("customRefreshRateSpinBox"));
+    m_customRefreshRateSpinBox->setRange(midi_play::settings::kMinimumVisualizationRefreshRate,
+                                         midi_play::settings::kMaximumVisualizationRefreshRate);
+    m_customRefreshRateSpinBox->setSuffix(QStringLiteral(" FPS"));
+    m_customRefreshRateLabel->setVisible(false);
+    m_customRefreshRateSpinBox->setVisible(false);
+    form->addRow(m_customRefreshRateLabel, m_customRefreshRateSpinBox);
     root->addLayout(form);
 
     auto* hint = new QLabel(QStringLiteral("仅影响下落音符和界面刷新，不影响音频播放精度。"), this);
@@ -61,14 +73,19 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
         QLabel#settingsError { color: #ffb4a8; font-size: 12px; }
         QComboBox { min-height: 28px; padding: 2px 8px; background: #25282b; color: #f0f1ed; border: 1px solid #3a3e41; }
         QComboBox:hover { border-color: #555b5f; }
+        QSpinBox { min-height: 28px; padding: 2px 8px; background: #25282b; color: #f0f1ed; border: 1px solid #3a3e41; }
+        QSpinBox:hover { border-color: #555b5f; }
         QPushButton { min-width: 72px; min-height: 28px; color: #dfe1dc; background: #25282b; border: 1px solid #3a3e41; }
         QPushButton:hover { background: #2d3033; }
     )"));
 
     if (m_settingsService) {
+        m_customRefreshRateSpinBox->setValue(m_settingsService->visualizationRefreshRate());
         updateRefreshRateSelection(m_settingsService->visualizationRefreshRate());
         connect(m_refreshRateCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyRefreshRateFromUi);
+        connect(m_customRefreshRateSpinBox, &QSpinBox::editingFinished,
+                this, &SettingsDialog::applyCustomRefreshRateFromUi);
         connect(m_settingsService, &app::SettingsService::visualizationRefreshRateChanged,
                 this, &SettingsDialog::updateRefreshRateSelection);
         connect(m_settingsService, &app::SettingsService::settingsSaveFailed,
@@ -86,8 +103,27 @@ void SettingsDialog::applyRefreshRateFromUi()
     }
 
     const int refreshRate = m_refreshRateCombo->currentData().toInt();
+    if (refreshRate == 0) {
+        m_customRefreshRateLabel->setVisible(true);
+        m_customRefreshRateSpinBox->setVisible(true);
+        applyCustomRefreshRateFromUi();
+        return;
+    }
+    m_customRefreshRateLabel->setVisible(false);
+    m_customRefreshRateSpinBox->setVisible(false);
     m_errorLabel->hide();
     m_settingsService->setVisualizationRefreshRate(refreshRate);
+}
+
+void SettingsDialog::applyCustomRefreshRateFromUi()
+{
+    if (!m_settingsService || !m_refreshRateCombo || !m_customRefreshRateSpinBox
+        || m_refreshRateCombo->currentData().toInt() != 0) {
+        return;
+    }
+
+    m_errorLabel->hide();
+    m_settingsService->setVisualizationRefreshRate(m_customRefreshRateSpinBox->value());
 }
 
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
@@ -96,13 +132,18 @@ void SettingsDialog::updateRefreshRateSelection(int refreshRate)
         return;
     }
 
-    const int index = m_refreshRateCombo->findData(refreshRate);
-    if (index < 0 || index == m_refreshRateCombo->currentIndex()) {
-        return;
-    }
+    int index = m_refreshRateCombo->findData(refreshRate);
+    const bool custom = index < 0;
+    if (custom) index = m_refreshRateCombo->findData(0);
+    if (index < 0) return;
 
     const QSignalBlocker blocker(m_refreshRateCombo);
     m_refreshRateCombo->setCurrentIndex(index);
+    m_customRefreshRateLabel->setVisible(custom);
+    m_customRefreshRateSpinBox->setVisible(custom);
+    if (custom) {
+        m_customRefreshRateSpinBox->setValue(refreshRate);
+    }
 }
 
 void SettingsDialog::showSaveError(const QString& message)
@@ -120,6 +161,7 @@ void SettingsDialog::initializeRefreshRateOptions()
     m_refreshRateCombo->addItem(QStringLiteral("30 FPS"), 30);
     m_refreshRateCombo->addItem(QStringLiteral("60 FPS"), 60);
     m_refreshRateCombo->addItem(QStringLiteral("120 FPS"), 120);
+    m_refreshRateCombo->addItem(QStringLiteral("自定义..."), 0);
 }
 
 } // namespace midi_play::presentation::settings

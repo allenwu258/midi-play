@@ -11,9 +11,9 @@ PlaybackController::PlaybackController(QObject* parent)
     : QObject(parent)
 {
     m_playbackThread.setObjectName(QStringLiteral("PlaybackThread"));
-    m_positionTimer.setInterval(settings::visualizationRefreshIntervalMs(m_positionPublishRate));
+    m_positionTimer.setInterval(settings::visualizationRefreshPeriod(m_positionPublishRate));
     m_positionTimer.setTimerType(Qt::PreciseTimer);
-    connect(&m_positionTimer, &QTimer::timeout, this, &PlaybackController::onPositionTimer);
+    connect(&m_positionTimer, &QChronoTimer::timeout, this, &PlaybackController::onPositionTimer);
 }
 
 PlaybackController::~PlaybackController()
@@ -89,7 +89,7 @@ void PlaybackController::setPositionPublishRate(int refreshRate)
     }
 
     m_positionPublishRate = normalizedRefreshRate;
-    m_positionTimer.setInterval(settings::visualizationRefreshIntervalMs(m_positionPublishRate));
+    m_positionTimer.setInterval(settings::visualizationRefreshPeriod(m_positionPublishRate));
     flushPositionUpdate();
 }
 

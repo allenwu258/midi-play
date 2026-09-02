@@ -2,11 +2,13 @@
 
 #include <QtGlobal>
 
+#include <chrono>
+
 namespace midi_play::settings {
 
 inline constexpr int kDefaultVisualizationRefreshRate = 60;
-inline constexpr int kMinimumVisualizationRefreshRate = 30;
-inline constexpr int kMaximumVisualizationRefreshRate = 120;
+inline constexpr int kMinimumVisualizationRefreshRate = 1;
+inline constexpr int kMaximumVisualizationRefreshRate = 1000;
 inline constexpr int kSettingsSchemaVersion = 1;
 
 struct PlayerSettings {
@@ -14,8 +16,8 @@ struct PlayerSettings {
     int visualizationRefreshRate = kDefaultVisualizationRefreshRate;
 };
 
-bool isSupportedVisualizationRefreshRate(int refreshRate) noexcept;
+bool isValidVisualizationRefreshRate(int refreshRate) noexcept;
 int normalizeVisualizationRefreshRate(int refreshRate) noexcept;
-int visualizationRefreshIntervalMs(int refreshRate) noexcept;
+std::chrono::nanoseconds visualizationRefreshPeriod(int refreshRate) noexcept;
 
 } // namespace midi_play::settings

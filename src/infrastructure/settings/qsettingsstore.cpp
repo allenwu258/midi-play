@@ -43,9 +43,11 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     QSettings file(m_settingsPath, QSettings::IniFormat);
     result.schemaVersion = file.value(QStringLiteral("General/schemaVersion"),
                                       midi_play::settings::kSettingsSchemaVersion).toInt();
+    const bool hasRefreshRate = file.contains(QStringLiteral("General/visualizationRefreshRate"));
     const QVariant refreshRateValue = file.value(QStringLiteral("General/visualizationRefreshRate"),
                                                  midi_play::settings::kDefaultVisualizationRefreshRate);
-    const int configuredRefreshRate = refreshRateValue.toInt();
+    bool refreshRateConversionOk = false;
+    const int configuredRefreshRate = refreshRateValue.toInt(&refreshRateConversionOk);
     result.visualizationRefreshRate =
         midi_play::settings::normalizeVisualizationRefreshRate(configuredRefreshRate);
 
@@ -54,7 +56,11 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         *warning = QStringLiteral("%1: %2，已使用默认设置").arg(readStatus, m_settingsPath);
         return {};
     }
-    if (!midi_play::settings::isSupportedVisualizationRefreshRate(configuredRefreshRate) && warning) {
+    if (hasRefreshRate && !refreshRateConversionOk && warning) {
+        *warning = QStringLiteral("设置文件中的刷新率不是整数，已回退到 60 FPS");
+    } else if (hasRefreshRate
+               && !midi_play::settings::isValidVisualizationRefreshRate(configuredRefreshRate)
+               && warning) {
         *warning = QStringLiteral("设置文件中的刷新率无效: %1，已回退到 60 FPS").arg(configuredRefreshRate);
     }
     return result;

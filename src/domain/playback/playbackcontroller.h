@@ -5,7 +5,7 @@
 #include "playbackpositionthrottler.h"
 
 #include <QObject>
-#include <QTimer>
+#include <QChronoTimer>
 #include <memory>
 #include <QThread>
 
@@ -48,7 +48,7 @@ private slots:
 private:
     std::unique_ptr<PlaybackSession> m_session;
     QThread m_playbackThread;
-    QTimer m_positionTimer;
+    QChronoTimer m_positionTimer;
     PlaybackPositionThrottler m_positionThrottler;
     int m_positionPublishRate = 60;
 };

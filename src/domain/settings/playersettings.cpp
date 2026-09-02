@@ -2,21 +2,22 @@
 
 namespace midi_play::settings {
 
-bool isSupportedVisualizationRefreshRate(int refreshRate) noexcept
+bool isValidVisualizationRefreshRate(int refreshRate) noexcept
 {
-    return refreshRate == 30 || refreshRate == 60 || refreshRate == 120;
+    return refreshRate >= kMinimumVisualizationRefreshRate
+        && refreshRate <= kMaximumVisualizationRefreshRate;
 }
 
 int normalizeVisualizationRefreshRate(int refreshRate) noexcept
 {
-    return isSupportedVisualizationRefreshRate(refreshRate)
+    return isValidVisualizationRefreshRate(refreshRate)
         ? refreshRate : kDefaultVisualizationRefreshRate;
 }
 
-int visualizationRefreshIntervalMs(int refreshRate) noexcept
+std::chrono::nanoseconds visualizationRefreshPeriod(int refreshRate) noexcept
 {
-    const int normalizedRefreshRate = normalizeVisualizationRefreshRate(refreshRate);
-    return qMax(1, 1000 / normalizedRefreshRate);
+    const auto normalizedRefreshRate = normalizeVisualizationRefreshRate(refreshRate);
+    return std::chrono::nanoseconds(1'000'000'000) / normalizedRefreshRate;
 }
 
 } // namespace midi_play::settings

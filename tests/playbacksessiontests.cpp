@@ -161,14 +161,15 @@ void testVisualizationRefreshRateSettingsNormalizeInts()
             "60 FPS must be accepted");
     require(midi_play::settings::normalizeVisualizationRefreshRate(120) == 120,
             "120 FPS must be accepted");
-    require(midi_play::settings::normalizeVisualizationRefreshRate(0) == 60,
-            "unsupported FPS must fall back to 60");
-    require(midi_play::settings::visualizationRefreshIntervalMs(30) == 33,
-            "30 FPS must map to the expected timer interval");
-    require(midi_play::settings::visualizationRefreshIntervalMs(60) == 16,
-            "60 FPS must map to the expected timer interval");
-    require(midi_play::settings::visualizationRefreshIntervalMs(120) == 8,
-            "120 FPS must map to the expected timer interval");
+    require(midi_play::settings::normalizeVisualizationRefreshRate(1) == 1,
+            "minimum custom FPS must be accepted");
+    require(midi_play::settings::normalizeVisualizationRefreshRate(144) == 144,
+            "custom FPS must be accepted");
+    require(midi_play::settings::normalizeVisualizationRefreshRate(1001) == 60,
+            "out-of-range FPS must fall back to 60");
+    require(midi_play::settings::visualizationRefreshPeriod(144)
+                == std::chrono::nanoseconds(6'944'444),
+            "custom FPS must use a nanosecond period without millisecond truncation");
 }
 
 void testSettingsServicePersistsOnlyEffectiveChanges()
@@ -204,7 +205,7 @@ void testSettingsServicePersistsOnlyEffectiveChanges()
 
     rawStore->saveResult = false;
     rawStore->saveError = QStringLiteral("save failed");
-    service.setVisualizationRefreshRate(999);
+    service.setVisualizationRefreshRate(1001);
     require(service.visualizationRefreshRate() == 60,
             "invalid runtime refresh rate must fall back to 60");
     require(saveFailureCount == 1, "save failures must be reported");
@@ -238,8 +239,15 @@ void testQSettingsStorePersistsUserRefreshRate()
     file.sync();
 
     loaded = store.load(&warning);
+    require(loaded.visualizationRefreshRate == 144,
+            "custom persisted refresh rate must reload unchanged");
+    require(warning.isEmpty(), "valid custom refresh rate must not report a warning");
+
+    file.setValue(QStringLiteral("General/visualizationRefreshRate"), 1001);
+    file.sync();
+    loaded = store.load(&warning);
     require(loaded.visualizationRefreshRate == 60,
-            "invalid persisted refresh rate must fall back to 60");
+            "out-of-range persisted refresh rate must fall back to 60");
     require(!warning.isEmpty(), "invalid persisted refresh rate should report a warning");
 }
 

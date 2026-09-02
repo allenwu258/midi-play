@@ -4,6 +4,7 @@
 
 class QComboBox;
 class QLabel;
+class QSpinBox;
 
 namespace midi_play::app { class SettingsService; }
 
@@ -16,6 +17,7 @@ public:
 
 private slots:
     void applyRefreshRateFromUi();
+    void applyCustomRefreshRateFromUi();
     void updateRefreshRateSelection(int refreshRate);
     void showSaveError(const QString& message);
 
@@ -24,6 +26,8 @@ private:
 
     app::SettingsService* m_settingsService = nullptr;
     QComboBox* m_refreshRateCombo = nullptr;
+    QLabel* m_customRefreshRateLabel = nullptr;
+    QSpinBox* m_customRefreshRateSpinBox = nullptr;
     QLabel* m_errorLabel = nullptr;
 };
 
