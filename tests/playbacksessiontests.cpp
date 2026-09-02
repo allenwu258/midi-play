@@ -5,6 +5,7 @@
 #include "domain/playback/playbackcontroller.h"
 #include "domain/music/playbacktimeline.h"
 #include "domain/settings/playersettings.h"
+#include "domain/settings/titlebarmode.h"
 #include "app/isettingsstore.h"
 #include "app/settingsservice.h"
 #include "infrastructure/audio/threadedplaybackaudioservice.h"
@@ -172,6 +173,66 @@ void testVisualizationRefreshRateSettingsNormalizeInts()
             "custom FPS must use a nanosecond period without millisecond truncation");
 }
 
+void testTitleBarModePlatformPolicy()
+{
+    require(midi_play::settings::normalizeTitleBarMode(
+                midi_play::settings::TitleBarMode::Native)
+                == midi_play::settings::TitleBarMode::Native,
+            "native title bar mode must always be valid");
+#if defined(Q_OS_WIN)
+    require(midi_play::settings::kDefaultTitleBarMode
+                == midi_play::settings::TitleBarMode::Native,
+            "Windows must default to the native title bar");
+    require(midi_play::settings::normalizeTitleBarMode(
+                midi_play::settings::TitleBarMode::Custom)
+                == midi_play::settings::TitleBarMode::Custom,
+            "Windows must allow the custom title bar");
+#else
+    require(midi_play::settings::kDefaultTitleBarMode
+                == midi_play::settings::TitleBarMode::Native,
+            "non-Windows platforms must default to the native title bar");
+    require(midi_play::settings::normalizeTitleBarMode(
+                midi_play::settings::TitleBarMode::Custom)
+                == midi_play::settings::TitleBarMode::Native,
+            "non-Windows platforms must normalize custom mode to native");
+#endif
+    require(midi_play::settings::titleBarModeFromPersistentValue(99)
+                == midi_play::settings::TitleBarMode::Native,
+            "invalid persisted title bar mode must normalize to native");
+}
+
+void testSettingsServicePersistsTitleBarMode()
+{
+    auto store = std::make_unique<MemorySettingsStore>();
+    auto* rawStore = store.get();
+    rawStore->loadedSettings.titleBarMode = midi_play::settings::TitleBarMode::Custom;
+    midi_play::app::SettingsService service(std::move(store));
+
+    int changeCount = 0;
+    QObject::connect(&service, &midi_play::app::SettingsService::titleBarModeChanged,
+                     [&changeCount](midi_play::settings::TitleBarMode) { ++changeCount; });
+    service.load();
+    const auto loadedMode = service.titleBarMode();
+#if defined(Q_OS_WIN)
+    require(loadedMode == midi_play::settings::TitleBarMode::Custom,
+            "Windows must preserve the custom title bar mode");
+#else
+    require(loadedMode == midi_play::settings::TitleBarMode::Native,
+            "non-Windows platforms must normalize custom mode to native");
+#endif
+
+    service.setTitleBarMode(midi_play::settings::TitleBarMode::Native);
+    require(service.titleBarMode() == midi_play::settings::TitleBarMode::Native,
+            "title bar mode changes must apply immediately");
+#if defined(Q_OS_WIN)
+    require(changeCount == 1, "effective title bar mode changes must emit once");
+    require(rawStore->saveCount == 1, "title bar mode changes must be persisted");
+#else
+    require(changeCount == 0, "unsupported title bar mode changes must be ignored");
+    require(rawStore->saveCount == 0, "unsupported title bar mode changes must not be persisted");
+#endif
+}
+
 void testSettingsServicePersistsOnlyEffectiveChanges()
 {
     auto store = std::make_unique<MemorySettingsStore>();
@@ -226,6 +287,7 @@ void testQSettingsStorePersistsUserRefreshRate()
 
     PlayerSettings saved;
     saved.visualizationRefreshRate = 120;
+    saved.titleBarMode = midi_play::settings::TitleBarMode::Custom;
     QString error;
     require(store.save(saved, &error), "settings store must save a valid refresh rate");
     require(error.isEmpty(), "successful settings save must not report an error");
@@ -233,6 +295,13 @@ void testQSettingsStorePersistsUserRefreshRate()
     loaded = store.load(&warning);
     require(loaded.visualizationRefreshRate == 120,
             "settings store must reload the persisted refresh rate");
+#if defined(Q_OS_WIN)
+    require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Custom,
+            "Windows settings store must reload the custom title bar mode");
+#else
+    require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Native,
+            "non-Windows settings store must normalize custom title bar mode");
+#endif
 
     QSettings file(settingsPath, QSettings::IniFormat);
     file.setValue(QStringLiteral("General/visualizationRefreshRate"), 144);
@@ -244,11 +313,14 @@ void testQSettingsStorePersistsUserRefreshRate()
     require(warning.isEmpty(), "valid custom refresh rate must not report a warning");
 
     file.setValue(QStringLiteral("General/visualizationRefreshRate"), 1001);
+    file.setValue(QStringLiteral("General/titleBarMode"), 99);
     file.sync();
     loaded = store.load(&warning);
     require(loaded.visualizationRefreshRate == 60,
             "out-of-range persisted refresh rate must fall back to 60");
     require(!warning.isEmpty(), "invalid persisted refresh rate should report a warning");
+    require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Native,
+            "invalid persisted title bar mode must fall back to native");
 }
 
 void testPlaybackTimelineCachesRepeatExpansion()
@@ -546,6 +618,8 @@ int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
     testVisualizationRefreshRateSettingsNormalizeInts();
+    testTitleBarModePlatformPolicy();
+    testSettingsServicePersistsTitleBarMode();
     testSettingsServicePersistsOnlyEffectiveChanges();
     testQSettingsStorePersistsUserRefreshRate();
     testPlaybackTimelineCachesRepeatExpansion();

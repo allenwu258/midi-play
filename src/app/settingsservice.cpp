@@ -7,6 +7,7 @@ namespace midi_play::app {
 SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store, QObject* parent)
     : QObject(parent), m_store(std::move(store))
 {
+    qRegisterMetaType<midi_play::settings::TitleBarMode>();
 }
 
 void SettingsService::load()
@@ -19,6 +20,7 @@ void SettingsService::load()
     auto loadedSettings = m_store->load(&warning);
     loadedSettings.visualizationRefreshRate =
         settings::normalizeVisualizationRefreshRate(loadedSettings.visualizationRefreshRate);
+    loadedSettings.titleBarMode = settings::normalizeTitleBarMode(loadedSettings.titleBarMode);
     m_settings = loadedSettings;
     if (!warning.isEmpty()) {
         emit settingsLoadWarning(warning);
@@ -34,6 +36,26 @@ void SettingsService::setVisualizationRefreshRate(int refreshRate)
 
     m_settings.visualizationRefreshRate = normalizedRefreshRate;
     emit visualizationRefreshRateChanged(normalizedRefreshRate);
+
+    if (!m_store) {
+        return;
+    }
+
+    QString error;
+    if (!m_store->save(m_settings, &error) && !error.isEmpty()) {
+        emit settingsSaveFailed(error);
+    }
+}
+
+void SettingsService::setTitleBarMode(settings::TitleBarMode mode)
+{
+    const auto normalizedMode = settings::normalizeTitleBarMode(mode);
+    if (m_settings.titleBarMode == normalizedMode) {
+        return;
+    }
+
+    m_settings.titleBarMode = normalizedMode;
+    emit titleBarModeChanged(normalizedMode);
 
     if (!m_store) {
         return;

@@ -63,6 +63,7 @@ qt_add_executable(midi_play
     src/domain/playback/playbackcontroller.cpp
     src/domain/settings/playersettings.h
     src/domain/settings/playersettings.cpp
+    src/domain/settings/titlebarmode.h
     src/infrastructure/musicxml/musicxmlreader.h
     src/infrastructure/musicxml/musicxmlreader.cpp
     src/infrastructure/audio/fluidsynthengine.h
@@ -97,6 +98,8 @@ qt_add_executable(midi_play
     src/presentation/playbackmetadatapresenter.cpp
     src/presentation/settings/settingsdialog.h
     src/presentation/settings/settingsdialog.cpp
+    src/presentation/windowchrome/customtitlebar.h
+    src/presentation/windowchrome/customtitlebar.cpp
     src/presentation/visualization/scenegeometry.h
     src/presentation/visualization/scenelayoutengine.h
     src/presentation/visualization/scenelayoutengine.cpp

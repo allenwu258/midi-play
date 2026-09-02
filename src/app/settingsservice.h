@@ -16,14 +16,17 @@ public:
 
     const settings::PlayerSettings& settings() const noexcept { return m_settings; }
     int visualizationRefreshRate() const noexcept { return m_settings.visualizationRefreshRate; }
+    settings::TitleBarMode titleBarMode() const noexcept { return m_settings.titleBarMode; }
 
     void load();
 
 public slots:
     void setVisualizationRefreshRate(int refreshRate);
+    void setTitleBarMode(settings::TitleBarMode mode);
 
 signals:
     void visualizationRefreshRateChanged(int refreshRate);
+    void titleBarModeChanged(midi_play::settings::TitleBarMode mode);
     void settingsLoadWarning(const QString& message);
     void settingsSaveFailed(const QString& message);
 

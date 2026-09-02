@@ -51,6 +51,14 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     result.visualizationRefreshRate =
         midi_play::settings::normalizeVisualizationRefreshRate(configuredRefreshRate);
 
+    const bool hasTitleBarMode = file.contains(QStringLiteral("General/titleBarMode"));
+    const QVariant titleBarModeValue = file.value(QStringLiteral("General/titleBarMode"),
+                                                  midi_play::settings::titleBarModePersistentValue(
+                                                      midi_play::settings::kDefaultTitleBarMode));
+    bool titleBarModeConversionOk = false;
+    const int configuredTitleBarMode = titleBarModeValue.toInt(&titleBarModeConversionOk);
+    result.titleBarMode = midi_play::settings::titleBarModeFromPersistentValue(configuredTitleBarMode);
+
     const QString readStatus = statusMessage(file.status());
     if (!readStatus.isEmpty() && warning) {
         *warning = QStringLiteral("%1: %2，已使用默认设置").arg(readStatus, m_settingsPath);
@@ -62,6 +70,18 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
                && !midi_play::settings::isValidVisualizationRefreshRate(configuredRefreshRate)
                && warning) {
         *warning = QStringLiteral("设置文件中的刷新率无效: %1，已回退到 60 FPS").arg(configuredRefreshRate);
+    }
+    if (hasTitleBarMode && !titleBarModeConversionOk && warning) {
+        *warning = warning->isEmpty()
+            ? QStringLiteral("设置文件中的标题栏模式不是整数，已回退到原生标题栏")
+            : *warning + QStringLiteral("；标题栏模式不是整数，已回退到原生标题栏");
+    } else if (hasTitleBarMode
+               && configuredTitleBarMode != midi_play::settings::titleBarModePersistentValue(
+                   result.titleBarMode)
+               && warning) {
+        *warning = warning->isEmpty()
+            ? QStringLiteral("设置文件中的标题栏模式当前平台不可用，已回退到原生标题栏")
+            : *warning + QStringLiteral("；标题栏模式当前平台不可用，已回退到原生标题栏");
     }
     return result;
 }
@@ -86,6 +106,8 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
                   midi_play::settings::kSettingsSchemaVersion);
     file.setValue(QStringLiteral("General/visualizationRefreshRate"),
                   midi_play::settings::normalizeVisualizationRefreshRate(settings.visualizationRefreshRate));
+    file.setValue(QStringLiteral("General/titleBarMode"),
+                  midi_play::settings::titleBarModePersistentValue(settings.titleBarMode));
     file.sync();
 
     const QString writeStatus = statusMessage(file.status());

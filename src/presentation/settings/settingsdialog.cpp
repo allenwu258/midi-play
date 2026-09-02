@@ -19,7 +19,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
     setWindowTitle(QStringLiteral("设置"));
     setWindowFlag(Qt::Window, true);
     setModal(false);
-    resize(360, 220);
+    resize(360, 260);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(18, 16, 18, 14);
@@ -48,6 +48,20 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
     m_customRefreshRateLabel->setVisible(false);
     m_customRefreshRateSpinBox->setVisible(false);
     form->addRow(m_customRefreshRateLabel, m_customRefreshRateSpinBox);
+
+    m_titleBarModeCombo = new QComboBox(this);
+    m_titleBarModeCombo->setObjectName(QStringLiteral("titleBarModeCombo"));
+    m_titleBarModeCombo->addItem(QStringLiteral("原生标题栏"),
+                                 midi_play::settings::titleBarModePersistentValue(
+                                     midi_play::settings::TitleBarMode::Native));
+    if (midi_play::settings::isCustomTitleBarAvailable()) {
+        m_titleBarModeCombo->addItem(QStringLiteral("自定义标题栏（实验）"),
+                                     midi_play::settings::titleBarModePersistentValue(
+                                         midi_play::settings::TitleBarMode::Custom));
+    } else {
+        m_titleBarModeCombo->setToolTip(QStringLiteral("当前平台仅支持原生标题栏"));
+    }
+    form->addRow(QStringLiteral("标题栏样式"), m_titleBarModeCombo);
     root->addLayout(form);
 
     auto* hint = new QLabel(QStringLiteral("仅影响下落音符和界面刷新，不影响音频播放精度。"), this);
@@ -86,8 +100,13 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
                 this, &SettingsDialog::applyRefreshRateFromUi);
         connect(m_customRefreshRateSpinBox, &QSpinBox::editingFinished,
                 this, &SettingsDialog::applyCustomRefreshRateFromUi);
+        updateTitleBarModeSelection(m_settingsService->titleBarMode());
+        connect(m_titleBarModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &SettingsDialog::applyTitleBarModeFromUi);
         connect(m_settingsService, &app::SettingsService::visualizationRefreshRateChanged,
                 this, &SettingsDialog::updateRefreshRateSelection);
+        connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
+                this, &SettingsDialog::updateTitleBarModeSelection);
         connect(m_settingsService, &app::SettingsService::settingsSaveFailed,
                 this, &SettingsDialog::showSaveError);
     } else {
@@ -126,6 +145,18 @@ void SettingsDialog::applyCustomRefreshRateFromUi()
     m_settingsService->setVisualizationRefreshRate(m_customRefreshRateSpinBox->value());
 }
 
+void SettingsDialog::applyTitleBarModeFromUi()
+{
+    if (!m_settingsService || !m_titleBarModeCombo) {
+        return;
+    }
+
+    const int value = m_titleBarModeCombo->currentData().toInt();
+    m_errorLabel->hide();
+    m_settingsService->setTitleBarMode(
+        midi_play::settings::titleBarModeFromPersistentValue(value));
+}
+
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
 {
     if (!m_refreshRateCombo) {
@@ -144,6 +175,22 @@ void SettingsDialog::updateRefreshRateSelection(int refreshRate)
     if (custom) {
         m_customRefreshRateSpinBox->setValue(refreshRate);
     }
+}
+
+void SettingsDialog::updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode)
+{
+    if (!m_titleBarModeCombo) {
+        return;
+    }
+
+    const int index = m_titleBarModeCombo->findData(
+        midi_play::settings::titleBarModePersistentValue(mode));
+    if (index < 0 || index == m_titleBarModeCombo->currentIndex()) {
+        return;
+    }
+
+    const QSignalBlocker blocker(m_titleBarModeCombo);
+    m_titleBarModeCombo->setCurrentIndex(index);
 }
 
 void SettingsDialog::showSaveError(const QString& message)

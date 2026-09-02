@@ -4,20 +4,30 @@
 #include "app/settingsservice.h"
 #include "playbackmetadatapresenter.h"
 #include "presentation/settings/settingsdialog.h"
+#include "presentation/windowchrome/customtitlebar.h"
 #include "presentation/visualization/fallingnotesview.h"
 
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPixmap>
 #include <QResizeEvent>
 #include <QSlider>
 #include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QtMath>
+
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#include <windowsx.h>
+#endif
 
 #include <algorithm>
 
@@ -47,6 +57,48 @@ QToolButton* toolButton(QWidget* parent, const QIcon& icon, const QString& text,
     return button;
 }
 
+enum class WindowControlGlyph {
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+};
+
+QIcon windowControlIcon(WindowControlGlyph glyph)
+{
+    constexpr int kIconSize = 18;
+    QPixmap pixmap(kIconSize, kIconSize);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    QPen pen(QColor(QStringLiteral("#dfe1dc")));
+    pen.setWidth(2);
+    pen.setCapStyle(Qt::SquareCap);
+    pen.setJoinStyle(Qt::MiterJoin);
+    painter.setPen(pen);
+
+    switch (glyph) {
+    case WindowControlGlyph::Minimize:
+        painter.drawLine(QPoint(3, 11), QPoint(14, 11));
+        break;
+    case WindowControlGlyph::Maximize:
+        painter.drawRect(QRect(3, 3, 11, 11));
+        break;
+    case WindowControlGlyph::Restore:
+        painter.drawRect(QRect(5, 2, 10, 10));
+        painter.drawLine(QPoint(3, 6), QPoint(3, 15));
+        painter.drawLine(QPoint(3, 15), QPoint(12, 15));
+        painter.drawLine(QPoint(3, 6), QPoint(5, 6));
+        break;
+    case WindowControlGlyph::Close:
+        painter.drawLine(QPoint(4, 4), QPoint(13, 13));
+        painter.drawLine(QPoint(13, 4), QPoint(4, 13));
+        break;
+    }
+    return QIcon(pixmap);
+}
+
 } // namespace
 
 MainWindow::MainWindow(app::PlayerApplicationService* service,
@@ -64,7 +116,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    auto* topBar = new QWidget(central);
+    auto* topBar = new windowchrome::CustomTitleBar(central);
+    m_topBar = topBar;
     topBar->setObjectName(QStringLiteral("topBar"));
     topBar->setFixedHeight(58);
     auto* topLayout = new QHBoxLayout(topBar);
@@ -119,6 +172,35 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     topLayout->addWidget(openMusic);
     topLayout->addWidget(openSf2);
     topLayout->addWidget(settingsButton);
+
+    m_windowControlsSeparator = verticalSeparator(topBar);
+    topLayout->addWidget(m_windowControlsSeparator);
+    m_minimizeButton = toolButton(topBar, windowControlIcon(WindowControlGlyph::Minimize), {},
+                                  QStringLiteral("最小化窗口"), true);
+    m_maximizeButton = toolButton(topBar, windowControlIcon(WindowControlGlyph::Maximize), {},
+                                  QStringLiteral("最大化窗口"), true);
+    m_closeButton = toolButton(topBar, windowControlIcon(WindowControlGlyph::Close), {},
+                               QStringLiteral("关闭窗口"), true);
+    m_minimizeButton->setObjectName(QStringLiteral("windowMinimizeButton"));
+    m_maximizeButton->setObjectName(QStringLiteral("windowMaximizeButton"));
+    m_closeButton->setObjectName(QStringLiteral("windowCloseButton"));
+    m_minimizeButton->setAccessibleName(QStringLiteral("最小化窗口"));
+    m_maximizeButton->setAccessibleName(QStringLiteral("最大化或还原窗口"));
+    m_closeButton->setAccessibleName(QStringLiteral("关闭窗口"));
+    topLayout->addWidget(m_minimizeButton);
+    topLayout->addWidget(m_maximizeButton);
+    topLayout->addWidget(m_closeButton);
+    m_windowControlsSeparator->setVisible(false);
+    m_minimizeButton->setVisible(false);
+    m_maximizeButton->setVisible(false);
+    m_closeButton->setVisible(false);
+    topBar->registerDragWidget(brand);
+    topBar->registerDragWidget(m_fileLabel);
+    topBar->registerDragWidget(m_keyLabel);
+    topBar->registerDragWidget(m_timeSignatureLabel);
+    topBar->registerDragWidget(m_tempoLabel);
+    topBar->registerDragWidget(m_timeLabel);
+    topBar->registerDragWidget(m_soundFontLabel);
     root->addWidget(topBar);
 
     m_visualization = new visualization::FallingNotesView(central);
@@ -172,6 +254,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         QToolButton:hover { background: #292c2f; border-color: #3a3e41; }
         QToolButton:pressed { background: #34383b; }
         QToolButton:disabled { color: #676c68; }
+        QToolButton#windowCloseButton:hover { background: #c42b2b; border-color: #c42b2b; }
+        QToolButton#windowCloseButton:pressed { background: #a51f1f; border-color: #a51f1f; }
         QSlider::groove:horizontal { height: 4px; background: #393d3f; }
         QSlider::sub-page:horizontal { background: #f4d35e; }
         QSlider::handle:horizontal { width: 14px; margin: -5px 0; border-radius: 7px; background: #f0f1ed; }
@@ -181,6 +265,15 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     connect(openMusic, &QToolButton::clicked, this, &MainWindow::openMusicFile);
     connect(openSf2, &QToolButton::clicked, this, &MainWindow::openSoundFont);
     connect(settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
+    connect(m_minimizeButton, &QToolButton::clicked, this, &MainWindow::showMinimized);
+    connect(m_maximizeButton, &QToolButton::clicked, this, [this] {
+        if (isMaximized()) showNormal(); else showMaximized();
+    });
+    connect(m_closeButton, &QToolButton::clicked, this, &MainWindow::close);
+    if (m_settingsService) {
+        connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
+                this, &MainWindow::applyTitleBarMode);
+    }
     connect(m_playButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::play);
     connect(m_pauseButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::pause);
     connect(m_stopButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::stop);
@@ -255,12 +348,125 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
 
     updateTransportControls();
     updateResponsiveVisibility();
+    applyTitleBarMode(m_settingsService ? m_settingsService->titleBarMode()
+                                         : midi_play::settings::TitleBarMode::Native);
 }
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
     updateResponsiveVisibility();
+}
+
+void MainWindow::changeEvent(QEvent* event)
+{
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange) {
+        updateWindowControlButtons();
+    }
+}
+
+bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
+{
+#if defined(Q_OS_WIN)
+    if (m_titleBarMode == midi_play::settings::TitleBarMode::Custom
+        && (eventType == QByteArrayLiteral("windows_generic_MSG")
+            || eventType == QByteArrayLiteral("windows_dispatcher_MSG"))
+        && message && result) {
+        const auto* nativeMessage = static_cast<MSG*>(message);
+        if (nativeMessage->message == WM_NCHITTEST) {
+            const HWND mainWindowHandle = reinterpret_cast<HWND>(winId());
+            if (nativeMessage->hwnd != mainWindowHandle) {
+                return QMainWindow::nativeEvent(eventType, message, result);
+            }
+
+            RECT windowRect {};
+            if (!GetWindowRect(mainWindowHandle, &windowRect)) {
+                return QMainWindow::nativeEvent(eventType, message, result);
+            }
+
+            const int globalX = GET_X_LPARAM(nativeMessage->lParam);
+            const int globalY = GET_Y_LPARAM(nativeMessage->lParam);
+            const int margin = std::max(4, qRound(8.0 * devicePixelRatioF()));
+            const bool maximized = isMaximized() || isFullScreen();
+            if (!maximized) {
+                Qt::Edges edges;
+                if (globalX < windowRect.left + margin) edges |= Qt::LeftEdge;
+                if (globalX >= windowRect.right - margin) edges |= Qt::RightEdge;
+                if (globalY < windowRect.top + margin) edges |= Qt::TopEdge;
+                if (globalY >= windowRect.bottom - margin) edges |= Qt::BottomEdge;
+                if (edges != Qt::Edges()) {
+                    if (edges == (Qt::TopEdge | Qt::LeftEdge)) *result = HTTOPLEFT;
+                    else if (edges == (Qt::TopEdge | Qt::RightEdge)) *result = HTTOPRIGHT;
+                    else if (edges == (Qt::BottomEdge | Qt::LeftEdge)) *result = HTBOTTOMLEFT;
+                    else if (edges == (Qt::BottomEdge | Qt::RightEdge)) *result = HTBOTTOMRIGHT;
+                    else if (edges.testFlag(Qt::LeftEdge)) *result = HTLEFT;
+                    else if (edges.testFlag(Qt::RightEdge)) *result = HTRIGHT;
+                    else if (edges.testFlag(Qt::TopEdge)) *result = HTTOP;
+                    else *result = HTBOTTOM;
+                    return true;
+                }
+            }
+
+            // Keep the whole non-resize area in the Qt client region. Returning
+            // HTCAPTION here would route mouse input through Windows and prevent
+            // the title-bar tool buttons from receiving their click events.
+            *result = HTCLIENT;
+            return true;
+        }
+    }
+#else
+    Q_UNUSED(eventType)
+    Q_UNUSED(message)
+    Q_UNUSED(result)
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+
+void MainWindow::applyTitleBarMode(midi_play::settings::TitleBarMode mode)
+{
+    const auto normalizedMode = midi_play::settings::normalizeTitleBarMode(mode);
+    if (m_titleBarMode == normalizedMode && windowFlags().testFlag(Qt::FramelessWindowHint)
+        == (normalizedMode == midi_play::settings::TitleBarMode::Custom)) {
+        updateWindowControlButtons();
+        return;
+    }
+
+    const bool visible = isVisible();
+    const bool maximized = isMaximized();
+    const bool fullScreen = isFullScreen();
+    const QRect savedNormalGeometry = normalGeometry();
+    if (visible) hide();
+
+    m_titleBarMode = normalizedMode;
+    setWindowFlag(Qt::FramelessWindowHint,
+                  normalizedMode == midi_play::settings::TitleBarMode::Custom);
+    const bool custom = normalizedMode == midi_play::settings::TitleBarMode::Custom;
+    m_windowControlsSeparator->setVisible(custom);
+    m_minimizeButton->setVisible(custom);
+    m_maximizeButton->setVisible(custom);
+    m_closeButton->setVisible(custom);
+    updateWindowControlButtons();
+
+    if (visible) {
+        if (fullScreen) showFullScreen();
+        else if (maximized) showMaximized();
+        else {
+            show();
+            if (savedNormalGeometry.isValid()) setGeometry(savedNormalGeometry);
+        }
+    }
+}
+
+void MainWindow::updateWindowControlButtons()
+{
+    if (!m_maximizeButton) return;
+    const bool maximized = isMaximized();
+    m_maximizeButton->setIcon(windowControlIcon(
+        maximized ? WindowControlGlyph::Restore : WindowControlGlyph::Maximize));
+    m_maximizeButton->setToolTip(maximized ? QStringLiteral("还原窗口") : QStringLiteral("最大化窗口"));
+    m_maximizeButton->setAccessibleName(maximized ? QStringLiteral("还原窗口")
+                                                  : QStringLiteral("最大化窗口"));
 }
 
 void MainWindow::openMusicFile()
