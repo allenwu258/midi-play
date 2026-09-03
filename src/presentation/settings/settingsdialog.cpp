@@ -300,6 +300,12 @@ void SettingsDialog::setSoundFontLoading(bool loading)
     if (loading) {
         m_errorLabel->setText(QStringLiteral("正在加载音源..."));
         m_errorLabel->show();
+    } else {
+        // The loading message is transient. A failed request emits its real
+        // error immediately after this state transition, while a successful
+        // request leaves the settings page clean.
+        m_errorLabel->clear();
+        m_errorLabel->hide();
     }
 }
 
