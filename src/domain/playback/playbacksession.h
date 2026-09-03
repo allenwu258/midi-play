@@ -28,6 +28,7 @@ public:
     bool loadSoundFont(const QString& path, QString* error);
 
 public slots:
+    void loadSoundFontAsync(const QString& path);
     void play();
     void pause();
     void stop();
@@ -37,6 +38,7 @@ signals:
     void stateChanged(midi_play::playback::State state);
     void positionChanged(qint64 position, qint64 duration);
     void errorOccurred(const QString& message);
+    void soundFontLoadFinished(bool success, const QString& error);
 
 private slots:
     void onTimer();

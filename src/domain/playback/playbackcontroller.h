@@ -23,6 +23,7 @@ public:
                      std::unique_ptr<IPlaybackAudioService> audioService,
                      QString* error);
     bool loadSoundFont(const QString& path, QString* error);
+    void loadSoundFontAsync(const QString& path);
     void setPositionPublishRate(int refreshRate);
 
 public slots:
@@ -38,6 +39,7 @@ signals:
     // audio scheduling remains owned by PlaybackSession.
     void positionChanged(qint64 position, qint64 duration);
     void errorOccurred(const QString& message);
+    void soundFontLoadFinished(bool success, const QString& error);
 
 private:
     void flushPositionUpdate();

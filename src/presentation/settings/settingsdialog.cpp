@@ -155,6 +155,8 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         if (m_playerService) {
             connect(m_playerService, &app::PlayerApplicationService::soundFontLoadFailed,
                     this, &SettingsDialog::showSaveError);
+            connect(m_playerService, &app::PlayerApplicationService::soundFontLoadingChanged,
+                    this, &SettingsDialog::setSoundFontLoading);
         }
     } else {
         m_refreshRateCombo->setEnabled(false);
@@ -222,7 +224,7 @@ void SettingsDialog::chooseSoundFont()
         QStringLiteral("SoundFont 音源 (*.sf2 *.sf3)"));
     if (!path.isEmpty()) {
         m_errorLabel->hide();
-        m_playerService->loadSoundFont(path);
+        m_playerService->requestSoundFontLoad(path);
     }
 }
 
@@ -233,7 +235,7 @@ void SettingsDialog::resetSoundFont()
     }
 
     m_errorLabel->hide();
-    m_playerService->loadSoundFont(m_settingsService->defaultSoundFontPath());
+    m_playerService->requestSoundFontLoad(m_settingsService->defaultSoundFontPath());
 }
 
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
@@ -286,7 +288,19 @@ void SettingsDialog::updateSoundFontPath(const QString& path, bool usesDefault)
         usesDefault ? QStringLiteral("默认音源") : QStringLiteral("自定义音源"));
     // Keep the file name visible when the absolute path is wider than the editor.
     m_soundFontPathEdit->setCursorPosition(path.size());
-    m_resetSoundFontButton->setEnabled(!usesDefault);
+    m_resetSoundFontButton->setEnabled(!usesDefault && !m_soundFontLoading);
+}
+
+void SettingsDialog::setSoundFontLoading(bool loading)
+{
+    m_soundFontLoading = loading;
+    m_loadSoundFontButton->setEnabled(!loading);
+    m_resetSoundFontButton->setEnabled(!loading && m_settingsService
+                                       && !m_settingsService->usesDefaultSoundFont());
+    if (loading) {
+        m_errorLabel->setText(QStringLiteral("正在加载音源..."));
+        m_errorLabel->show();
+    }
 }
 
 void SettingsDialog::showSaveError(const QString& message)

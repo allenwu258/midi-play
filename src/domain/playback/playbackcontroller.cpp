@@ -66,6 +66,8 @@ bool PlaybackController::setDocument(std::shared_ptr<const music::MusicDocument>
                 m_positionThrottler.publish(position, duration);
             }, Qt::DirectConnection);
     connect(m_session.get(), &PlaybackSession::errorOccurred, this, &PlaybackController::errorOccurred);
+    connect(m_session.get(), &PlaybackSession::soundFontLoadFinished,
+            this, &PlaybackController::soundFontLoadFinished);
     return true;
 }
 
@@ -79,6 +81,17 @@ bool PlaybackController::loadSoundFont(const QString& path, QString* error)
     }, Qt::BlockingQueuedConnection);
     if (error) *error = localError;
     return result;
+}
+
+void PlaybackController::loadSoundFontAsync(const QString& path)
+{
+    if (!m_session) {
+        emit soundFontLoadFinished(false, QStringLiteral("播放会话不可用"));
+        return;
+    }
+    QMetaObject::invokeMethod(m_session.get(), [this, path] {
+        m_session->loadSoundFontAsync(path);
+    }, Qt::QueuedConnection);
 }
 
 void PlaybackController::setPositionPublishRate(int refreshRate)

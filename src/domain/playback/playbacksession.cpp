@@ -61,6 +61,13 @@ bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
     return true;
 }
 
+void PlaybackSession::loadSoundFontAsync(const QString& path)
+{
+    QString error;
+    const bool success = loadSoundFont(path, &error);
+    emit soundFontLoadFinished(success, error);
+}
+
 bool PlaybackSession::resumeAfterSoundFontChange(qint64 positionUs, QString* error)
 {
     m_positionUs = std::clamp<qint64>(positionUs, 0, m_durationUs);

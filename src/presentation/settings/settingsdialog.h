@@ -30,6 +30,7 @@ private slots:
     void updateRefreshRateSelection(int refreshRate);
     void updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode);
     void updateSoundFontPath(const QString& path, bool usesDefault);
+    void setSoundFontLoading(bool loading);
     void showSaveError(const QString& message);
 
 private:
@@ -45,6 +46,7 @@ private:
     QPushButton* m_loadSoundFontButton = nullptr;
     QPushButton* m_resetSoundFontButton = nullptr;
     QLabel* m_errorLabel = nullptr;
+    bool m_soundFontLoading = false;
 };
 
 } // namespace midi_play::presentation::settings

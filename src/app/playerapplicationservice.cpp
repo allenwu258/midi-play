@@ -29,6 +29,15 @@ PlayerApplicationService::PlayerApplicationService(QObject* parent)
     qRegisterMetaType<visualization::VisualChartPtr>();
     m_readerRegistry.registerReader(std::make_unique<readers::MusicXmlReaderAdapter>());
     m_readerRegistry.registerReader(std::make_unique<readers::MidiReaderAdapter>());
+    connect(&m_soundFontValidationWatcher, &QFutureWatcher<QString>::finished, this, [this] {
+        const QString validationError = m_soundFontValidationWatcher.result();
+        if (!validationError.isEmpty()) {
+            completeSoundFontLoad(false, validationError);
+            return;
+        }
+        m_soundFontPath = m_pendingSoundFontPath;
+        completeSoundFontLoad(true, {});
+    });
 }
 
 void PlayerApplicationService::openMusicXml(const QString& path)
@@ -38,6 +47,10 @@ void PlayerApplicationService::openMusicXml(const QString& path)
 
 void PlayerApplicationService::openFile(const QString& path)
 {
+    if (m_soundFontLoading) {
+        emit errorOccurred(QStringLiteral("音源加载仍在进行中，请稍后再打开乐曲"));
+        return;
+    }
     const auto suffix = QFileInfo(path).suffix();
     const auto* reader = m_readerRegistry.find(suffix);
     if (!reader) {
@@ -111,6 +124,34 @@ void PlayerApplicationService::openFile(const QString& path)
 bool PlayerApplicationService::loadSoundFont(const QString& path)
 {
     return loadSoundFontInternal(path, true);
+}
+
+void PlayerApplicationService::requestSoundFontLoad(const QString& path)
+{
+    if (m_soundFontLoading) {
+        reportSoundFontFailure(QStringLiteral("音源加载仍在进行中"));
+        return;
+    }
+
+    QString normalizedPath;
+    if (!validateSoundFontFile(path, &normalizedPath)) {
+        return;
+    }
+
+    m_pendingSoundFontPath = normalizedPath;
+    m_pendingSoundFontCommit = true;
+    setSoundFontLoading(true);
+    if (m_controller) {
+        m_controller->loadSoundFontAsync(normalizedPath);
+        return;
+    }
+
+    m_soundFontValidationWatcher.setFuture(QtConcurrent::run([normalizedPath] {
+        audio::FluidSynthEngine validator;
+        QString error;
+        return validator.validateSoundFont(normalizedPath, &error)
+            ? QString() : error;
+    }));
 }
 
 bool PlayerApplicationService::loadFallbackSoundFont(const QString& path)
@@ -207,12 +248,40 @@ void PlayerApplicationService::connectSession()
         emit playbackStateChanged(state);
     });
     connect(m_controller.get(), &playback::PlaybackController::errorOccurred, this, &PlayerApplicationService::errorOccurred);
+    connect(m_controller.get(), &playback::PlaybackController::soundFontLoadFinished,
+            this, &PlayerApplicationService::completeSoundFontLoad);
     connect(m_controller.get(), &playback::PlaybackController::positionChanged, this,
             [this](qint64 position, qint64 duration) {
                 m_positionUs = position;
                 m_durationUs = duration;
                 emit positionChanged(position, duration);
             });
+}
+
+void PlayerApplicationService::completeSoundFontLoad(bool success, const QString& error)
+{
+    const QString path = m_pendingSoundFontPath;
+    const bool commitSelection = m_pendingSoundFontCommit;
+    m_pendingSoundFontPath.clear();
+    m_pendingSoundFontCommit = false;
+    setSoundFontLoading(false);
+    if (!success) {
+        reportSoundFontFailure(error);
+        return;
+    }
+
+    m_soundFontPath = path;
+    emit soundFontLoaded(path);
+    if (commitSelection) emit soundFontSelectionCommitted(path);
+}
+
+void PlayerApplicationService::setSoundFontLoading(bool loading)
+{
+    if (m_soundFontLoading == loading) {
+        return;
+    }
+    m_soundFontLoading = loading;
+    emit soundFontLoadingChanged(loading);
 }
 
 } // namespace midi_play::app
