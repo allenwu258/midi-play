@@ -21,6 +21,7 @@ public:
     qint64 positionMicroseconds() const { return m_positionUs; }
     qint64 durationMicroseconds() const { return m_durationUs; }
     int visualizationRefreshRate() const noexcept { return m_visualizationRefreshRate; }
+    bool loadFallbackSoundFont(const QString& path);
 
 public slots:
     void openFile(const QString& path);
@@ -36,6 +37,7 @@ signals:
     void busyChanged(bool busy);
     void documentLoaded(const QString& title, qint64 duration);
     void soundFontLoaded(const QString& path);
+    void soundFontSelectionCommitted(const QString& path);
     void soundFontLoadFailed(const QString& message);
     void positionChanged(qint64 position, qint64 duration);
     void playbackStateChanged(midi_play::playback::State state);
@@ -44,6 +46,7 @@ signals:
 
 private:
     void connectSession();
+    bool loadSoundFontInternal(const QString& path, bool commitSelection);
     bool validateSoundFontFile(const QString& path, QString* normalizedPath);
     void reportSoundFontFailure(const QString& message);
 

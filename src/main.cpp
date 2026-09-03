@@ -47,7 +47,7 @@ int main(int argc, char* argv[])
     service.setVisualizationRefreshRate(settingsService.visualizationRefreshRate());
     QObject::connect(&settingsService, &midi_play::app::SettingsService::visualizationRefreshRateChanged,
                      &service, &midi_play::app::PlayerApplicationService::setVisualizationRefreshRate);
-    QObject::connect(&service, &midi_play::app::PlayerApplicationService::soundFontLoaded,
+    QObject::connect(&service, &midi_play::app::PlayerApplicationService::soundFontSelectionCommitted,
                      &settingsService, &midi_play::app::SettingsService::setSoundFontPath);
 
     if (argc > 2 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--audio-test")) {
@@ -159,9 +159,9 @@ int main(int argc, char* argv[])
     if (!service.loadSoundFont(settingsService.soundFontPath())
         && !settingsService.usesDefaultSoundFont()) {
         // A moved or deleted custom file must not leave the player silent.
-        // Loading the bundled file emits soundFontLoaded, which also clears
-        // the stale override through the application-level settings binding.
-        service.loadSoundFont(settingsService.defaultSoundFontPath());
+        // A temporarily unavailable external SoundFont must not erase the
+        // user's preference. This fallback applies only to this process.
+        service.loadFallbackSoundFont(settingsService.defaultSoundFontPath());
     }
     return app.exec();
 }

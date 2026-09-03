@@ -110,6 +110,16 @@ void PlayerApplicationService::openFile(const QString& path)
 
 bool PlayerApplicationService::loadSoundFont(const QString& path)
 {
+    return loadSoundFontInternal(path, true);
+}
+
+bool PlayerApplicationService::loadFallbackSoundFont(const QString& path)
+{
+    return loadSoundFontInternal(path, false);
+}
+
+bool PlayerApplicationService::loadSoundFontInternal(const QString& path, bool commitSelection)
+{
     QString normalizedPath;
     if (!validateSoundFontFile(path, &normalizedPath)) {
         return false;
@@ -124,6 +134,7 @@ bool PlayerApplicationService::loadSoundFont(const QString& path)
         }
         m_soundFontPath = normalizedPath;
         emit soundFontLoaded(normalizedPath);
+        if (commitSelection) emit soundFontSelectionCommitted(normalizedPath);
         return true;
     }
 
@@ -140,6 +151,7 @@ bool PlayerApplicationService::loadSoundFont(const QString& path)
     }
     m_soundFontPath = normalizedPath;
     emit soundFontLoaded(normalizedPath);
+    if (commitSelection) emit soundFontSelectionCommitted(normalizedPath);
     return true;
 }
 
