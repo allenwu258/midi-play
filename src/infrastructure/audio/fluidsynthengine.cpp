@@ -69,7 +69,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     return true;
 }
 
-bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
+bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* error)
 {
     release();
     if (!resolveSymbols(error)) return false;
@@ -89,10 +89,25 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
     }
     m_soundFontId = m_sfload(m_synth, soundFontPath.toUtf8().constData(), 1);
     if (m_soundFontId < 0) {
-        if (error) *error = QStringLiteral("无法加载 SF2: %1").arg(soundFontPath);
+        if (error) *error = QStringLiteral("无法解析 SoundFont 音源: %1").arg(soundFontPath);
         release();
         return false;
     }
+    return true;
+}
+
+bool FluidSynthEngine::validateSoundFont(const QString& soundFontPath, QString* error)
+{
+    if (error) error->clear();
+    const bool valid = initializeSynth(soundFontPath, error);
+    release();
+    return valid;
+}
+
+bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
+{
+    if (error) error->clear();
+    if (!initializeSynth(soundFontPath, error)) return false;
 
     // FluidSynth owns the realtime audio thread through its native driver.
     m_driver = m_newAudioDriver(m_settings, m_synth);

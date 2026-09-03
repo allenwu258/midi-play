@@ -64,18 +64,26 @@ void PlayerApplicationService::openFile(const QString& path)
         auto engine = std::make_unique<audio::FluidSynthEngine>();
         auto fluidsynthService = std::make_unique<audio::FluidSynthAudioService>(std::move(engine));
         auto audioService = std::make_unique<audio::ThreadedPlaybackAudioService>(std::move(fluidsynthService));
-        m_controller = std::make_unique<playback::PlaybackController>(this);
-        m_controller->setPositionPublishRate(m_visualizationRefreshRate);
+        auto newController = std::make_unique<playback::PlaybackController>(this);
+        newController->setPositionPublishRate(m_visualizationRefreshRate);
         QString controllerError;
-        if (!m_controller->setDocument(result.readResult.document, std::move(audioService), &controllerError)) {
+        if (!newController->setDocument(result.readResult.document, std::move(audioService),
+                                        &controllerError)) {
             emit errorOccurred(controllerError);
             return;
         }
+        if (m_soundFontPath.isEmpty()) {
+            emit errorOccurred(QStringLiteral("没有可用的音源，无法建立播放会话"));
+            return;
+        }
+        if (!newController->loadSoundFont(m_soundFontPath, &controllerError)) {
+            emit errorOccurred(QStringLiteral("无法为乐曲加载音源: %1").arg(controllerError));
+            return;
+        }
+
+        m_controller = std::move(newController);
         m_fileName = path;
         connectSession();
-        if (!m_soundFontPath.isEmpty()) {
-            loadSoundFont(m_soundFontPath);
-        }
         m_positionUs = 0;
         m_durationUs = session()->durationMicroseconds();
         m_playbackState = playback::State::Ready;
@@ -100,19 +108,66 @@ void PlayerApplicationService::openFile(const QString& path)
     }));
 }
 
-void PlayerApplicationService::loadSoundFont(const QString& path)
+bool PlayerApplicationService::loadSoundFont(const QString& path)
 {
-    m_soundFontPath = path;
+    QString normalizedPath;
+    if (!validateSoundFontFile(path, &normalizedPath)) {
+        return false;
+    }
+
     if (!session()) {
-        emit soundFontLoaded(path);
-        return;
+        audio::FluidSynthEngine validator;
+        QString validationError;
+        if (!validator.validateSoundFont(normalizedPath, &validationError)) {
+            reportSoundFontFailure(validationError);
+            return false;
+        }
+        m_soundFontPath = normalizedPath;
+        emit soundFontLoaded(normalizedPath);
+        return true;
     }
+
+    const QString previousPath = m_soundFontPath;
     QString error;
-    if (!m_controller->loadSoundFont(path, &error)) {
-        emit errorOccurred(error);
-        return;
+    if (!m_controller->loadSoundFont(normalizedPath, &error)) {
+        QString recoveryError;
+        if (!previousPath.isEmpty() && previousPath != normalizedPath
+            && !m_controller->loadSoundFont(previousPath, &recoveryError)) {
+            error += QStringLiteral("；恢复原音源失败: %1").arg(recoveryError);
+        }
+        reportSoundFontFailure(error);
+        return false;
     }
-    emit soundFontLoaded(path);
+    m_soundFontPath = normalizedPath;
+    emit soundFontLoaded(normalizedPath);
+    return true;
+}
+
+bool PlayerApplicationService::validateSoundFontFile(const QString& path,
+                                                     QString* normalizedPath)
+{
+    const QFileInfo soundFontInfo(path);
+    if (path.trimmed().isEmpty() || !soundFontInfo.exists() || !soundFontInfo.isFile()
+        || !soundFontInfo.isReadable()) {
+        reportSoundFontFailure(QStringLiteral("无法读取音源文件: %1").arg(path));
+        return false;
+    }
+    const QString suffix = soundFontInfo.suffix().toLower();
+    if (suffix != QStringLiteral("sf2") && suffix != QStringLiteral("sf3")) {
+        reportSoundFontFailure(QStringLiteral("不支持的音源文件类型: %1").arg(suffix));
+        return false;
+    }
+
+    if (normalizedPath) {
+        *normalizedPath = soundFontInfo.absoluteFilePath();
+    }
+    return true;
+}
+
+void PlayerApplicationService::reportSoundFontFailure(const QString& message)
+{
+    emit soundFontLoadFailed(message.isEmpty()
+        ? QStringLiteral("音源加载失败") : message);
 }
 
 void PlayerApplicationService::setVisualizationRefreshRate(int refreshRate)

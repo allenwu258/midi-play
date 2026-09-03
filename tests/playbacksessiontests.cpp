@@ -55,9 +55,17 @@ void require(bool condition, const char* message)
 
 class RecordingAudioService final : public IPlaybackAudioService {
 public:
-    bool loadSoundFont(const QString&, QString*) override { return true; }
+    bool loadSoundFont(const QString& path, QString*) override
+    {
+        loadedSoundFonts.push_back(path);
+        return true;
+    }
     bool configureTrack(const QString&, int, int, QString*) override { return true; }
-    bool addTrack(const PlaybackData&, QString*) override { return true; }
+    bool addTrack(const PlaybackData&, QString*) override
+    {
+        ++addTrackCount;
+        return true;
+    }
     bool start() override
     {
         ++startCount;
@@ -116,6 +124,7 @@ public:
     int startCount = 0;
     int pauseCount = 0;
     int flushCount = 0;
+    int addTrackCount = 0;
     mutable std::atomic<int> capabilitiesQueryCount {0};
     mutable std::atomic<int> clockPositionQueryCount {0};
     qint64 clockPositionUsValue = -1;
@@ -124,6 +133,7 @@ public:
     quint64 currentGeneration = 0;
     QVector<qint64> seekPositions;
     QVector<qint64> transportPositions;
+    QVector<QString> loadedSoundFonts;
     QVector<quint64> submittedGenerations;
     QVector<PlaybackEvent> submittedEvents;
 };
@@ -233,6 +243,57 @@ void testSettingsServicePersistsTitleBarMode()
 #endif
 }
 
+void testSettingsServicePersistsAndResetsSoundFont()
+{
+    auto store = std::make_unique<MemorySettingsStore>();
+    auto* rawStore = store.get();
+    const QString defaultPath = QDir::cleanPath(
+        QDir::temp().absoluteFilePath(QStringLiteral("midi-play/default/midisound.sf2")));
+    const QString customPath = QDir::cleanPath(
+        QDir::temp().absoluteFilePath(QStringLiteral("midi-play/custom/orchestra.sf2")));
+    midi_play::app::SettingsService service(std::move(store), defaultPath);
+    service.load();
+
+    require(service.usesDefaultSoundFont(),
+            "missing SoundFont override must select the bundled default");
+    require(service.soundFontPath() == defaultPath,
+            "effective default SoundFont path must be exposed");
+
+    int changeCount = 0;
+    QString changedPath;
+    bool changedToDefault = false;
+    QObject::connect(&service, &midi_play::app::SettingsService::soundFontPathChanged,
+                     [&](const QString& path, bool usesDefault) {
+                         ++changeCount;
+                         changedPath = path;
+                         changedToDefault = usesDefault;
+                     });
+
+    service.setSoundFontPath(customPath);
+    require(!service.usesDefaultSoundFont(),
+            "custom SoundFont must replace the effective default");
+    require(service.soundFontPath() == customPath,
+            "custom SoundFont path must be normalized and exposed");
+    require(rawStore->saveCount == 1
+                && rawStore->savedSettings.soundFontPathOverride == customPath,
+            "custom SoundFont override must be persisted");
+    require(changeCount == 1 && changedPath == customPath && !changedToDefault,
+            "custom SoundFont change must publish its effective state");
+
+    service.resetSoundFontPath();
+    require(service.usesDefaultSoundFont() && service.soundFontPath() == defaultPath,
+            "reset must restore the bundled default SoundFont");
+    require(rawStore->saveCount == 2
+                && rawStore->savedSettings.soundFontPathOverride.isEmpty(),
+            "reset must persist an empty override rather than the installed path");
+    require(changeCount == 2 && changedPath == defaultPath && changedToDefault,
+            "reset must publish the effective default SoundFont");
+
+    service.setSoundFontPath(defaultPath);
+    require(rawStore->saveCount == 2 && changeCount == 2,
+            "selecting the bundled SoundFont must remain equivalent to reset");
+}
+
 void testSettingsServicePersistsOnlyEffectiveChanges()
 {
     auto store = std::make_unique<MemorySettingsStore>();
@@ -288,6 +349,7 @@ void testQSettingsStorePersistsUserRefreshRate()
     PlayerSettings saved;
     saved.visualizationRefreshRate = 120;
     saved.titleBarMode = midi_play::settings::TitleBarMode::Custom;
+    saved.soundFontPathOverride = QStringLiteral("C:/SoundFonts/custom.sf2");
     QString error;
     require(store.save(saved, &error), "settings store must save a valid refresh rate");
     require(error.isEmpty(), "successful settings save must not report an error");
@@ -295,6 +357,8 @@ void testQSettingsStorePersistsUserRefreshRate()
     loaded = store.load(&warning);
     require(loaded.visualizationRefreshRate == 120,
             "settings store must reload the persisted refresh rate");
+    require(loaded.soundFontPathOverride == saved.soundFontPathOverride,
+            "settings store must reload the custom SoundFont override");
 #if defined(Q_OS_WIN)
     require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Custom,
             "Windows settings store must reload the custom title bar mode");
@@ -321,6 +385,13 @@ void testQSettingsStorePersistsUserRefreshRate()
     require(!warning.isEmpty(), "invalid persisted refresh rate should report a warning");
     require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Native,
             "invalid persisted title bar mode must fall back to native");
+
+    loaded.soundFontPathOverride.clear();
+    require(store.save(loaded, &error),
+            "settings store must save a reset SoundFont configuration");
+    QSettings resetFile(settingsPath, QSettings::IniFormat);
+    require(!resetFile.contains(QStringLiteral("Audio/soundFontPath")),
+            "reset must remove the custom SoundFont key from the settings file");
 }
 
 void testPlaybackTimelineCachesRepeatExpansion()
@@ -594,6 +665,36 @@ void testSeekPreservesTransportIntent()
             "play after paused seek must advance from the selected position");
 }
 
+void testSoundFontChangeRestoresPlayingAudioState()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    PlaybackSession session(testDocument(), std::move(audio));
+
+    session.play();
+    require(waitUntil([&] { return session.positionMicroseconds() > 0; }),
+            "playing session must advance before changing SoundFont");
+    recording->clearSubmissions();
+    const int transportUpdateCount = recording->transportPositions.size();
+
+    QString error;
+    require(session.loadSoundFont(QStringLiteral("orchestra.sf2"), &error),
+            "a valid SoundFont change must succeed");
+    require(error.isEmpty(), "successful SoundFont changes must not report an error");
+    require(recording->loadedSoundFonts.size() == 1
+                && recording->loadedSoundFonts.front() == QStringLiteral("orchestra.sf2"),
+            "SoundFont change must reach the audio service");
+    require(recording->addTrackCount == 1,
+            "SoundFont change must configure each playback track");
+    require(recording->transportPositions.size() == transportUpdateCount + 1,
+            "live SoundFont change must restore the current transport position");
+    require(containsNoteOn(recording->submittedEvents),
+            "live SoundFont change must restore notes spanning the playhead");
+    require(session.state() == State::Playing,
+            "live SoundFont change must preserve the playing state");
+    session.pause();
+}
+
 void testPositionThrottlerUsesLatestSample()
 {
     PlaybackPositionThrottler throttler;
@@ -620,6 +721,7 @@ int main(int argc, char* argv[])
     testVisualizationRefreshRateSettingsNormalizeInts();
     testTitleBarModePlatformPolicy();
     testSettingsServicePersistsTitleBarMode();
+    testSettingsServicePersistsAndResetsSoundFont();
     testSettingsServicePersistsOnlyEffectiveChanges();
     testQSettingsStorePersistsUserRefreshRate();
     testPlaybackTimelineCachesRepeatExpansion();
@@ -630,6 +732,7 @@ int main(int argc, char* argv[])
     testAudioClockCapabilityEnablesClockSampling();
     testPositionThrottlerUsesLatestSample();
     testSeekPreservesTransportIntent();
+    testSoundFontChangeRestoresPlayingAudioState();
     std::fprintf(stdout, "playback session tests passed\n");
     return EXIT_SUCCESS;
 }

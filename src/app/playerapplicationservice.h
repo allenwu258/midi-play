@@ -25,7 +25,7 @@ public:
 public slots:
     void openFile(const QString& path);
     void openMusicXml(const QString& path);
-    void loadSoundFont(const QString& path);
+    bool loadSoundFont(const QString& path);
     void setVisualizationRefreshRate(int refreshRate);
     void play();
     void pause();
@@ -36,6 +36,7 @@ signals:
     void busyChanged(bool busy);
     void documentLoaded(const QString& title, qint64 duration);
     void soundFontLoaded(const QString& path);
+    void soundFontLoadFailed(const QString& message);
     void positionChanged(qint64 position, qint64 duration);
     void playbackStateChanged(midi_play::playback::State state);
     void visualizationReady(midi_play::visualization::VisualChartPtr chart);
@@ -43,6 +44,8 @@ signals:
 
 private:
     void connectSession();
+    bool validateSoundFontFile(const QString& path, QString* normalizedPath);
+    void reportSoundFontFailure(const QString& message);
 
     std::unique_ptr<playback::PlaybackController> m_controller;
     QString m_fileName;

@@ -3,6 +3,7 @@
 #include "infrastructure/musicxml/musicxmlreader.h"
 #include "infrastructure/audio/fluidsynthengine.h"
 #include "infrastructure/settings/qsettingsstore.h"
+#include "infrastructure/resources/defaultsoundfontlocator.h"
 #include "infrastructure/midi/midireader.h"
 #include "infrastructure/readers/musicreaderregistry.h"
 #include "infrastructure/readers/musicxmlreaderadapter.h"
@@ -38,11 +39,16 @@ int main(int argc, char* argv[])
 
     midi_play::app::PlayerApplicationService service;
     auto settingsStore = std::make_unique<midi_play::infrastructure::settings::QSettingsStore>();
-    midi_play::app::SettingsService settingsService(std::move(settingsStore));
+    const QString defaultSoundFontPath =
+        midi_play::resources::DefaultSoundFontLocator::locate();
+    midi_play::app::SettingsService settingsService(
+        std::move(settingsStore), defaultSoundFontPath);
     settingsService.load();
     service.setVisualizationRefreshRate(settingsService.visualizationRefreshRate());
     QObject::connect(&settingsService, &midi_play::app::SettingsService::visualizationRefreshRateChanged,
                      &service, &midi_play::app::PlayerApplicationService::setVisualizationRefreshRate);
+    QObject::connect(&service, &midi_play::app::PlayerApplicationService::soundFontLoaded,
+                     &settingsService, &midi_play::app::SettingsService::setSoundFontPath);
 
     if (argc > 2 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--audio-test")) {
         midi_play::audio::FluidSynthEngine engine;
@@ -150,12 +156,12 @@ int main(int argc, char* argv[])
     midi_play::presentation::MainWindow window(&service, &settingsService);
     window.show();
 
-    const QString defaultSoundFontRelativePath = QStringLiteral("assets/midisound.sf2");
-    QString defaultSoundFont =
-        QDir(QCoreApplication::applicationDirPath()).filePath(defaultSoundFontRelativePath);
-    if (!QFileInfo::exists(defaultSoundFont)) {
-        defaultSoundFont = QDir::current().filePath(defaultSoundFontRelativePath);
+    if (!service.loadSoundFont(settingsService.soundFontPath())
+        && !settingsService.usesDefaultSoundFont()) {
+        // A moved or deleted custom file must not leave the player silent.
+        // Loading the bundled file emits soundFontLoaded, which also clears
+        // the stale override through the application-level settings binding.
+        service.loadSoundFont(settingsService.defaultSoundFontPath());
     }
-    service.loadSoundFont(defaultSoundFont);
     return app.exec();
 }

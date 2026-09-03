@@ -1,25 +1,33 @@
 #include "settingsdialog.h"
 
 #include "app/settingsservice.h"
+#include "app/playerapplicationservice.h"
 #include "domain/settings/playersettings.h"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
 namespace midi_play::presentation::settings {
 
-SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* parent)
-    : QDialog(parent), m_settingsService(settingsService)
+SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
+                               app::PlayerApplicationService* playerService,
+                               QWidget* parent)
+    : QDialog(parent), m_settingsService(settingsService), m_playerService(playerService)
 {
     setWindowTitle(QStringLiteral("设置"));
     setWindowFlag(Qt::Window, true);
     setModal(false);
-    resize(360, 260);
+    resize(520, 340);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(18, 16, 18, 14);
@@ -62,9 +70,33 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
         m_titleBarModeCombo->setToolTip(QStringLiteral("当前平台仅支持原生标题栏"));
     }
     form->addRow(QStringLiteral("标题栏样式"), m_titleBarModeCombo);
+
+    auto* soundFontEditor = new QWidget(this);
+    auto* soundFontLayout = new QVBoxLayout(soundFontEditor);
+    soundFontLayout->setContentsMargins(0, 0, 0, 0);
+    soundFontLayout->setSpacing(6);
+    m_soundFontPathEdit = new QLineEdit(soundFontEditor);
+    m_soundFontPathEdit->setObjectName(QStringLiteral("soundFontPathEdit"));
+    m_soundFontPathEdit->setReadOnly(true);
+    m_soundFontPathEdit->setAccessibleName(QStringLiteral("当前音源文件"));
+    soundFontLayout->addWidget(m_soundFontPathEdit);
+    auto* soundFontActions = new QHBoxLayout();
+    soundFontActions->setContentsMargins(0, 0, 0, 0);
+    soundFontActions->setSpacing(6);
+    m_loadSoundFontButton = new QPushButton(QStringLiteral("加载音源"), soundFontEditor);
+    m_loadSoundFontButton->setObjectName(QStringLiteral("loadSoundFontButton"));
+    m_loadSoundFontButton->setToolTip(QStringLiteral("选择 SoundFont 音源文件"));
+    m_resetSoundFontButton = new QPushButton(QStringLiteral("恢复默认"), soundFontEditor);
+    m_resetSoundFontButton->setObjectName(QStringLiteral("resetSoundFontButton"));
+    m_resetSoundFontButton->setToolTip(QStringLiteral("恢复随程序提供的默认音源"));
+    soundFontActions->addWidget(m_loadSoundFontButton);
+    soundFontActions->addWidget(m_resetSoundFontButton);
+    soundFontActions->addStretch();
+    soundFontLayout->addLayout(soundFontActions);
+    form->addRow(QStringLiteral("音源"), soundFontEditor);
     root->addLayout(form);
 
-    auto* hint = new QLabel(QStringLiteral("仅影响下落音符和界面刷新，不影响音频播放精度。"), this);
+    auto* hint = new QLabel(QStringLiteral("视觉刷新率仅影响下落音符和界面刷新，不影响音频播放精度。"), this);
     hint->setObjectName(QStringLiteral("settingsHint"));
     hint->setWordWrap(true);
     root->addWidget(hint);
@@ -89,8 +121,11 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
         QComboBox:hover { border-color: #555b5f; }
         QSpinBox { min-height: 28px; padding: 2px 8px; background: #25282b; color: #f0f1ed; border: 1px solid #3a3e41; }
         QSpinBox:hover { border-color: #555b5f; }
+        QLineEdit { min-height: 28px; padding: 2px 8px; background: #202326; color: #d8dbd7; border: 1px solid #3a3e41; }
+        QLineEdit:read-only { color: #bfc3bf; }
         QPushButton { min-width: 72px; min-height: 28px; color: #dfe1dc; background: #25282b; border: 1px solid #3a3e41; }
         QPushButton:hover { background: #2d3033; }
+        QPushButton:disabled { color: #676c68; background: #202326; border-color: #303337; }
     )"));
 
     if (m_settingsService) {
@@ -101,17 +136,34 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService, QWidget* p
         connect(m_customRefreshRateSpinBox, &QSpinBox::editingFinished,
                 this, &SettingsDialog::applyCustomRefreshRateFromUi);
         updateTitleBarModeSelection(m_settingsService->titleBarMode());
+        updateSoundFontPath(m_settingsService->soundFontPath(),
+                            m_settingsService->usesDefaultSoundFont());
         connect(m_titleBarModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyTitleBarModeFromUi);
+        connect(m_loadSoundFontButton, &QPushButton::clicked,
+                this, &SettingsDialog::chooseSoundFont);
+        connect(m_resetSoundFontButton, &QPushButton::clicked,
+                this, &SettingsDialog::resetSoundFont);
         connect(m_settingsService, &app::SettingsService::visualizationRefreshRateChanged,
                 this, &SettingsDialog::updateRefreshRateSelection);
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
                 this, &SettingsDialog::updateTitleBarModeSelection);
+        connect(m_settingsService, &app::SettingsService::soundFontPathChanged,
+                this, &SettingsDialog::updateSoundFontPath);
         connect(m_settingsService, &app::SettingsService::settingsSaveFailed,
                 this, &SettingsDialog::showSaveError);
+        if (m_playerService) {
+            connect(m_playerService, &app::PlayerApplicationService::soundFontLoadFailed,
+                    this, &SettingsDialog::showSaveError);
+        }
     } else {
         m_refreshRateCombo->setEnabled(false);
+        m_titleBarModeCombo->setEnabled(false);
         showSaveError(QStringLiteral("设置服务不可用"));
+    }
+    if (!m_settingsService || !m_playerService) {
+        m_loadSoundFontButton->setEnabled(false);
+        m_resetSoundFontButton->setEnabled(false);
     }
 }
 
@@ -157,6 +209,33 @@ void SettingsDialog::applyTitleBarModeFromUi()
         midi_play::settings::titleBarModeFromPersistentValue(value));
 }
 
+void SettingsDialog::chooseSoundFont()
+{
+    if (!m_settingsService || !m_playerService) {
+        return;
+    }
+
+    const QString currentPath = m_settingsService->soundFontPath();
+    const QString initialDirectory = QFileInfo(currentPath).absolutePath();
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("加载音源"), initialDirectory,
+        QStringLiteral("SoundFont 音源 (*.sf2 *.sf3)"));
+    if (!path.isEmpty()) {
+        m_errorLabel->hide();
+        m_playerService->loadSoundFont(path);
+    }
+}
+
+void SettingsDialog::resetSoundFont()
+{
+    if (!m_settingsService || !m_playerService) {
+        return;
+    }
+
+    m_errorLabel->hide();
+    m_playerService->loadSoundFont(m_settingsService->defaultSoundFontPath());
+}
+
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
 {
     if (!m_refreshRateCombo) {
@@ -191,6 +270,23 @@ void SettingsDialog::updateTitleBarModeSelection(midi_play::settings::TitleBarMo
 
     const QSignalBlocker blocker(m_titleBarModeCombo);
     m_titleBarModeCombo->setCurrentIndex(index);
+}
+
+void SettingsDialog::updateSoundFontPath(const QString& path, bool usesDefault)
+{
+    if (!m_soundFontPathEdit || !m_resetSoundFontButton) {
+        return;
+    }
+
+    m_soundFontPathEdit->setText(path);
+    m_soundFontPathEdit->setToolTip(usesDefault
+        ? QStringLiteral("默认音源：%1").arg(path)
+        : QStringLiteral("自定义音源：%1").arg(path));
+    m_soundFontPathEdit->setAccessibleDescription(
+        usesDefault ? QStringLiteral("默认音源") : QStringLiteral("自定义音源"));
+    // Keep the file name visible when the absolute path is wider than the editor.
+    m_soundFontPathEdit->setCursorPosition(path.size());
+    m_resetSoundFontButton->setEnabled(!usesDefault);
 }
 
 void SettingsDialog::showSaveError(const QString& message)

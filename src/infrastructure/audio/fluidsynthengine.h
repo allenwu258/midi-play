@@ -19,6 +19,7 @@ public:
     explicit FluidSynthEngine(QObject* parent = nullptr);
     ~FluidSynthEngine() override;
 
+    bool validateSoundFont(const QString& soundFontPath, QString* error);
     bool load(const QString& soundFontPath, QString* error);
     bool configureTrack(int channel, int program, QString* error);
     bool start();
@@ -40,6 +41,7 @@ public:
 
 private:
     bool resolveSymbols(QString* error);
+    bool initializeSynth(const QString& soundFontPath, QString* error);
     void release();
 
     QLibrary m_library;

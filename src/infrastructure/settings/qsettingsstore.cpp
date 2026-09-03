@@ -58,6 +58,8 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     bool titleBarModeConversionOk = false;
     const int configuredTitleBarMode = titleBarModeValue.toInt(&titleBarModeConversionOk);
     result.titleBarMode = midi_play::settings::titleBarModeFromPersistentValue(configuredTitleBarMode);
+    result.soundFontPathOverride =
+        file.value(QStringLiteral("Audio/soundFontPath")).toString().trimmed();
 
     const QString readStatus = statusMessage(file.status());
     if (!readStatus.isEmpty() && warning) {
@@ -108,6 +110,11 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
                   midi_play::settings::normalizeVisualizationRefreshRate(settings.visualizationRefreshRate));
     file.setValue(QStringLiteral("General/titleBarMode"),
                   midi_play::settings::titleBarModePersistentValue(settings.titleBarMode));
+    if (settings.soundFontPathOverride.isEmpty()) {
+        file.remove(QStringLiteral("Audio/soundFontPath"));
+    } else {
+        file.setValue(QStringLiteral("Audio/soundFontPath"), settings.soundFontPathOverride);
+    }
     file.sync();
 
     const QString writeStatus = statusMessage(file.status());

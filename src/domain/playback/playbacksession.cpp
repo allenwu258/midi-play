@@ -36,6 +36,14 @@ bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
             return false;
         }
     }
+    if (m_state == State::Playing) {
+        // Loading a SoundFont rebuilds the synthesizer and releases all
+        // sounding voices. Restore channel state and notes that span the
+        // current playhead so a live source change does not remain silent
+        // until the next Note On event.
+        m_audioService->setTransportPosition(m_positionUs);
+        rebuildAudioState(m_positionUs);
+    }
     return true;
 }
 

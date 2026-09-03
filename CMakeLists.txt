@@ -74,6 +74,8 @@ qt_add_executable(midi_play
     src/infrastructure/audio/threadedplaybackaudioservice.cpp
     src/infrastructure/resources/projectaudiosettings.h
     src/infrastructure/resources/projectaudiosettings.cpp
+    src/infrastructure/resources/defaultsoundfontlocator.h
+    src/infrastructure/resources/defaultsoundfontlocator.cpp
     src/infrastructure/settings/qsettingsstore.h
     src/infrastructure/settings/qsettingsstore.cpp
     src/infrastructure/readers/imusicreader.h

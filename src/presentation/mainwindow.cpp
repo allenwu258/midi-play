@@ -159,18 +159,15 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     topLayout->addWidget(m_timeLabel);
     topLayout->addWidget(verticalSeparator(topBar));
 
-    m_soundFontLabel = new QLabel(QStringLiteral("SF2 未加载"), topBar);
+    m_soundFontLabel = new QLabel(QStringLiteral("音源未加载"), topBar);
     m_soundFontLabel->setObjectName(QStringLiteral("soundFontLabel"));
     topLayout->addWidget(m_soundFontLabel);
 
     auto* openMusic = toolButton(topBar, style()->standardIcon(QStyle::SP_DialogOpenButton),
                                  QStringLiteral("打开乐曲"), QStringLiteral("打开 MusicXML 或 MIDI 文件"));
-    auto* openSf2 = toolButton(topBar, style()->standardIcon(QStyle::SP_DriveHDIcon),
-                               QStringLiteral("加载 SF2"), QStringLiteral("加载 SoundFont 音源"));
     auto* settingsButton = toolButton(topBar, style()->standardIcon(QStyle::SP_FileDialogDetailedView),
                                       QStringLiteral("设置"), QStringLiteral("打开播放器设置"));
     topLayout->addWidget(openMusic);
-    topLayout->addWidget(openSf2);
     topLayout->addWidget(settingsButton);
 
     m_windowControlsSeparator = verticalSeparator(topBar);
@@ -263,7 +260,6 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     )"));
 
     connect(openMusic, &QToolButton::clicked, this, &MainWindow::openMusicFile);
-    connect(openSf2, &QToolButton::clicked, this, &MainWindow::openSoundFont);
     connect(settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
     connect(m_minimizeButton, &QToolButton::clicked, this, &MainWindow::showMinimized);
     connect(m_maximizeButton, &QToolButton::clicked, this, [this] {
@@ -322,10 +318,14 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
             this, &MainWindow::updatePlaybackState);
     connect(m_service, &app::PlayerApplicationService::soundFontLoaded, this, [this](const QString& path) {
         const QFileInfo file(path);
-        m_soundFontLabel->setText(file.fileName().isEmpty() ? QStringLiteral("SF2 已配置") : file.fileName());
+        m_soundFontLabel->setText(file.fileName().isEmpty() ? QStringLiteral("音源已配置") : file.fileName());
         m_soundFontLabel->setToolTip(path);
-        m_statusLabel->setText(QStringLiteral("SoundFont 已加载"));
+        m_statusLabel->setText(QStringLiteral("音源已加载"));
     });
+    connect(m_service, &app::PlayerApplicationService::soundFontLoadFailed,
+            this, [this](const QString& message) {
+                m_statusLabel->setText(message);
+            });
     connect(m_service, &app::PlayerApplicationService::busyChanged, this, [this](bool busy) {
         m_visualization->setLoading(busy);
         m_statusLabel->setText(busy ? QStringLiteral("正在分析音乐文件...") : QStringLiteral("就绪"));
@@ -506,18 +506,10 @@ void MainWindow::openMusicFile()
     if (!path.isEmpty()) m_service->openFile(path);
 }
 
-void MainWindow::openSoundFont()
-{
-    const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("加载 SoundFont"), {},
-        QStringLiteral("SoundFont (*.sf2 *.sf3);;所有文件 (*.*)"));
-    if (!path.isEmpty()) m_service->loadSoundFont(path);
-}
-
 void MainWindow::showSettings()
 {
     if (!m_settingsDialog) {
-        m_settingsDialog = new settings::SettingsDialog(m_settingsService, this);
+        m_settingsDialog = new settings::SettingsDialog(m_settingsService, m_service, this);
     }
 
     m_settingsDialog->show();
@@ -604,8 +596,8 @@ void MainWindow::updateTimeDisplay(qint64 positionUs, qint64 durationUs)
 
 void MainWindow::updateResponsiveVisibility()
 {
-    // Preserve transport-critical information on narrow windows. File and
-    // SoundFont paths remain available through tooltips and file actions.
+    // Preserve transport-critical information on narrow windows. The
+    // SoundFont path remains available through its tooltip and settings.
     m_soundFontLabel->setVisible(width() >= 1080);
     m_keyLabel->setVisible(width() >= 860);
 }
