@@ -28,22 +28,56 @@ PlaybackSession::~PlaybackSession() = default;
 
 bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
 {
+    if (error) error->clear();
+    const bool wasPlaying = m_state == State::Playing;
+    qint64 resumePositionUs = m_positionUs;
+    if (wasPlaying) {
+        resumePositionUs = m_playHead.positionUs();
+        m_positionUs = resumePositionUs;
+        m_timer->stop();
+        advanceEventGeneration();
+        flushActiveNotes();
+        m_audioService->pause();
+        m_playHead.pause(resumePositionUs);
+    }
+
     if (!m_audioService->loadSoundFont(path, error)) {
+        if (wasPlaying) {
+            resumeAfterSoundFontChange(resumePositionUs, nullptr);
+        }
         return false;
     }
     for (const auto& track : m_playbackModel.tracks()) {
         if (!m_audioService->addTrack(track, error)) {
+            if (wasPlaying) {
+                resumeAfterSoundFontChange(resumePositionUs, nullptr);
+            }
             return false;
         }
     }
-    if (m_state == State::Playing) {
-        // Loading a SoundFont rebuilds the synthesizer and releases all
-        // sounding voices. Restore channel state and notes that span the
-        // current playhead so a live source change does not remain silent
-        // until the next Note On event.
-        m_audioService->setTransportPosition(m_positionUs);
-        rebuildAudioState(m_positionUs);
+    if (wasPlaying && !resumeAfterSoundFontChange(resumePositionUs, error)) {
+        return false;
     }
+    return true;
+}
+
+bool PlaybackSession::resumeAfterSoundFontChange(qint64 positionUs, QString* error)
+{
+    m_positionUs = std::clamp<qint64>(positionUs, 0, m_durationUs);
+    if (!m_audioService->start()) {
+        if (error) *error = QStringLiteral("无法在切换音源后恢复音频引擎");
+        setState(State::Error);
+        return false;
+    }
+    if (!m_audioService->setTransportPosition(m_positionUs)) {
+        if (error) *error = QStringLiteral("无法在切换音源后恢复播放位置");
+        setState(State::Error);
+        return false;
+    }
+    rebuildAudioState(m_positionUs);
+    m_playHead.start(m_positionUs);
+    m_timer->start();
+    emitPosition();
     return true;
 }
 

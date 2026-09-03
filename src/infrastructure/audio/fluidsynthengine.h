@@ -42,6 +42,7 @@ public:
 private:
     bool resolveSymbols(QString* error);
     bool initializeSynth(const QString& soundFontPath, QString* error);
+    bool loadSoundFontIntoActiveSynth(const QString& soundFontPath, QString* error);
     void release();
 
     QLibrary m_library;
@@ -60,6 +61,7 @@ private:
     using NewAudioDriver = fluid_audio_driver_t* (*)(fluid_settings_t*, fluid_synth_t*);
     using DeleteAudioDriver = void (*)(fluid_audio_driver_t*);
     using Sfload = int (*)(fluid_synth_t*, const char*, int);
+    using Sfunload = int (*)(fluid_synth_t*, int, int);
     using ProgramSelect = int (*)(fluid_synth_t*, int, int, int, int);
     using NoteOn = int (*)(fluid_synth_t*, int, int, int);
     using NoteOff = int (*)(fluid_synth_t*, int, int);
@@ -78,6 +80,7 @@ private:
     NewAudioDriver m_newAudioDriver = nullptr;
     DeleteAudioDriver m_deleteAudioDriver = nullptr;
     Sfload m_sfload = nullptr;
+    Sfunload m_sfunload = nullptr;
     ProgramSelect m_programSelect = nullptr;
     NoteOn m_noteOn = nullptr;
     NoteOff m_noteOff = nullptr;

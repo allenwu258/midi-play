@@ -50,6 +50,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_newAudioDriver = reinterpret_cast<NewAudioDriver>(resolve("new_fluid_audio_driver"));
     m_deleteAudioDriver = reinterpret_cast<DeleteAudioDriver>(resolve("delete_fluid_audio_driver"));
     m_sfload = reinterpret_cast<Sfload>(resolve("fluid_synth_sfload"));
+    m_sfunload = reinterpret_cast<Sfunload>(resolve("fluid_synth_sfunload"));
     m_programSelect = reinterpret_cast<ProgramSelect>(resolve("fluid_synth_program_select"));
     m_noteOn = reinterpret_cast<NoteOn>(resolve("fluid_synth_noteon"));
     m_noteOff = reinterpret_cast<NoteOff>(resolve("fluid_synth_noteoff"));
@@ -107,6 +108,9 @@ bool FluidSynthEngine::validateSoundFont(const QString& soundFontPath, QString* 
 bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
 {
     if (error) error->clear();
+    if (m_loaded) {
+        return loadSoundFontIntoActiveSynth(soundFontPath, error);
+    }
     if (!initializeSynth(soundFontPath, error)) return false;
 
     // FluidSynth owns the realtime audio thread through its native driver.
@@ -117,6 +121,32 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
         return false;
     }
     m_loaded = true;
+    return true;
+}
+
+bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath, QString* error)
+{
+    if (!m_synth || !m_sfload) {
+        if (error) *error = QStringLiteral("音频引擎尚未初始化");
+        return false;
+    }
+
+    // Keep the active synth and audio driver alive while FluidSynth parses the
+    // replacement. A malformed file therefore cannot silence the previous
+    // source or force the audio device through a second open/close cycle.
+    const int candidateId = m_sfload(m_synth, soundFontPath.toUtf8().constData(), 0);
+    if (candidateId < 0) {
+        if (error) *error = QStringLiteral("无法解析 SoundFont 音源: %1").arg(soundFontPath);
+        return false;
+    }
+
+    const int previousId = m_soundFontId;
+    m_soundFontId = candidateId;
+    if (previousId >= 0 && m_sfunload && m_sfunload(m_synth, previousId, 0) != 0) {
+        // The new source is usable. Retaining an old source is safer than
+        // undoing a successful switch; FluidSynth will release it on teardown.
+        if (error) error->clear();
+    }
     return true;
 }
 

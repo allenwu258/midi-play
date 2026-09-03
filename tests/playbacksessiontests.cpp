@@ -57,8 +57,11 @@ class RecordingAudioService final : public IPlaybackAudioService {
 public:
     bool loadSoundFont(const QString& path, QString*) override
     {
+        if (soundFontLoadDelayMs > 0) {
+            QThread::msleep(static_cast<unsigned long>(soundFontLoadDelayMs));
+        }
         loadedSoundFonts.push_back(path);
-        return true;
+        return !failSoundFontLoad;
     }
     bool configureTrack(const QString&, int, int, QString*) override { return true; }
     bool addTrack(const PlaybackData&, QString*) override
@@ -125,6 +128,8 @@ public:
     int pauseCount = 0;
     int flushCount = 0;
     int addTrackCount = 0;
+    int soundFontLoadDelayMs = 0;
+    bool failSoundFontLoad = false;
     mutable std::atomic<int> capabilitiesQueryCount {0};
     mutable std::atomic<int> clockPositionQueryCount {0};
     qint64 clockPositionUsValue = -1;
@@ -695,6 +700,50 @@ void testSoundFontChangeRestoresPlayingAudioState()
     session.pause();
 }
 
+void testSoundFontChangeFreezesAndRestoresTransport()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    recording->soundFontLoadDelayMs = 40;
+    PlaybackSession session(testDocument(), std::move(audio));
+
+    session.play();
+    require(waitUntil([&] { return session.positionMicroseconds() > 20'000; }),
+            "playing session must advance before timing a SoundFont change");
+    const qint64 beforeChangeUs = session.positionMicroseconds();
+    QString error;
+    require(session.loadSoundFont(QStringLiteral("delayed.sf2"), &error),
+            "delayed SoundFont changes must succeed");
+    processEventsFor(5);
+    const qint64 afterChangeUs = session.positionMicroseconds();
+    require(afterChangeUs - beforeChangeUs < 25'000,
+            "SoundFont loading time must not advance the transport clock");
+    require(recording->pauseCount == 1 && recording->flushCount > 0,
+            "live SoundFont changes must quiesce previous audio before switching");
+    session.pause();
+}
+
+void testFailedSoundFontChangeRestoresTransport()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    PlaybackSession session(testDocument(), std::move(audio));
+
+    session.play();
+    require(waitUntil([&] { return session.positionMicroseconds() > 20'000; }),
+            "playing session must advance before a failed SoundFont change");
+    recording->failSoundFontLoad = true;
+    QString error;
+    require(!session.loadSoundFont(QStringLiteral("broken.sf2"), &error),
+            "failed SoundFont changes must report failure");
+    require(session.state() == State::Playing,
+            "failed SoundFont changes must preserve the transport state");
+    const qint64 restoredPositionUs = session.positionMicroseconds();
+    require(waitUntil([&] { return session.positionMicroseconds() > restoredPositionUs; }),
+            "failed SoundFont changes must resume transport progress");
+    session.pause();
+}
+
 void testPositionThrottlerUsesLatestSample()
 {
     PlaybackPositionThrottler throttler;
@@ -733,6 +782,8 @@ int main(int argc, char* argv[])
     testPositionThrottlerUsesLatestSample();
     testSeekPreservesTransportIntent();
     testSoundFontChangeRestoresPlayingAudioState();
+    testSoundFontChangeFreezesAndRestoresTransport();
+    testFailedSoundFontChangeRestoresTransport();
     std::fprintf(stdout, "playback session tests passed\n");
     return EXIT_SUCCESS;
 }

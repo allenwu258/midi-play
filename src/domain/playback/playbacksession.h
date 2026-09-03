@@ -46,6 +46,7 @@ private:
     void emitPosition();
     void flushActiveNotes();
     void rebuildAudioState(qint64 targetUs);
+    bool resumeAfterSoundFontChange(qint64 positionUs, QString* error);
     void advanceEventGeneration();
     bool startPlaybackFromCurrentPosition();
     void updateAudioClockPosition();
