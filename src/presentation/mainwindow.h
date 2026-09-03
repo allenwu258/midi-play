@@ -60,7 +60,6 @@ private:
     QFrame* m_windowControlsSeparator = nullptr;
     visualization::FallingNotesView* m_visualization = nullptr;
     QLabel* m_fileLabel = nullptr;
-    QLabel* m_soundFontLabel = nullptr;
     QLabel* m_keyLabel = nullptr;
     QLabel* m_timeSignatureLabel = nullptr;
     QLabel* m_tempoLabel = nullptr;

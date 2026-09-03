@@ -8,7 +8,6 @@
 #include "presentation/visualization/fallingnotesview.h"
 
 #include <QFileDialog>
-#include <QFileInfo>
 #include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -151,18 +150,6 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     topLayout->addWidget(m_tempoLabel);
     topLayout->addWidget(verticalSeparator(topBar));
 
-    m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"), topBar);
-    m_timeLabel->setObjectName(QStringLiteral("timeLabel"));
-    m_timeLabel->setAccessibleName(QStringLiteral("播放时间"));
-    m_timeLabel->setMinimumWidth(118);
-    m_timeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    topLayout->addWidget(m_timeLabel);
-    topLayout->addWidget(verticalSeparator(topBar));
-
-    m_soundFontLabel = new QLabel(QStringLiteral("音源未加载"), topBar);
-    m_soundFontLabel->setObjectName(QStringLiteral("soundFontLabel"));
-    topLayout->addWidget(m_soundFontLabel);
-
     auto* openMusic = toolButton(topBar, style()->standardIcon(QStyle::SP_DialogOpenButton),
                                  QStringLiteral("打开乐曲"), QStringLiteral("打开 MusicXML 或 MIDI 文件"));
     auto* settingsButton = toolButton(topBar, style()->standardIcon(QStyle::SP_FileDialogDetailedView),
@@ -196,8 +183,6 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     topBar->registerDragWidget(m_keyLabel);
     topBar->registerDragWidget(m_timeSignatureLabel);
     topBar->registerDragWidget(m_tempoLabel);
-    topBar->registerDragWidget(m_timeLabel);
-    topBar->registerDragWidget(m_soundFontLabel);
     root->addWidget(topBar);
 
     m_visualization = new visualization::FallingNotesView(central);
@@ -216,6 +201,12 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     m_positionSlider->setEnabled(false);
     transportLayout->addWidget(m_positionSlider);
 
+    m_timeLabel = new QLabel(QStringLiteral("00:00 / 00:00"), transport);
+    m_timeLabel->setObjectName(QStringLiteral("timeLabel"));
+    m_timeLabel->setAccessibleName(QStringLiteral("播放时间"));
+    m_timeLabel->setMinimumWidth(118);
+    m_timeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
     auto* controlRow = new QHBoxLayout();
     controlRow->setContentsMargins(0, 0, 0, 0);
     controlRow->setSpacing(6);
@@ -229,6 +220,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     controlRow->addWidget(m_pauseButton);
     controlRow->addWidget(m_stopButton);
     controlRow->addStretch();
+    controlRow->addWidget(m_timeLabel);
+    controlRow->addWidget(verticalSeparator(transport));
     m_statusLabel = new QLabel(QStringLiteral("就绪"), transport);
     m_statusLabel->setObjectName(QStringLiteral("statusLabel"));
     controlRow->addWidget(m_statusLabel);
@@ -243,7 +236,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         QWidget#transportBar { border-top: 1px solid #303337; }
         QLabel#brandLabel { color: #f0f1ed; font-size: 17px; font-weight: 600; }
         QLabel#fileLabel { color: #c8cbc7; font-size: 12px; }
-        QLabel#soundFontLabel, QLabel#statusLabel { color: #8f9691; font-size: 11px; }
+        QLabel#statusLabel { color: #8f9691; font-size: 11px; }
         QLabel#metricLabel { color: #bfc3bf; font-size: 11px; }
         QLabel#timeLabel { color: #e6e7e2; font-family: Consolas, monospace; font-size: 11px; }
         QFrame#toolbarSeparator { color: #3a3d40; max-height: 26px; }
@@ -316,10 +309,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
             this, &MainWindow::updatePosition);
     connect(m_service, &app::PlayerApplicationService::playbackStateChanged,
             this, &MainWindow::updatePlaybackState);
-    connect(m_service, &app::PlayerApplicationService::soundFontLoaded, this, [this](const QString& path) {
-        const QFileInfo file(path);
-        m_soundFontLabel->setText(file.fileName().isEmpty() ? QStringLiteral("音源已配置") : file.fileName());
-        m_soundFontLabel->setToolTip(path);
+    connect(m_service, &app::PlayerApplicationService::soundFontLoaded, this, [this] {
         m_statusLabel->setText(QStringLiteral("音源已加载"));
     });
     connect(m_service, &app::PlayerApplicationService::soundFontLoadFailed,
@@ -596,10 +586,12 @@ void MainWindow::updateTimeDisplay(qint64 positionUs, qint64 durationUs)
 
 void MainWindow::updateResponsiveVisibility()
 {
-    // Preserve transport-critical information on narrow windows. The
-    // SoundFont path remains available through its tooltip and settings.
-    m_soundFontLabel->setVisible(width() >= 1080);
-    m_keyLabel->setVisible(width() >= 860);
+    // Keep the title bar usable on narrow windows. The detailed musical
+    // metadata is hidden before it competes with the file and action controls.
+    const bool showMetadata = width() >= 860;
+    m_keyLabel->setVisible(showMetadata);
+    m_timeSignatureLabel->setVisible(showMetadata);
+    m_tempoLabel->setVisible(showMetadata);
 }
 
 void MainWindow::updateTransportControls()
