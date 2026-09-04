@@ -68,6 +68,8 @@ qt_add_executable(midi_play
     src/infrastructure/musicxml/musicxmlreader.cpp
     src/infrastructure/audio/fluidsynthengine.h
     src/infrastructure/audio/fluidsynthengine.cpp
+    src/infrastructure/audio/soundfontinspector.h
+    src/infrastructure/audio/soundfontinspector.cpp
     src/infrastructure/audio/fluidsynthaudioservice.h
     src/infrastructure/audio/fluidsynthaudioservice.cpp
     src/infrastructure/audio/threadedplaybackaudioservice.h
@@ -141,9 +143,11 @@ if (NOT FLUIDSYNTH_DLL AND WIN32)
 endif()
 if (EXISTS "${FLUIDSYNTH_DLL}")
     add_custom_command(TARGET midi_play POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${FLUIDSYNTH_DLL}"
-            "$<TARGET_FILE_DIR:midi_play>/libfluidsynth-3.dll")
+        COMMAND ${CMAKE_COMMAND}
+            "-DSOURCE_LIBRARY=${FLUIDSYNTH_DLL}"
+            "-DDESTINATION_DIR=$<TARGET_FILE_DIR:midi_play>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployFluidSynthRuntime.cmake"
+        VERBATIM)
 endif()
 
 if (WIN32)
@@ -155,9 +159,26 @@ install(TARGETS midi_play RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if (EXISTS "${DEFAULT_SF2}")
     install(FILES "${DEFAULT_SF2}" DESTINATION "${CMAKE_INSTALL_BINDIR}/assets")
 endif()
+if (WIN32 AND EXISTS "${FLUIDSYNTH_DLL}")
+    install(CODE
+        "execute_process(COMMAND \"${CMAKE_COMMAND}\"
+            \"-DSOURCE_LIBRARY=${FLUIDSYNTH_DLL}\"
+            \"-DDESTINATION_DIR=\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}\"
+            -P \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployFluidSynthRuntime.cmake\"
+            COMMAND_ERROR_IS_FATAL ANY)")
+endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_soundfont_tests
+        tests/soundfontinspectortests.cpp
+        src/infrastructure/audio/soundfontinspector.h
+        src/infrastructure/audio/soundfontinspector.cpp
+    )
+    target_include_directories(midi_play_soundfont_tests PRIVATE src)
+    target_link_libraries(midi_play_soundfont_tests PRIVATE Qt6::Core)
+    add_test(NAME soundfont_inspector COMMAND midi_play_soundfont_tests)
+
     add_executable(midi_play_visualization_tests
         tests/visualizationtests.cpp
         src/domain/music/musicdocument.h

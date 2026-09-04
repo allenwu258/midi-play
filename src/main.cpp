@@ -57,19 +57,23 @@ int main(int argc, char* argv[])
             qCritical().noquote() << error;
             return 1;
         }
+        if (argc > 3
+            && (!engine.load(QString::fromLocal8Bit(argv[3]), &error)
+                || !engine.configureTrack(0, 0, &error))) {
+            qCritical().noquote() << error;
+            return 1;
+        }
         engine.start();
         engine.setTransportPosition(0);
         midi_play::playback::PlaybackEvent noteOn;
-        noteOn.timestampUs = 100'000;
         noteOn.channel = 0;
         noteOn.pitch = 60;
         noteOn.velocity = 100;
         noteOn.kind = midi_play::playback::PlaybackEventKind::NoteOn;
         midi_play::playback::PlaybackEvent noteOff = noteOn;
-        noteOff.timestampUs = 900'000;
         noteOff.kind = midi_play::playback::PlaybackEventKind::NoteOff;
         engine.submit(noteOn);
-        engine.submit(noteOff);
+        QTimer::singleShot(900, &app, [&engine, noteOff] { engine.submit(noteOff); });
         QTimer::singleShot(1'500, &app, &QCoreApplication::quit);
         return app.exec();
     }

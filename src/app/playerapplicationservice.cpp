@@ -2,6 +2,7 @@
 
 #include "infrastructure/audio/fluidsynthengine.h"
 #include "infrastructure/audio/fluidsynthaudioservice.h"
+#include "infrastructure/audio/soundfontinspector.h"
 #include "infrastructure/audio/threadedplaybackaudioservice.h"
 #include "infrastructure/readers/musicxmlreaderadapter.h"
 #include "infrastructure/readers/midireaderadapter.h"
@@ -208,6 +209,15 @@ bool PlayerApplicationService::validateSoundFontFile(const QString& path,
     const QString suffix = soundFontInfo.suffix().toLower();
     if (suffix != QStringLiteral("sf2") && suffix != QStringLiteral("sf3")) {
         reportSoundFontFailure(QStringLiteral("不支持的音源文件类型: %1").arg(suffix));
+        return false;
+    }
+
+    QString inspectionError;
+    const auto inspection = audio::SoundFontInspector::inspect(soundFontInfo.absoluteFilePath(),
+                                                                &inspectionError);
+    if (!inspection.validRiffContainer) {
+        reportSoundFontFailure(inspectionError.isEmpty()
+            ? QStringLiteral("音源文件容器无效: %1").arg(path) : inspectionError);
         return false;
     }
 
