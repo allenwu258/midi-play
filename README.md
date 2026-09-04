@@ -96,6 +96,8 @@ if (-not (Test-Path "$env:VCPKG_ROOT/vcpkg.exe")) {
 
 VCPKG_ROOT 只用于准备 FluidSynth 运行时和辅助复制 DLL；当前程序通过 Qt QLibrary 在运行时解析 FluidSynth API，不需要在 CMake 中链接 FluidSynth import library。
 
+如果未设置 `VCPKG_ROOT`，可以通过 `-DFLUIDSYNTH_DLL` 直接指定运行时 DLL，或通过 `-DVCPKG_INSTALLED_DIR` 指定 vcpkg installed 根目录。CMake 不依赖某一台开发机的固定 vcpkg 目录；未提供 FluidSynth DLL 时会明确提示跳过运行时复制，程序仍可使用系统库。
+
 ### Debug 构建
 
 ~~~powershell

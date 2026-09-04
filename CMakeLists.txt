@@ -135,11 +135,13 @@ if (EXISTS "${DEFAULT_SF2}")
 endif()
 
 set(FLUIDSYNTH_DLL "" CACHE FILEPATH "FluidSynth runtime DLL to copy beside the executable")
+set(VCPKG_INSTALLED_DIR "" CACHE PATH
+    "Optional vcpkg installed directory containing the x64-windows FluidSynth runtime")
 if (NOT FLUIDSYNTH_DLL AND WIN32 AND DEFINED ENV{VCPKG_ROOT})
     set(FLUIDSYNTH_DLL "$ENV{VCPKG_ROOT}/installed/x64-windows/bin/libfluidsynth-3.dll")
 endif()
-if (NOT FLUIDSYNTH_DLL AND WIN32)
-    set(FLUIDSYNTH_DLL "C:/SDK/VC/vcpkg/installed/x64-windows/bin/libfluidsynth-3.dll")
+if (NOT FLUIDSYNTH_DLL AND WIN32 AND VCPKG_INSTALLED_DIR)
+    set(FLUIDSYNTH_DLL "${VCPKG_INSTALLED_DIR}/x64-windows/bin/libfluidsynth-3.dll")
 endif()
 if (EXISTS "${FLUIDSYNTH_DLL}")
     add_custom_command(TARGET midi_play POST_BUILD
@@ -148,6 +150,10 @@ if (EXISTS "${FLUIDSYNTH_DLL}")
             "-DDESTINATION_DIR=$<TARGET_FILE_DIR:midi_play>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployFluidSynthRuntime.cmake"
         VERBATIM)
+elseif (WIN32)
+    message(STATUS
+        "FluidSynth runtime deployment disabled: set FLUIDSYNTH_DLL or VCPKG_ROOT "
+        "(or VCPKG_INSTALLED_DIR) to an SF3-capable libfluidsynth-3.dll")
 endif()
 
 if (WIN32)
