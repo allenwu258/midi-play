@@ -56,7 +56,8 @@ public:
 
 private:
     bool resolveSymbols(QString* error);
-    bool initializeSynth(const QString& soundFontPath, QString* error);
+    bool initializeSynth(const QString& soundFontPath, QString* error,
+                         bool dynamicSampleLoading = true);
     bool loadSoundFontIntoActiveSynth(const QString& soundFontPath, QString* error);
     bool loadIntoSynth(const QString& soundFontPath, int resetPresets, int* soundFontId,
                        QString* error);

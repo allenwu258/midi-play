@@ -8,18 +8,25 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <mutex>
 
 namespace midi_play::audio {
 namespace {
 
 thread_local QStringList* s_activeFluidLogs = nullptr;
+std::mutex s_fluidLoadMutex;
 
 void fluidLogHandler(int level, const char* message, void*)
 {
     const QString text = QString::fromUtf8(message ? message : "").trimmed();
     if (text.isEmpty()) return;
-    if (s_activeFluidLogs && level <= 2) s_activeFluidLogs->push_back(text);
-    if (level <= 1) qWarning().noquote() << "FluidSynth:" << text;
+    // Do not log from FluidSynth's realtime audio thread. During a guarded
+    // load operation the caller owns the TLS capture and receives diagnostics
+    // in its error result instead.
+    if (s_activeFluidLogs) {
+        if (level <= 2) s_activeFluidLogs->push_back(text);
+        if (level <= 1) qWarning().noquote() << "FluidSynth:" << text;
+    }
 }
 
 class ScopedFluidLogCapture final {
@@ -165,15 +172,11 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
         const char* version = m_versionString();
         m_capabilities.version = QString::fromLatin1(version ? version : "");
     }
-    if (m_setLogFunction) {
-        for (int level = 0; level <= 4; ++level) {
-            m_setLogFunction(level, fluidLogHandler, nullptr);
-        }
-    }
     return true;
 }
 
-bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* error)
+bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* error,
+                                       bool dynamicSampleLoading)
 {
     release();
     if (!resolveSymbols(error)) return false;
@@ -185,9 +188,11 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
     }
     if (m_settingsSetNum) m_settingsSetNum(m_settings, "synth.gain", 0.8);
     if (m_settingsSetInt) {
-        // SF3 samples are decoded on demand. This bounds startup time and
-        // memory use for large banks while keeping the standard SF2 path.
-        m_settingsSetInt(m_settings, "synth.dynamic-sample-loading", 1);
+        // Playback uses on-demand decoding to bound startup time and memory.
+        // Standalone validation passes false so FluidSynth eagerly decodes all
+        // samples and catches codec/data errors before the user presses Play.
+        m_settingsSetInt(m_settings, "synth.dynamic-sample-loading",
+                         dynamicSampleLoading ? 1 : 0);
     }
 
     m_synth = m_newSynth(m_settings);
@@ -206,7 +211,7 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
 bool FluidSynthEngine::validateSoundFont(const QString& soundFontPath, QString* error)
 {
     if (error) error->clear();
-    const bool valid = initializeSynth(soundFontPath, error);
+    const bool valid = initializeSynth(soundFontPath, error, false);
     release();
     return valid;
 }
@@ -269,6 +274,16 @@ bool FluidSynthEngine::loadIntoSynth(const QString& soundFontPath, int resetPres
     if (!inspection.validRiffContainer) {
         if (error) *error = inspectionError;
         return false;
+    }
+
+    // fluid_set_log_function is process-global in FluidSynth. Serialize
+    // callback installation and sfload so concurrent validators cannot race
+    // on the global callback while their thread-local captures are active.
+    const std::lock_guard<std::mutex> loadGuard(s_fluidLoadMutex);
+    if (m_setLogFunction) {
+        for (int level = 0; level <= 4; ++level) {
+            m_setLogFunction(level, fluidLogHandler, nullptr);
+        }
     }
 
     QStringList logs;
