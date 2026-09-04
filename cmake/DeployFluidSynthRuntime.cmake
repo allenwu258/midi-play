@@ -22,14 +22,15 @@ file(GET_RUNTIME_DEPENDENCIES
     POST_EXCLUDE_REGEXES
         ".*[\\/]Windows[\\/]System32[\\/].*")
 
-cmake_path(NORMAL_PATH runtime_dir OUTPUT_VARIABLE normalized_runtime_dir)
-string(TOLOWER "${normalized_runtime_dir}" normalized_runtime_dir_lower)
 foreach (dependency IN LISTS resolved_dependencies)
     get_filename_component(dependency_dir "${dependency}" DIRECTORY)
     cmake_path(NORMAL_PATH dependency_dir OUTPUT_VARIABLE normalized_dependency_dir)
     string(TOLOWER "${normalized_dependency_dir}" normalized_dependency_dir_lower)
-    if (normalized_dependency_dir_lower STREQUAL normalized_runtime_dir_lower)
-        get_filename_component(dependency_name "${dependency}" NAME)
+    get_filename_component(dependency_name "${dependency}" NAME)
+    # GET_RUNTIME_DEPENDENCIES already returns the complete transitive closure.
+    # Copy every non-system dependency, not only files beside FluidSynth: a
+    # custom build may keep libsndfile/codecs in a separate directory.
+    if (NOT normalized_dependency_dir_lower MATCHES "^[a-z]:[/\\\\]windows[/\\\\](system32|syswow64)([/\\\\]|$)")
         file(COPY_FILE "${dependency}"
              "${DESTINATION_DIR}/${dependency_name}" ONLY_IF_DIFFERENT)
     endif()
