@@ -42,7 +42,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **统一时间线**：使用 tick、微秒和预计算 tempo map 表达音乐时间，并支持 tick 与实际播放时间双向转换。
 - **演奏语义**：支持反复段、ending、D.C.、D.S.、Segno、Coda、Fine 的基础播放展开，以及 tie、staccato、accent、tenuto、ghost、dynamic、hairpin 和 pedal 等播放相关语义。
 - **实时播放控制**：播放、暂停、停止、拖动进度和 seek 后的音色/控制器/延音状态重建。
-- **SoundFont**：默认使用 assets/midisound.sf2，支持从设置窗口加载 .sf2 或 .sf3，并支持播放中事务化切换。
+- **SoundFont**：默认使用 assets/midisound.sf2，支持从设置窗口加载 .sf2 或 .sf3，并支持播放中事务化切换。SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：原生标题栏为默认值；Windows 提供“自定义标题栏（实验）”，macOS/Linux 当前仅使用原生标题栏。
@@ -73,7 +73,7 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 - Visual Studio 2022，包含 Desktop C++ 工作负载；
 - CMake >= 3.24；
 - Qt >= 6.8 的 MSVC 64-bit 套件；
-- 可提供 libfluidsynth-3.dll 的 FluidSynth 2.x/3.x 运行时；
+- 启用 `sndfile` feature 的 FluidSynth 2.x/3.x 运行时；
 - PowerShell（推荐使用 Developer PowerShell for VS 2022）。
 
 项目不链接 Qt6::Multimedia。音频由 FluidSynth 的原生实时音频驱动输出，因此不会因为缺少 Qt Multimedia backend 而影响本项目的正常架构。
@@ -96,10 +96,12 @@ if (-not (Test-Path "$env:VCPKG_ROOT/vcpkg.exe")) {
 
 VCPKG_ROOT 只用于准备 FluidSynth 运行时和辅助复制 DLL；当前程序通过 Qt QLibrary 在运行时解析 FluidSynth API，不需要在 CMake 中链接 FluidSynth import library。
 
+如果未设置 `VCPKG_ROOT`，可以通过 `-DFLUIDSYNTH_DLL` 直接指定运行时 DLL，或通过 `-DVCPKG_INSTALLED_DIR` 指定 vcpkg installed 根目录。CMake 不依赖某一台开发机的固定 vcpkg 目录；未提供 FluidSynth DLL 时会明确提示跳过运行时复制，程序仍可使用系统库。
+
 ### Debug 构建
 
 ~~~powershell
-& "$env:VCPKG_ROOT/vcpkg.exe" install fluidsynth:x64-windows --classic
+& "$env:VCPKG_ROOT/vcpkg.exe" install "fluidsynth[sndfile]:x64-windows" --classic --recurse
 cmake --preset windows-msvc-debug -DCMAKE_PREFIX_PATH="$env:QT_ROOT" -DFLUIDSYNTH_DLL="$env:VCPKG_ROOT/installed/x64-windows/bin/libfluidsynth-3.dll"
 cmake --build --preset windows-msvc-debug
 & "$env:QT_ROOT/bin/windeployqt.exe" --debug --compiler-runtime 'build/windows-msvc-debug/Debug/midi_play.exe'
@@ -109,7 +111,11 @@ cmake --build --preset windows-msvc-debug
 
 ~~~text
 build/windows-msvc-debug/Debug/midi_play.exe
+build/windows-msvc-debug/Debug/midi_play_cli.exe
 build/windows-msvc-debug/Debug/libfluidsynth-3.dll
+build/windows-msvc-debug/Debug/sndfile.dll
+build/windows-msvc-debug/Debug/ogg.dll
+build/windows-msvc-debug/Debug/vorbis.dll
 build/windows-msvc-debug/Debug/assets/midisound.sf2
 ~~~
 
@@ -126,7 +132,9 @@ cmake --build build/windows-msvc-debug --config Release
 
 ~~~text
 midi_play.exe
+midi_play_cli.exe
 libfluidsynth-3.dll
+sndfile.dll、ogg.dll、vorbis.dll 及其实际传递依赖
 assets/midisound.sf2
 platforms/qwindows.dll
 由 windeployqt 根据实际依赖复制的 Qt 运行时 DLL
@@ -196,10 +204,10 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 
 ## 命令行验证
 
-以下命令均从项目根目录执行。$midiPlayExe 可以指向 Debug 或 Release 输出。
+以下命令均从项目根目录执行。`midi_play.exe` 是主播放器，采用 Windows GUI subsystem，双击启动时不显示命令行窗口。`midi_play_cli.exe` 是 Console 程序，负责所有自动化、诊断和离屏渲染命令。
 
 ~~~powershell
-$midiPlayExe = 'build/windows-msvc-debug/Debug/midi_play.exe'
+$midiPlayCliExe = 'build/windows-msvc-debug/Debug/midi_play_cli.exe'
 ~~~
 
 ### 直接解析文件
@@ -207,24 +215,26 @@ $midiPlayExe = 'build/windows-msvc-debug/Debug/midi_play.exe'
 传入一个音乐文件路径时，程序执行 reader 和统一文档构建的 smoke test，然后退出：
 
 ~~~powershell
-& $midiPlayExe 'path/to/example.musicxml'
-& $midiPlayExe 'path/to/example.mid'
+& $midiPlayCliExe 'path/to/example.musicxml'
+& $midiPlayCliExe 'path/to/example.mid'
 ~~~
 
 ### 测试 FluidSynth 和 SoundFont
 
-该命令加载指定 SF2，初始化 FluidSynth 原生音频驱动，并提交一组测试音符：
+该命令加载指定 SF2 或 SF3，初始化 FluidSynth 原生音频驱动，并提交一组测试音符：
 
 ~~~powershell
-& $midiPlayExe --audio-test 'assets/midisound.sf2'
+& $midiPlayCliExe --audio-test 'assets/midisound.sf2'
+& $midiPlayCliExe --audio-test 'path/to/example.sf3'
+& $midiPlayCliExe --audio-test 'assets/midisound.sf2' 'path/to/example.sf3'
 ~~~
 
-运行前确认系统输出设备可用、系统音量未静音，且 libfluidsynth-3.dll 位于 exe 同级目录或系统 DLL 搜索路径中。
+第三条命令额外验证播放中从 SF2 切换到 SF3。运行前确认系统输出设备可用、系统音量未静音，且 FluidSynth 及其 SF3 codec DLL 位于 exe 同级目录或系统 DLL 搜索路径中。若 SF3 加载失败，程序会区分后端未启用 SF3、缺少 codec 依赖和文件内容损坏。
 
 ### 测试 MIDI reader
 
 ~~~powershell
-& $midiPlayExe --midi-test 'path/to/example.mid'
+& $midiPlayCliExe --midi-test 'path/to/example.mid'
 ~~~
 
 命令会输出轨道数量和按 tempo map 换算得到的播放时长。
@@ -232,7 +242,7 @@ $midiPlayExe = 'build/windows-msvc-debug/Debug/midi_play.exe'
 ### 生成离屏可视化帧
 
 ~~~powershell
-& $midiPlayExe --render-test 'path/to/example.musicxml' 'build/visualization.png' 10000000 1280 720
+& $midiPlayCliExe --render-test 'path/to/example.musicxml' 'build/visualization.png' 10000000 1280 720
 ~~~
 
 参数依次为：输入文件、输出 PNG、播放位置（微秒）、输出宽度和输出高度。播放位置、宽度和高度可以省略；默认播放位置为歌曲时长的十分之一，默认尺寸为 1280x720。

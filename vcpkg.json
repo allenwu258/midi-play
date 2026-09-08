@@ -2,6 +2,18 @@
   "name": "midi-play",
   "version-string": "0.1.0",
   "dependencies": [
-    "fluidsynth"
+    {
+      "name": "fluidsynth",
+      "features": [
+        "sndfile"
+      ]
+    },
+    {
+      "name": "libsndfile",
+      "default-features": false,
+      "features": [
+        "external-libs"
+      ]
+    }
   ]
 }

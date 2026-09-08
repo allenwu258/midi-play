@@ -52,6 +52,7 @@ private:
     bool loadSoundFontInternal(const QString& path, bool commitSelection);
     void completeSoundFontLoad(bool success, const QString& error);
     void setSoundFontLoading(bool loading);
+    bool normalizeSoundFontPath(const QString& path, QString* normalizedPath);
     bool validateSoundFontFile(const QString& path, QString* normalizedPath);
     void reportSoundFontFailure(const QString& message);
 

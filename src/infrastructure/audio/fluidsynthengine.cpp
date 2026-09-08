@@ -1,10 +1,93 @@
 #include "fluidsynthengine.h"
 
 #include <QtGlobal>
+#include <QCoreApplication>
+#include <QDebug>
+#include <QDir>
+#include <QFileInfo>
+#include <QStringList>
 
 #include <algorithm>
+#include <mutex>
 
 namespace midi_play::audio {
+namespace {
+
+thread_local QStringList* s_activeFluidLogs = nullptr;
+std::mutex s_fluidLoadMutex;
+
+void fluidLogHandler(int level, const char* message, void*)
+{
+    const QString text = QString::fromUtf8(message ? message : "").trimmed();
+    if (text.isEmpty()) return;
+    // Do not log from FluidSynth's realtime audio thread. During a guarded
+    // load operation the caller owns the TLS capture and receives diagnostics
+    // in its error result instead.
+    if (s_activeFluidLogs) {
+        if (level <= 2) s_activeFluidLogs->push_back(text);
+        if (level <= 1) qWarning().noquote() << "FluidSynth:" << text;
+    }
+}
+
+class ScopedFluidLogCapture final {
+public:
+    explicit ScopedFluidLogCapture(QStringList* logs)
+        : m_previous(s_activeFluidLogs)
+    {
+        s_activeFluidLogs = logs;
+    }
+
+    ~ScopedFluidLogCapture()
+    {
+        s_activeFluidLogs = m_previous;
+    }
+
+private:
+    QStringList* m_previous = nullptr;
+};
+
+QString conciseFluidLogs(const QStringList& logs)
+{
+    QStringList unique;
+    for (const QString& message : logs) {
+        if (!unique.contains(message)) unique.push_back(message);
+        if (unique.size() == 3) break;
+    }
+    return unique.join(QStringLiteral("；"));
+}
+
+bool logsIndicateMissingSf3Support(const QStringList& logs)
+{
+    for (const QString& message : logs) {
+        const QString lower = message.toLower();
+        if ((lower.contains(QStringLiteral("compiled without support"))
+             && lower.contains(QStringLiteral("v3")))
+            || lower.contains(QStringLiteral("sf3 support is not available"))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString soundFontLoadError(const QString& path, SoundFontFormat format,
+                           const QStringList& logs)
+{
+    if (format == SoundFontFormat::Sf3 && logsIndicateMissingSf3Support(logs)) {
+        return QStringLiteral("当前 FluidSynth 运行时未启用 SF3 支持。请安装包含 "
+                              "libsndfile/Ogg Vorbis 支持的完整音频运行时: %1")
+            .arg(path);
+    }
+
+    const QString detail = conciseFluidLogs(logs);
+    const QString formatName = format == SoundFontFormat::Sf3
+        ? QStringLiteral("SF3") : QStringLiteral("SoundFont");
+    return detail.isEmpty()
+        ? QStringLiteral("无法解析 %1 音源: %2").arg(formatName, path)
+        : QStringLiteral("无法解析 %1 音源: %2。FluidSynth: %3")
+              .arg(formatName, path, detail);
+}
+
+} // namespace
 
 FluidSynthEngine::FluidSynthEngine(QObject* parent)
     : QObject(parent)
@@ -21,7 +104,12 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     if (m_library.isLoaded()) return true;
 
 #ifdef Q_OS_WIN
-    const QStringList candidates { QStringLiteral("fluidsynth"), QStringLiteral("libfluidsynth-3") };
+    const QString deployedLibrary = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("libfluidsynth-3.dll"));
+    const bool deployedLibraryExists = QFileInfo::exists(deployedLibrary);
+    const QStringList candidates = deployedLibraryExists
+        ? QStringList { deployedLibrary }
+        : QStringList { QStringLiteral("libfluidsynth-3"), QStringLiteral("fluidsynth") };
 #elif defined(Q_OS_MACOS)
     const QStringList candidates { QStringLiteral("libfluidsynth.3"), QStringLiteral("fluidsynth") };
 #else
@@ -34,8 +122,17 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     }
     if (!m_library.isLoaded()) {
         if (error) {
-            *error = QStringLiteral("未找到 FluidSynth 动态库。请安装 fluidsynth 并确保其位于 PATH。详情: %1")
+#ifdef Q_OS_WIN
+            *error = deployedLibraryExists
+                ? QStringLiteral("FluidSynth 动态库存在，但无法加载。发行目录可能缺少 "
+                                 "libsndfile/Ogg Vorbis 等传递依赖。详情: %1")
+                      .arg(m_library.errorString())
+                : QStringLiteral("未找到 FluidSynth 动态库。请确认 libfluidsynth-3.dll "
+                                 "位于程序目录。详情: %1").arg(m_library.errorString());
+#else
+            *error = QStringLiteral("未找到 FluidSynth 动态库。请安装 fluidsynth 并确保其位于系统库路径。详情: %1")
                          .arg(m_library.errorString());
+#endif
         }
         return false;
     }
@@ -44,7 +141,10 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_newSettings = reinterpret_cast<NewSettings>(resolve("new_fluid_settings"));
     m_deleteSettings = reinterpret_cast<DeleteSettings>(resolve("delete_fluid_settings"));
     m_settingsSetNum = reinterpret_cast<SettingsSetNum>(resolve("fluid_settings_setnum"));
+    m_settingsSetInt = reinterpret_cast<SettingsSetInt>(resolve("fluid_settings_setint"));
     m_settingsSetStr = reinterpret_cast<SettingsSetStr>(resolve("fluid_settings_setstr"));
+    m_setLogFunction = reinterpret_cast<SetLogFunction>(resolve("fluid_set_log_function"));
+    m_versionString = reinterpret_cast<VersionString>(resolve("fluid_version_str"));
     m_newSynth = reinterpret_cast<NewSynth>(resolve("new_fluid_synth"));
     m_deleteSynth = reinterpret_cast<DeleteSynth>(resolve("delete_fluid_synth"));
     m_newAudioDriver = reinterpret_cast<NewAudioDriver>(resolve("new_fluid_audio_driver"));
@@ -67,10 +167,16 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
         m_library.unload();
         return false;
     }
+
+    if (m_versionString) {
+        const char* version = m_versionString();
+        m_capabilities.version = QString::fromLatin1(version ? version : "");
+    }
     return true;
 }
 
-bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* error)
+bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* error,
+                                       bool dynamicSampleLoading)
 {
     release();
     if (!resolveSymbols(error)) return false;
@@ -81,6 +187,13 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         return false;
     }
     if (m_settingsSetNum) m_settingsSetNum(m_settings, "synth.gain", 0.8);
+    if (m_settingsSetInt) {
+        // Playback uses on-demand decoding to bound startup time and memory.
+        // Standalone validation passes false so FluidSynth eagerly decodes all
+        // samples and catches codec/data errors before the user presses Play.
+        m_settingsSetInt(m_settings, "synth.dynamic-sample-loading",
+                         dynamicSampleLoading ? 1 : 0);
+    }
 
     m_synth = m_newSynth(m_settings);
     if (!m_synth) {
@@ -88,9 +201,7 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         release();
         return false;
     }
-    m_soundFontId = m_sfload(m_synth, soundFontPath.toUtf8().constData(), 1);
-    if (m_soundFontId < 0) {
-        if (error) *error = QStringLiteral("无法解析 SoundFont 音源: %1").arg(soundFontPath);
+    if (!loadIntoSynth(soundFontPath, 1, &m_soundFontId, error)) {
         release();
         return false;
     }
@@ -100,7 +211,7 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
 bool FluidSynthEngine::validateSoundFont(const QString& soundFontPath, QString* error)
 {
     if (error) error->clear();
-    const bool valid = initializeSynth(soundFontPath, error);
+    const bool valid = initializeSynth(soundFontPath, error, false);
     release();
     return valid;
 }
@@ -124,6 +235,11 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
     return true;
 }
 
+FluidSynthCapabilities FluidSynthEngine::capabilities() const
+{
+    return m_capabilities;
+}
+
 bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath, QString* error)
 {
     if (!m_synth || !m_sfload) {
@@ -134,9 +250,8 @@ bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath
     // Keep the active synth and audio driver alive while FluidSynth parses the
     // replacement. A malformed file therefore cannot silence the previous
     // source or force the audio device through a second open/close cycle.
-    const int candidateId = m_sfload(m_synth, soundFontPath.toUtf8().constData(), 0);
-    if (candidateId < 0) {
-        if (error) *error = QStringLiteral("无法解析 SoundFont 音源: %1").arg(soundFontPath);
+    int candidateId = -1;
+    if (!loadIntoSynth(soundFontPath, 0, &candidateId, error)) {
         return false;
     }
 
@@ -150,10 +265,55 @@ bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath
     return true;
 }
 
+bool FluidSynthEngine::loadIntoSynth(const QString& soundFontPath, int resetPresets,
+                                     int* soundFontId, QString* error)
+{
+    QString inspectionError;
+    const SoundFontInspection inspection = SoundFontInspector::inspect(soundFontPath,
+                                                                        &inspectionError);
+    if (!inspection.validRiffContainer) {
+        if (error) *error = inspectionError;
+        return false;
+    }
+
+    // fluid_set_log_function is process-global in FluidSynth. Serialize
+    // callback installation and sfload so concurrent validators cannot race
+    // on the global callback while their thread-local captures are active.
+    const std::lock_guard<std::mutex> loadGuard(s_fluidLoadMutex);
+    if (m_setLogFunction) {
+        for (int level = 0; level <= 4; ++level) {
+            m_setLogFunction(level, fluidLogHandler, nullptr);
+        }
+    }
+
+    QStringList logs;
+    ScopedFluidLogCapture capture(&logs);
+    const QByteArray encodedPath = soundFontPath.toUtf8();
+    const int id = m_sfload(m_synth, encodedPath.constData(), resetPresets);
+    updateFormatCapability(inspection.format, id >= 0, logs);
+    if (id < 0) {
+        if (error) *error = soundFontLoadError(soundFontPath, inspection.format, logs);
+        return false;
+    }
+    if (soundFontId) *soundFontId = id;
+    return true;
+}
+
+void FluidSynthEngine::updateFormatCapability(SoundFontFormat format, bool loaded,
+                                               const QStringList& logs)
+{
+    if (format != SoundFontFormat::Sf3) return;
+    if (loaded) {
+        m_capabilities.supportsSf3 = BackendFeatureSupport::Supported;
+    } else if (logsIndicateMissingSf3Support(logs)) {
+        m_capabilities.supportsSf3 = BackendFeatureSupport::Unsupported;
+    }
+}
+
 bool FluidSynthEngine::configureTrack(int channel, int program, QString* error)
 {
     if (!m_loaded || !m_programSelect) {
-        if (error) *error = QStringLiteral("音频引擎尚未加载 SF2");
+        if (error) *error = QStringLiteral("音频引擎尚未加载 SoundFont");
         return false;
     }
     const int result = m_programSelect(m_synth, channel % 16, m_soundFontId, 0, program % 128);

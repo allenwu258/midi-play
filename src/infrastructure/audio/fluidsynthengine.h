@@ -1,17 +1,31 @@
 #pragma once
 
 #include "domain/playback/playbacktypes.h"
+#include "infrastructure/audio/soundfontinspector.h"
 
 #include <QLibrary>
 #include <QMap>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 struct fluid_settings_t;
 struct fluid_synth_t;
 struct fluid_audio_driver_t;
 
 namespace midi_play::audio {
+
+enum class BackendFeatureSupport {
+    Unknown,
+    Unsupported,
+    Supported
+};
+
+struct FluidSynthCapabilities {
+    QString version;
+    bool supportsSf2 = true;
+    BackendFeatureSupport supportsSf3 = BackendFeatureSupport::Unknown;
+};
 
 class FluidSynthEngine final : public QObject {
     Q_OBJECT
@@ -21,6 +35,7 @@ public:
 
     bool validateSoundFont(const QString& soundFontPath, QString* error);
     bool load(const QString& soundFontPath, QString* error);
+    FluidSynthCapabilities capabilities() const;
     bool configureTrack(int channel, int program, QString* error);
     bool start();
     bool pause();
@@ -41,8 +56,12 @@ public:
 
 private:
     bool resolveSymbols(QString* error);
-    bool initializeSynth(const QString& soundFontPath, QString* error);
+    bool initializeSynth(const QString& soundFontPath, QString* error,
+                         bool dynamicSampleLoading = true);
     bool loadSoundFontIntoActiveSynth(const QString& soundFontPath, QString* error);
+    bool loadIntoSynth(const QString& soundFontPath, int resetPresets, int* soundFontId,
+                       QString* error);
+    void updateFormatCapability(SoundFontFormat format, bool loaded, const QStringList& logs);
     void release();
 
     QLibrary m_library;
@@ -51,11 +70,16 @@ private:
     fluid_audio_driver_t* m_driver = nullptr;
     int m_soundFontId = -1;
     bool m_loaded = false;
+    FluidSynthCapabilities m_capabilities;
 
     using NewSettings = fluid_settings_t* (*)();
     using DeleteSettings = void (*)(fluid_settings_t*);
     using SettingsSetNum = int (*)(fluid_settings_t*, const char*, double);
+    using SettingsSetInt = int (*)(fluid_settings_t*, const char*, int);
     using SettingsSetStr = int (*)(fluid_settings_t*, const char*, const char*);
+    using FluidLogFunction = void (*)(int, const char*, void*);
+    using SetLogFunction = FluidLogFunction (*)(int, FluidLogFunction, void*);
+    using VersionString = const char* (*)();
     using NewSynth = fluid_synth_t* (*)(fluid_settings_t*);
     using DeleteSynth = int (*)(fluid_synth_t*);
     using NewAudioDriver = fluid_audio_driver_t* (*)(fluid_settings_t*, fluid_synth_t*);
@@ -74,7 +98,10 @@ private:
     NewSettings m_newSettings = nullptr;
     DeleteSettings m_deleteSettings = nullptr;
     SettingsSetNum m_settingsSetNum = nullptr;
+    SettingsSetInt m_settingsSetInt = nullptr;
     SettingsSetStr m_settingsSetStr = nullptr;
+    SetLogFunction m_setLogFunction = nullptr;
+    VersionString m_versionString = nullptr;
     NewSynth m_newSynth = nullptr;
     DeleteSynth m_deleteSynth = nullptr;
     NewAudioDriver m_newAudioDriver = nullptr;

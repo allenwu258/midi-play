@@ -2,6 +2,7 @@
 
 #include "infrastructure/audio/fluidsynthengine.h"
 #include "infrastructure/audio/fluidsynthaudioservice.h"
+#include "infrastructure/audio/soundfontinspector.h"
 #include "infrastructure/audio/threadedplaybackaudioservice.h"
 #include "infrastructure/readers/musicxmlreaderadapter.h"
 #include "infrastructure/readers/midireaderadapter.h"
@@ -134,7 +135,7 @@ void PlayerApplicationService::requestSoundFontLoad(const QString& path)
     }
 
     QString normalizedPath;
-    if (!validateSoundFontFile(path, &normalizedPath)) {
+    if (!normalizeSoundFontPath(path, &normalizedPath)) {
         return;
     }
 
@@ -199,12 +200,36 @@ bool PlayerApplicationService::loadSoundFontInternal(const QString& path, bool c
 bool PlayerApplicationService::validateSoundFontFile(const QString& path,
                                                      QString* normalizedPath)
 {
+    QString normalized;
+    if (!normalizeSoundFontPath(path, &normalized)) {
+        return false;
+    }
+
+    QString inspectionError;
+    const auto inspection = audio::SoundFontInspector::inspect(normalized,
+                                                                &inspectionError);
+    if (!inspection.validRiffContainer) {
+        reportSoundFontFailure(inspectionError.isEmpty()
+            ? QStringLiteral("音源文件容器无效: %1").arg(path) : inspectionError);
+        return false;
+    }
+
+    if (normalizedPath) {
+        *normalizedPath = normalized;
+    }
+    return true;
+}
+
+bool PlayerApplicationService::normalizeSoundFontPath(const QString& path,
+                                                      QString* normalizedPath)
+{
     const QFileInfo soundFontInfo(path);
     if (path.trimmed().isEmpty() || !soundFontInfo.exists() || !soundFontInfo.isFile()
         || !soundFontInfo.isReadable()) {
         reportSoundFontFailure(QStringLiteral("无法读取音源文件: %1").arg(path));
         return false;
     }
+
     const QString suffix = soundFontInfo.suffix().toLower();
     if (suffix != QStringLiteral("sf2") && suffix != QStringLiteral("sf3")) {
         reportSoundFontFailure(QStringLiteral("不支持的音源文件类型: %1").arg(suffix));
