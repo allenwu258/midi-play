@@ -11,8 +11,7 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
 
-qt_add_executable(midi_play
-    src/main.cpp
+set(MIDI_PLAY_COMMON_SOURCES
     src/app/playerapplicationservice.h
     src/app/playerapplicationservice.cpp
     src/app/isettingsstore.h
@@ -121,17 +120,27 @@ qt_add_executable(midi_play
     src/presentation/visualization/fallingnotesview.cpp
 )
 
-target_include_directories(midi_play PRIVATE src)
-target_link_libraries(midi_play PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
+add_library(midi_play_core STATIC ${MIDI_PLAY_COMMON_SOURCES})
+target_include_directories(midi_play_core PUBLIC src)
+target_link_libraries(midi_play_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
+
+qt_add_executable(midi_play src/main.cpp)
+target_link_libraries(midi_play PRIVATE midi_play_core)
+
+qt_add_executable(midi_play_cli src/cli/main.cpp)
+target_link_libraries(midi_play_cli PRIVATE midi_play_core)
+set_target_properties(midi_play PROPERTIES WIN32_EXECUTABLE TRUE)
 
 set(DEFAULT_SF2 "${CMAKE_CURRENT_SOURCE_DIR}/assets/midisound.sf2")
 if (EXISTS "${DEFAULT_SF2}")
-    add_custom_command(TARGET midi_play POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:midi_play>/assets"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${DEFAULT_SF2}"
-            "$<TARGET_FILE_DIR:midi_play>/assets/midisound.sf2")
+    foreach (runtime_target IN ITEMS midi_play midi_play_cli)
+        add_custom_command(TARGET ${runtime_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:${runtime_target}>/assets"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${DEFAULT_SF2}"
+                "$<TARGET_FILE_DIR:${runtime_target}>/assets/midisound.sf2")
+    endforeach()
 endif()
 
 set(FLUIDSYNTH_DLL "" CACHE FILEPATH "FluidSynth runtime DLL to copy beside the executable")
@@ -144,12 +153,14 @@ if (NOT FLUIDSYNTH_DLL AND WIN32 AND VCPKG_INSTALLED_DIR)
     set(FLUIDSYNTH_DLL "${VCPKG_INSTALLED_DIR}/x64-windows/bin/libfluidsynth-3.dll")
 endif()
 if (EXISTS "${FLUIDSYNTH_DLL}")
-    add_custom_command(TARGET midi_play POST_BUILD
-        COMMAND ${CMAKE_COMMAND}
-            "-DSOURCE_LIBRARY=${FLUIDSYNTH_DLL}"
-            "-DDESTINATION_DIR=$<TARGET_FILE_DIR:midi_play>"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployFluidSynthRuntime.cmake"
-        VERBATIM)
+    foreach (runtime_target IN ITEMS midi_play midi_play_cli)
+        add_custom_command(TARGET ${runtime_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                "-DSOURCE_LIBRARY=${FLUIDSYNTH_DLL}"
+                "-DDESTINATION_DIR=$<TARGET_FILE_DIR:${runtime_target}>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployFluidSynthRuntime.cmake"
+            VERBATIM)
+    endforeach()
 elseif (WIN32)
     message(STATUS
         "FluidSynth runtime deployment disabled: set FLUIDSYNTH_DLL or VCPKG_ROOT "
@@ -157,11 +168,11 @@ elseif (WIN32)
 endif()
 
 if (WIN32)
-    target_compile_definitions(midi_play PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_definitions(midi_play_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 include(GNUInstallDirs)
-install(TARGETS midi_play RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS midi_play midi_play_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if (EXISTS "${DEFAULT_SF2}")
     install(FILES "${DEFAULT_SF2}" DESTINATION "${CMAKE_INSTALL_BINDIR}/assets")
 endif()
