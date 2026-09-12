@@ -375,6 +375,7 @@ void FallingNotesVulkanRenderer::startNextFrame()
 {
     VkCommandBuffer command = m_window->currentCommandBuffer();
     auto& frame = m_frames[size_t(m_window->currentFrame())];
+    const auto state = m_window->sceneState();
     // A failed or lost device must not receive further render-pass commands.
     // QVulkanWindow still requires frameReady() to release the frame slot.
     if (m_failed || !m_device || !m_df) {
@@ -384,7 +385,6 @@ void FallingNotesVulkanRenderer::startNextFrame()
     }
     if (!m_failed) {
         try {
-            const auto state = m_window->sceneState();
             m_scene.prepare(state, m_window->size(), m_window->devicePixelRatio(), m_window->sceneFont());
             if (frame.notesRevision != m_scene.notesRevision()) {
                 reserve(frame.notes, VkDeviceSize(m_scene.notes().size()) * sizeof(VulkanQuad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -409,10 +409,10 @@ void FallingNotesVulkanRenderer::startNextFrame()
     m_df->vkCmdBeginRenderPass(command, &begin, VK_SUBPASS_CONTENTS_INLINE);
     if (!m_failed && m_pipeline) {
         const auto& g = m_scene.geometry();
-        const auto state = m_window->sceneState();
-        FrameConstants constants {float(m_window->width()), float(m_window->height()),
+        const float dpr = float(m_window->devicePixelRatio());
+        FrameConstants constants {float(m_window->width()) * dpr, float(m_window->height()) * dpr,
             float((state.transportPositionUs - m_scene.timeOriginUs())/1'000'000.0), float(g.strikeLineY),
-            float(g.pixelsPerMicrosecond*1'000'000), float(g.fallingRect.top()), float(g.fallingRect.bottom()), float(m_window->devicePixelRatio())};
+            float(g.pixelsPerMicrosecond*1'000'000), float(g.fallingRect.top()), float(g.fallingRect.bottom()), dpr};
         VkViewport viewport {0, 0, float(physical.width()), float(physical.height()), 0, 1};
         VkRect2D scissor {{0, 0}, begin.renderArea.extent};
         m_df->vkCmdSetViewport(command, 0, 1, &viewport);

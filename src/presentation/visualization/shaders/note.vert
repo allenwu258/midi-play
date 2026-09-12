@@ -53,5 +53,6 @@ void main() {
     texcoord=uv.xy+corner*uv.zw;
     shape=vec4(r.zw,stroke,kind);
     flags=options;
-    gl_Position=vec4(world.x/frame.width*2-1,world.y/frame.height*2-1,0,1);
+    vec2 physicalWorld = world * frame.dpr;
+    gl_Position=vec4(physicalWorld.x/frame.width*2-1,physicalWorld.y/frame.height*2-1,0,1);
 }

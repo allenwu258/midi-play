@@ -24,6 +24,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         if (m_chart) m_index.rebuild(m_chart->notes());
         m_window.reset();
         m_overlay.setChart(m_chart);
+        m_timeOriginUs = 0;
     }
     if (layoutChanged) {
         m_size = size;
@@ -63,7 +64,6 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
 void VulkanScene::rebuildNotes(const midi_play::visualization::PlaybackSceneState& state)
 {
     ++m_notesRevision;
-    m_timeOriginUs = state.transportPositionUs;
     m_notes.clear();
     if (!m_chart) return;
     // Preserve the renderer's tails/body/attack/tremolo layer ordering.
