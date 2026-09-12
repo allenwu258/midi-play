@@ -1,10 +1,13 @@
 #include "fallingnotesview.h"
+#include "fallingnotesvulkanwindow.h"
 
 #include <QHideEvent>
 #include <QEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
+#include <QVBoxLayout>
+#include <QDebug>
 
 #include <algorithm>
 #include <cmath>
@@ -35,6 +38,7 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
     m_geometryDirty = true;
     m_frameStateDirty = true;
     m_staticKeyboardDirty = true;
+    if (m_vulkanWindow) m_vulkanWindow->setChart(m_state.chart);
     update();
 }
 
@@ -43,6 +47,7 @@ void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs
     m_state.transportPositionUs = std::clamp<qint64>(positionUs, 0, std::max<qint64>(0, durationUs));
     m_state.durationUs = std::max<qint64>(0, durationUs);
     m_frameStateDirty = true;
+    if (m_vulkanWindow) m_vulkanWindow->setTransportPosition(m_state.transportPositionUs, m_state.durationUs);
     // PlaybackController is the single UI frame clock. Every published
     // transport sample invalidates this view; the Qt event loop coalesces
     // multiple update requests into one paint event when the UI is busy.
@@ -53,6 +58,7 @@ void FallingNotesView::setTransportState(midi_play::playback::State state)
 {
     m_state.transportState = state;
     m_frameStateDirty = true;
+    if (m_vulkanWindow) m_vulkanWindow->setTransportState(state);
     update();
 }
 
@@ -60,6 +66,7 @@ void FallingNotesView::setLoading(bool loading)
 {
     m_state.loading = loading;
     if (loading) m_state.errorMessage.clear();
+    if (m_vulkanWindow) m_vulkanWindow->setLoading(loading);
     update();
 }
 
@@ -67,12 +74,82 @@ void FallingNotesView::setErrorMessage(const QString& message)
 {
     m_state.errorMessage = message;
     m_state.loading = false;
+    if (m_vulkanWindow) m_vulkanWindow->setErrorMessage(message);
     update();
+}
+
+FallingNotesView::~FallingNotesView()
+{
+    destroyVulkanView();
+}
+
+void FallingNotesView::setGraphicsMode(midi_play::settings::GraphicsMode mode)
+{
+    const auto normalized = midi_play::settings::normalizeGraphicsMode(mode);
+    if (m_graphicsMode == normalized && (normalized == midi_play::settings::GraphicsMode::Traditional || m_vulkanWindow)) return;
+    m_graphicsMode = normalized;
+    if (normalized == midi_play::settings::GraphicsMode::VulkanExperimental) {
+        if (!createVulkanView()) {
+            m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
+            qWarning() << "Vulkan view unavailable; keeping traditional renderer";
+        }
+    } else {
+        destroyVulkanView();
+    }
+    update();
+}
+
+bool FallingNotesView::createVulkanView()
+{
+    if (m_vulkanWindow) return true;
+    m_vulkanInstance = std::make_unique<QVulkanInstance>();
+    if (!m_vulkanInstance->create()) {
+        m_vulkanInstance.reset();
+        return false;
+    }
+    auto* window = new FallingNotesVulkanWindow();
+    window->setVulkanInstance(m_vulkanInstance.get());
+    m_vulkanContainer = QWidget::createWindowContainer(window, this);
+    if (!m_vulkanContainer) {
+        delete window;
+        m_vulkanInstance.reset();
+        return false;
+    }
+    m_vulkanContainer->setFocusPolicy(Qt::StrongFocus);
+    if (!layout()) {
+        auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(0, 0, 0, 0);
+    }
+    layout()->addWidget(m_vulkanContainer);
+    m_vulkanWindow = window;
+    connect(window, &FallingNotesVulkanWindow::initializationFailed, this,
+            [this](const QString& message) {
+                qWarning() << message;
+                QMetaObject::invokeMethod(this, [this] { setGraphicsMode(midi_play::settings::GraphicsMode::Traditional); }, Qt::QueuedConnection);
+            }, Qt::QueuedConnection);
+    m_vulkanWindow->setSceneFont(font());
+    m_vulkanWindow->setChart(m_state.chart);
+    m_vulkanWindow->setTransportPosition(m_state.transportPositionUs, m_state.durationUs);
+    m_vulkanWindow->setTransportState(m_state.transportState);
+    m_vulkanWindow->setErrorMessage(m_state.errorMessage);
+    m_vulkanWindow->setLoading(m_state.loading);
+    m_vulkanWindow->show();
+    return true;
+}
+
+void FallingNotesView::destroyVulkanView()
+{
+    if (!m_vulkanContainer) return;
+    m_vulkanWindow = nullptr;
+    delete m_vulkanContainer;
+    m_vulkanContainer = nullptr;
+    m_vulkanInstance.reset();
 }
 
 void FallingNotesView::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
+    if (m_vulkanWindow) return;
     if (m_geometryDirty) {
         m_geometry = m_layoutEngine.layout(size(), m_state.chart.get(), m_state.lookAheadUs);
         m_geometryDirty = false;

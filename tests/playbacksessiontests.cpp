@@ -188,6 +188,35 @@ void testVisualizationRefreshRateSettingsNormalizeInts()
             "custom FPS must use a nanosecond period without millisecond truncation");
 }
 
+void testGraphicsModeSettings()
+{
+    require(midi_play::settings::graphicsModeFromPersistentValue(0)
+                == midi_play::settings::GraphicsMode::Traditional,
+            "graphics mode zero must select the traditional renderer");
+    require(midi_play::settings::graphicsModeFromPersistentValue(1)
+                == midi_play::settings::GraphicsMode::VulkanExperimental,
+            "graphics mode one must select Vulkan experimental renderer");
+    require(midi_play::settings::graphicsModeFromPersistentValue(99)
+                == midi_play::settings::GraphicsMode::Traditional,
+            "unknown graphics modes must fall back to traditional renderer");
+
+    auto store = std::make_unique<MemorySettingsStore>();
+    auto* rawStore = store.get();
+    midi_play::app::SettingsService service(std::move(store));
+    int changes = 0;
+    QObject::connect(&service, &midi_play::app::SettingsService::graphicsModeChanged,
+                     [&changes](midi_play::settings::GraphicsMode) { ++changes; });
+    service.load();
+    service.setGraphicsMode(midi_play::settings::GraphicsMode::VulkanExperimental);
+    require(service.graphicsMode() == midi_play::settings::GraphicsMode::VulkanExperimental,
+            "graphics mode changes must apply immediately");
+    require(changes == 1 && rawStore->saveCount == 1,
+            "graphics mode changes must emit and persist exactly once");
+    require(rawStore->savedSettings.graphicsMode
+                == midi_play::settings::GraphicsMode::VulkanExperimental,
+            "persisted settings must retain Vulkan graphics mode");
+}
+
 void testTitleBarModePlatformPolicy()
 {
     require(midi_play::settings::normalizeTitleBarMode(
@@ -768,6 +797,7 @@ int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
     testVisualizationRefreshRateSettingsNormalizeInts();
+    testGraphicsModeSettings();
     testTitleBarModePlatformPolicy();
     testSettingsServicePersistsTitleBarMode();
     testSettingsServicePersistsAndResetsSoundFont();

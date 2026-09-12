@@ -36,6 +36,12 @@ struct PreparedNoteRenderData {
     bool hasTail = false;
     bool tremolo = false;
     bool validGeometry = false;
+    // Backend-neutral temporal payload consumed by both raster and GPU paths.
+    qint64 startUs = 0;
+    qint64 keyEndUs = 0;
+    qint64 audibleEndUs = 0;
+    quint64 instanceId = 0;
+    quint32 flags = 0;
 };
 
 // Presentation-side immutable data derived from a VisualChart. Styles are

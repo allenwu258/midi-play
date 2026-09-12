@@ -187,6 +187,11 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
 
     m_visualization = new visualization::FallingNotesView(central);
     root->addWidget(m_visualization, 1);
+    if (m_settingsService) {
+        m_visualization->setGraphicsMode(m_settingsService->graphicsMode());
+        connect(m_settingsService, &app::SettingsService::graphicsModeChanged,
+                m_visualization, &visualization::FallingNotesView::setGraphicsMode);
+    }
 
     auto* transport = new QWidget(central);
     transport->setObjectName(QStringLiteral("transportBar"));

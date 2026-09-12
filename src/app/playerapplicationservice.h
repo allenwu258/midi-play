@@ -30,6 +30,8 @@ public slots:
     bool loadSoundFont(const QString& path);
     void requestSoundFontLoad(const QString& path);
     void setVisualizationRefreshRate(int refreshRate);
+    void setGraphicsMode(settings::GraphicsMode mode);
+    settings::GraphicsMode graphicsMode() const noexcept { return m_graphicsMode; }
     void play();
     void pause();
     void stop();
@@ -45,6 +47,7 @@ signals:
     void positionChanged(qint64 position, qint64 duration);
     void playbackStateChanged(midi_play::playback::State state);
     void visualizationReady(midi_play::visualization::VisualChartPtr chart);
+    void graphicsModeChanged(midi_play::settings::GraphicsMode mode);
     void errorOccurred(const QString& message);
 
 private:
@@ -69,6 +72,7 @@ private:
     qint64 m_durationUs = 0;
     quint64 m_loadGeneration = 0;
     int m_visualizationRefreshRate = settings::kDefaultVisualizationRefreshRate;
+    settings::GraphicsMode m_graphicsMode = settings::kDefaultGraphicsMode;
 };
 
 } // namespace midi_play::app

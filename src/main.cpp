@@ -29,8 +29,11 @@ int main(int argc, char* argv[])
         std::move(settingsStore), defaultSoundFontPath);
     settingsService.load();
     service.setVisualizationRefreshRate(settingsService.visualizationRefreshRate());
+    service.setGraphicsMode(settingsService.graphicsMode());
     QObject::connect(&settingsService, &midi_play::app::SettingsService::visualizationRefreshRateChanged,
                      &service, &midi_play::app::PlayerApplicationService::setVisualizationRefreshRate);
+    QObject::connect(&settingsService, &midi_play::app::SettingsService::graphicsModeChanged,
+                     &service, &midi_play::app::PlayerApplicationService::setGraphicsMode);
     QObject::connect(&service, &midi_play::app::PlayerApplicationService::soundFontSelectionCommitted,
                      &settingsService, &midi_play::app::SettingsService::setSoundFontPath);
 

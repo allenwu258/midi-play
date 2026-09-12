@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/playback/playbacktypes.h"
+#include "domain/settings/graphicsmode.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "domain/visualization/visiblenoteindex.h"
 #include "domain/visualization/visiblenotewindowcache.h"
@@ -10,13 +11,18 @@
 #include <QImage>
 #include <QSize>
 #include <QWidget>
+#include <QVulkanInstance>
+#include <memory>
 
 namespace midi_play::presentation::visualization {
+
+class FallingNotesVulkanWindow;
 
 class FallingNotesView final : public QWidget {
     Q_OBJECT
 public:
     explicit FallingNotesView(QWidget* parent = nullptr);
+    ~FallingNotesView() override;
 
     QSize minimumSizeHint() const override { return {640, 440}; }
 
@@ -24,6 +30,7 @@ public slots:
     void setChart(midi_play::visualization::VisualChartPtr chart);
     void setTransportPosition(qint64 positionUs, qint64 durationUs);
     void setTransportState(midi_play::playback::State state);
+    void setGraphicsMode(midi_play::settings::GraphicsMode mode);
     void setLoading(bool loading);
     void setErrorMessage(const QString& message);
 
@@ -35,6 +42,8 @@ protected:
 private:
     void rebuildFrameState();
     void rebuildStaticKeyboard(qreal devicePixelRatio, const QRect& logicalRect);
+    bool createVulkanView();
+    void destroyVulkanView();
 
     midi_play::visualization::PlaybackSceneState m_state;
     midi_play::visualization::VisibleNoteIndex m_noteIndex;
@@ -49,6 +58,10 @@ private:
     bool m_geometryDirty = true;
     bool m_frameStateDirty = true;
     bool m_staticKeyboardDirty = true;
+    midi_play::settings::GraphicsMode m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
+    std::unique_ptr<QVulkanInstance> m_vulkanInstance;
+    FallingNotesVulkanWindow* m_vulkanWindow = nullptr;
+    QWidget* m_vulkanContainer = nullptr;
 };
 
 } // namespace midi_play::presentation::visualization

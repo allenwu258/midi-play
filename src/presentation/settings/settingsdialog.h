@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include "domain/settings/titlebarmode.h"
+#include "domain/settings/graphicsmode.h"
 
 class QComboBox;
 class QLabel;
@@ -25,10 +26,12 @@ private slots:
     void applyRefreshRateFromUi();
     void applyCustomRefreshRateFromUi();
     void applyTitleBarModeFromUi();
+    void applyGraphicsModeFromUi();
     void chooseSoundFont();
     void resetSoundFont();
     void updateRefreshRateSelection(int refreshRate);
     void updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode);
+    void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
     void updateSoundFontPath(const QString& path, bool usesDefault);
     void setSoundFontLoading(bool loading);
     void showSaveError(const QString& message);
@@ -40,6 +43,7 @@ private:
     app::PlayerApplicationService* m_playerService = nullptr;
     QComboBox* m_refreshRateCombo = nullptr;
     QComboBox* m_titleBarModeCombo = nullptr;
+    QComboBox* m_graphicsModeCombo = nullptr;
     QLabel* m_customRefreshRateLabel = nullptr;
     QSpinBox* m_customRefreshRateSpinBox = nullptr;
     QLineEdit* m_soundFontPathEdit = nullptr;

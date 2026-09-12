@@ -51,6 +51,12 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     result.visualizationRefreshRate =
         midi_play::settings::normalizeVisualizationRefreshRate(configuredRefreshRate);
 
+    const QVariant graphicsModeValue = file.value(QStringLiteral("General/graphicsMode"),
+                                                   midi_play::settings::graphicsModePersistentValue(
+                                                       midi_play::settings::kDefaultGraphicsMode));
+    result.graphicsMode = midi_play::settings::graphicsModeFromPersistentValue(
+        graphicsModeValue.toInt());
+
     const bool hasTitleBarMode = file.contains(QStringLiteral("General/titleBarMode"));
     const QVariant titleBarModeValue = file.value(QStringLiteral("General/titleBarMode"),
                                                   midi_play::settings::titleBarModePersistentValue(
@@ -108,6 +114,8 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
                   midi_play::settings::kSettingsSchemaVersion);
     file.setValue(QStringLiteral("General/visualizationRefreshRate"),
                   midi_play::settings::normalizeVisualizationRefreshRate(settings.visualizationRefreshRate));
+    file.setValue(QStringLiteral("General/graphicsMode"),
+                  midi_play::settings::graphicsModePersistentValue(settings.graphicsMode));
     file.setValue(QStringLiteral("General/titleBarMode"),
                   midi_play::settings::titleBarModePersistentValue(settings.titleBarMode));
     if (settings.soundFontPathOverride.isEmpty()) {

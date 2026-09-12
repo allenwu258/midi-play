@@ -261,6 +261,12 @@ void PlayerApplicationService::setVisualizationRefreshRate(int refreshRate)
     }
 }
 
+void PlayerApplicationService::setGraphicsMode(settings::GraphicsMode mode)
+{
+    m_graphicsMode = settings::normalizeGraphicsMode(mode);
+    emit graphicsModeChanged(m_graphicsMode);
+}
+
 void PlayerApplicationService::play() { if (m_controller) m_controller->play(); }
 void PlayerApplicationService::pause() { if (m_controller) m_controller->pause(); }
 void PlayerApplicationService::stop() { if (m_controller) m_controller->stop(); }

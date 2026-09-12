@@ -47,6 +47,16 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     initializeRefreshRateOptions();
     form->addRow(QStringLiteral("视觉刷新率"), m_refreshRateCombo);
 
+    m_graphicsModeCombo = new QComboBox(this);
+    m_graphicsModeCombo->setObjectName(QStringLiteral("graphicsModeCombo"));
+    m_graphicsModeCombo->addItem(QStringLiteral("传统 Qt 绘制"),
+                                 midi_play::settings::graphicsModePersistentValue(
+                                     midi_play::settings::GraphicsMode::Traditional));
+    m_graphicsModeCombo->addItem(QStringLiteral("Vulkan（实验）"),
+                                 midi_play::settings::graphicsModePersistentValue(
+                                     midi_play::settings::GraphicsMode::VulkanExperimental));
+    form->addRow(QStringLiteral("图形模式"), m_graphicsModeCombo);
+
     m_customRefreshRateLabel = new QLabel(QStringLiteral("自定义刷新率"), this);
     m_customRefreshRateSpinBox = new QSpinBox(this);
     m_customRefreshRateSpinBox->setObjectName(QStringLiteral("customRefreshRateSpinBox"));
@@ -136,10 +146,13 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         connect(m_customRefreshRateSpinBox, &QSpinBox::editingFinished,
                 this, &SettingsDialog::applyCustomRefreshRateFromUi);
         updateTitleBarModeSelection(m_settingsService->titleBarMode());
+        updateGraphicsModeSelection(m_settingsService->graphicsMode());
         updateSoundFontPath(m_settingsService->soundFontPath(),
                             m_settingsService->usesDefaultSoundFont());
         connect(m_titleBarModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyTitleBarModeFromUi);
+        connect(m_graphicsModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &SettingsDialog::applyGraphicsModeFromUi);
         connect(m_loadSoundFontButton, &QPushButton::clicked,
                 this, &SettingsDialog::chooseSoundFont);
         connect(m_resetSoundFontButton, &QPushButton::clicked,
@@ -148,6 +161,8 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::updateRefreshRateSelection);
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
                 this, &SettingsDialog::updateTitleBarModeSelection);
+        connect(m_settingsService, &app::SettingsService::graphicsModeChanged,
+                this, &SettingsDialog::updateGraphicsModeSelection);
         connect(m_settingsService, &app::SettingsService::soundFontPathChanged,
                 this, &SettingsDialog::updateSoundFontPath);
         connect(m_settingsService, &app::SettingsService::settingsSaveFailed,
@@ -161,6 +176,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     } else {
         m_refreshRateCombo->setEnabled(false);
         m_titleBarModeCombo->setEnabled(false);
+        m_graphicsModeCombo->setEnabled(false);
         showSaveError(QStringLiteral("设置服务不可用"));
     }
     if (!m_settingsService || !m_playerService) {
@@ -209,6 +225,15 @@ void SettingsDialog::applyTitleBarModeFromUi()
     m_errorLabel->hide();
     m_settingsService->setTitleBarMode(
         midi_play::settings::titleBarModeFromPersistentValue(value));
+}
+
+void SettingsDialog::applyGraphicsModeFromUi()
+{
+    if (!m_settingsService || !m_graphicsModeCombo) return;
+    const auto mode = midi_play::settings::graphicsModeFromPersistentValue(
+        m_graphicsModeCombo->currentData().toInt());
+    m_errorLabel->hide();
+    m_settingsService->setGraphicsMode(mode);
 }
 
 void SettingsDialog::chooseSoundFont()
@@ -272,6 +297,16 @@ void SettingsDialog::updateTitleBarModeSelection(midi_play::settings::TitleBarMo
 
     const QSignalBlocker blocker(m_titleBarModeCombo);
     m_titleBarModeCombo->setCurrentIndex(index);
+}
+
+void SettingsDialog::updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode)
+{
+    if (!m_graphicsModeCombo) return;
+    const int index = m_graphicsModeCombo->findData(
+        midi_play::settings::graphicsModePersistentValue(mode));
+    if (index < 0 || index == m_graphicsModeCombo->currentIndex()) return;
+    const QSignalBlocker blocker(m_graphicsModeCombo);
+    m_graphicsModeCombo->setCurrentIndex(index);
 }
 
 void SettingsDialog::updateSoundFontPath(const QString& path, bool usesDefault)

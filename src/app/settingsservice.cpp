@@ -23,6 +23,7 @@ SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store,
           : QDir::cleanPath(QFileInfo(defaultSoundFontPath).absoluteFilePath()))
 {
     qRegisterMetaType<midi_play::settings::TitleBarMode>();
+    qRegisterMetaType<midi_play::settings::GraphicsMode>();
 }
 
 QString SettingsService::soundFontPath() const
@@ -41,6 +42,7 @@ void SettingsService::load()
     loadedSettings.visualizationRefreshRate =
         settings::normalizeVisualizationRefreshRate(loadedSettings.visualizationRefreshRate);
     loadedSettings.titleBarMode = settings::normalizeTitleBarMode(loadedSettings.titleBarMode);
+    loadedSettings.graphicsMode = settings::normalizeGraphicsMode(loadedSettings.graphicsMode);
     loadedSettings.soundFontPathOverride =
         normalizeSoundFontPathOverride(loadedSettings.soundFontPathOverride);
     m_settings = loadedSettings;
@@ -59,6 +61,18 @@ void SettingsService::setVisualizationRefreshRate(int refreshRate)
     m_settings.visualizationRefreshRate = normalizedRefreshRate;
     emit visualizationRefreshRateChanged(normalizedRefreshRate);
 
+    persistSettings();
+}
+
+void SettingsService::setGraphicsMode(settings::GraphicsMode mode)
+{
+    const auto normalizedMode = settings::normalizeGraphicsMode(mode);
+    if (m_settings.graphicsMode == normalizedMode) {
+        return;
+    }
+
+    m_settings.graphicsMode = normalizedMode;
+    emit graphicsModeChanged(normalizedMode);
     persistSettings();
 }
 

@@ -143,6 +143,11 @@ void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPt
         prepared.styleIndex = styleIndex;
         prepared.hasTail = source.audibleEndUs > source.keyEndUs;
         prepared.tremolo = (source.flags & TremoloNote) != 0;
+        prepared.startUs = source.startUs;
+        prepared.keyEndUs = source.keyEndUs;
+        prepared.audibleEndUs = source.audibleEndUs;
+        prepared.instanceId = source.instanceId;
+        prepared.flags = source.flags;
     }
 }
 
