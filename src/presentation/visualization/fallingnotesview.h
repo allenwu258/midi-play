@@ -11,12 +11,16 @@
 #include <QImage>
 #include <QSize>
 #include <QWidget>
+#if MIDI_PLAY_HAS_VULKAN
 #include <QVulkanInstance>
+#endif
 #include <memory>
 
 namespace midi_play::presentation::visualization {
 
+#if MIDI_PLAY_HAS_VULKAN
 class FallingNotesVulkanWindow;
+#endif
 
 class FallingNotesView final : public QWidget {
     Q_OBJECT
@@ -42,8 +46,10 @@ protected:
 private:
     void rebuildFrameState();
     void rebuildStaticKeyboard(qreal devicePixelRatio, const QRect& logicalRect);
+#if MIDI_PLAY_HAS_VULKAN
     bool createVulkanView();
     void destroyVulkanView();
+#endif
 
     midi_play::visualization::PlaybackSceneState m_state;
     midi_play::visualization::VisibleNoteIndex m_noteIndex;
@@ -59,9 +65,11 @@ private:
     bool m_frameStateDirty = true;
     bool m_staticKeyboardDirty = true;
     midi_play::settings::GraphicsMode m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
+#if MIDI_PLAY_HAS_VULKAN
     std::unique_ptr<QVulkanInstance> m_vulkanInstance;
     FallingNotesVulkanWindow* m_vulkanWindow = nullptr;
     QWidget* m_vulkanContainer = nullptr;
+#endif
 };
 
 } // namespace midi_play::presentation::visualization

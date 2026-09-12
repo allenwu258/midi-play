@@ -10,27 +10,33 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
-find_package(Vulkan REQUIRED)
-find_program(GLSLANG_VALIDATOR glslangValidator
-    HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
-if (NOT GLSLANG_VALIDATOR)
-    message(FATAL_ERROR "glslangValidator is required to build Vulkan shaders")
+option(MIDI_PLAY_ENABLE_VULKAN "Build the experimental Vulkan renderer" ON)
+if (MIDI_PLAY_ENABLE_VULKAN)
+    find_package(Vulkan QUIET)
+    find_program(GLSLANG_VALIDATOR glslangValidator
+        HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
+    if (NOT Vulkan_FOUND OR NOT GLSLANG_VALIDATOR)
+        message(WARNING "Vulkan SDK or glslangValidator not found; building without Vulkan")
+        set(MIDI_PLAY_ENABLE_VULKAN OFF)
+    endif()
 endif()
 
-set(VULKAN_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/presentation/visualization/shaders")
-set(VULKAN_SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-vulkan-shaders")
-file(MAKE_DIRECTORY "${VULKAN_SHADER_BINARY_DIR}")
-set(VULKAN_SHADER_BINARIES)
-foreach(shader note.vert note.frag)
-    add_custom_command(
-        OUTPUT "${VULKAN_SHADER_BINARY_DIR}/${shader}.spv"
-        COMMAND "${GLSLANG_VALIDATOR}" -V "${VULKAN_SHADER_SOURCE_DIR}/${shader}"
-                -o "${VULKAN_SHADER_BINARY_DIR}/${shader}.spv"
-        DEPENDS "${VULKAN_SHADER_SOURCE_DIR}/${shader}"
-        VERBATIM)
-    list(APPEND VULKAN_SHADER_BINARIES "${VULKAN_SHADER_BINARY_DIR}/${shader}.spv")
-endforeach()
-add_custom_target(midi_play_vulkan_shaders DEPENDS ${VULKAN_SHADER_BINARIES})
+if (MIDI_PLAY_ENABLE_VULKAN)
+    set(VULKAN_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/presentation/visualization/shaders")
+    set(VULKAN_SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-vulkan-shaders")
+    file(MAKE_DIRECTORY "${VULKAN_SHADER_BINARY_DIR}")
+    set(VULKAN_SHADER_BINARIES)
+    foreach(shader note.vert note.frag)
+        add_custom_command(
+            OUTPUT "${VULKAN_SHADER_BINARY_DIR}/${shader}.spv"
+            COMMAND "${GLSLANG_VALIDATOR}" -V "${VULKAN_SHADER_SOURCE_DIR}/${shader}"
+                    -o "${VULKAN_SHADER_BINARY_DIR}/${shader}.spv"
+            DEPENDS "${VULKAN_SHADER_SOURCE_DIR}/${shader}"
+            VERBATIM)
+        list(APPEND VULKAN_SHADER_BINARIES "${VULKAN_SHADER_BINARY_DIR}/${shader}.spv")
+    endforeach()
+    add_custom_target(midi_play_vulkan_shaders DEPENDS ${VULKAN_SHADER_BINARIES})
+endif()
 
 set(MIDI_PLAY_COMMON_SOURCES
     src/app/playerapplicationservice.h
@@ -140,23 +146,33 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/visualization/rasterrenderpolicy.cpp
     src/presentation/visualization/fallingnotesview.h
     src/presentation/visualization/fallingnotesview.cpp
-    src/presentation/visualization/fallingnotesvulkanwindow.h
-    src/presentation/visualization/fallingnotesvulkanwindow.cpp
-    src/presentation/visualization/vulkanscene.h
-    src/presentation/visualization/vulkanscene.cpp
 )
+if (MIDI_PLAY_ENABLE_VULKAN)
+    list(APPEND MIDI_PLAY_COMMON_SOURCES
+        src/presentation/visualization/fallingnotesvulkanwindow.h
+        src/presentation/visualization/fallingnotesvulkanwindow.cpp
+        src/presentation/visualization/vulkanscene.h
+        src/presentation/visualization/vulkanscene.cpp)
+endif()
 
 add_library(midi_play_core STATIC ${MIDI_PLAY_COMMON_SOURCES})
-set_source_files_properties(${VULKAN_SHADER_BINARIES} PROPERTIES GENERATED TRUE)
-qt_add_resources(midi_play_core midi_play_vulkan_resources
-    PREFIX "/midi_play/shaders"
-    BASE "${VULKAN_SHADER_BINARY_DIR}"
-    FILES ${VULKAN_SHADER_BINARIES})
+if (MIDI_PLAY_ENABLE_VULKAN)
+    set_source_files_properties(${VULKAN_SHADER_BINARIES} PROPERTIES GENERATED TRUE)
+    qt_add_resources(midi_play_core midi_play_vulkan_resources
+        PREFIX "/midi_play/shaders"
+        BASE "${VULKAN_SHADER_BINARY_DIR}"
+        FILES ${VULKAN_SHADER_BINARIES})
+endif()
 target_include_directories(midi_play_core PUBLIC src)
 target_link_libraries(midi_play_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
-add_dependencies(midi_play_core midi_play_vulkan_shaders)
-target_link_libraries(midi_play_core PUBLIC Vulkan::Vulkan)
-target_include_directories(midi_play_core PUBLIC "${Vulkan_INCLUDE_DIRS}")
+if (MIDI_PLAY_ENABLE_VULKAN)
+    add_dependencies(midi_play_core midi_play_vulkan_shaders)
+    target_link_libraries(midi_play_core PUBLIC Vulkan::Vulkan)
+    target_include_directories(midi_play_core PUBLIC "${Vulkan_INCLUDE_DIRS}")
+    target_compile_definitions(midi_play_core PUBLIC MIDI_PLAY_HAS_VULKAN=1)
+else()
+    target_compile_definitions(midi_play_core PUBLIC MIDI_PLAY_HAS_VULKAN=0)
+endif()
 
 qt_add_executable(midi_play src/main.cpp)
 target_link_libraries(midi_play PRIVATE midi_play_core)

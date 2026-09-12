@@ -375,6 +375,13 @@ void FallingNotesVulkanRenderer::startNextFrame()
 {
     VkCommandBuffer command = m_window->currentCommandBuffer();
     auto& frame = m_frames[size_t(m_window->currentFrame())];
+    // A failed or lost device must not receive further render-pass commands.
+    // QVulkanWindow still requires frameReady() to release the frame slot.
+    if (m_failed || !m_device || !m_df) {
+        m_window->frameReady();
+        m_window->frameCompleted(false);
+        return;
+    }
     if (!m_failed) {
         try {
             const auto state = m_window->sceneState();

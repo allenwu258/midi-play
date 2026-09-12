@@ -1,12 +1,16 @@
 #include "fallingnotesview.h"
+#if MIDI_PLAY_HAS_VULKAN
 #include "fallingnotesvulkanwindow.h"
+#endif
 
 #include <QHideEvent>
 #include <QEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
+#if MIDI_PLAY_HAS_VULKAN
 #include <QVBoxLayout>
+#endif
 #include <QDebug>
 
 #include <algorithm>
@@ -80,12 +84,19 @@ void FallingNotesView::setErrorMessage(const QString& message)
 
 FallingNotesView::~FallingNotesView()
 {
+#if MIDI_PLAY_HAS_VULKAN
     destroyVulkanView();
+#endif
 }
 
 void FallingNotesView::setGraphicsMode(midi_play::settings::GraphicsMode mode)
 {
     const auto normalized = midi_play::settings::normalizeGraphicsMode(mode);
+#if !MIDI_PLAY_HAS_VULKAN
+    Q_UNUSED(normalized)
+    m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
+    return;
+#else
     if (m_graphicsMode == normalized && (normalized == midi_play::settings::GraphicsMode::Traditional || m_vulkanWindow)) return;
     m_graphicsMode = normalized;
     if (normalized == midi_play::settings::GraphicsMode::VulkanExperimental) {
@@ -97,8 +108,10 @@ void FallingNotesView::setGraphicsMode(midi_play::settings::GraphicsMode mode)
         destroyVulkanView();
     }
     update();
+#endif
 }
 
+#if MIDI_PLAY_HAS_VULKAN
 bool FallingNotesView::createVulkanView()
 {
     if (m_vulkanWindow) return true;
@@ -136,15 +149,22 @@ bool FallingNotesView::createVulkanView()
     m_vulkanWindow->show();
     return true;
 }
+#endif
 
+#if MIDI_PLAY_HAS_VULKAN
 void FallingNotesView::destroyVulkanView()
 {
     if (!m_vulkanContainer) return;
+    if (m_vulkanWindow) {
+        m_vulkanWindow->setTransportState(midi_play::playback::State::Paused);
+        m_vulkanWindow->hide();
+    }
     m_vulkanWindow = nullptr;
     delete m_vulkanContainer;
     m_vulkanContainer = nullptr;
     m_vulkanInstance.reset();
 }
+#endif
 
 void FallingNotesView::paintEvent(QPaintEvent* event)
 {
