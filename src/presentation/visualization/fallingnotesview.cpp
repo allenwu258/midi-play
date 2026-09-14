@@ -42,7 +42,9 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
     m_geometryDirty = true;
     m_frameStateDirty = true;
     m_staticKeyboardDirty = true;
+#if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setChart(m_state.chart);
+#endif
     update();
 }
 
@@ -51,7 +53,9 @@ void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs
     m_state.transportPositionUs = std::clamp<qint64>(positionUs, 0, std::max<qint64>(0, durationUs));
     m_state.durationUs = std::max<qint64>(0, durationUs);
     m_frameStateDirty = true;
+#if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setTransportPosition(m_state.transportPositionUs, m_state.durationUs);
+#endif
     // PlaybackController is the single UI frame clock. Every published
     // transport sample invalidates this view; the Qt event loop coalesces
     // multiple update requests into one paint event when the UI is busy.
@@ -62,7 +66,9 @@ void FallingNotesView::setTransportState(midi_play::playback::State state)
 {
     m_state.transportState = state;
     m_frameStateDirty = true;
+#if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setTransportState(state);
+#endif
     update();
 }
 
@@ -70,7 +76,9 @@ void FallingNotesView::setLoading(bool loading)
 {
     m_state.loading = loading;
     if (loading) m_state.errorMessage.clear();
+#if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setLoading(loading);
+#endif
     update();
 }
 
@@ -78,7 +86,9 @@ void FallingNotesView::setErrorMessage(const QString& message)
 {
     m_state.errorMessage = message;
     m_state.loading = false;
+#if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setErrorMessage(message);
+#endif
     update();
 }
 
@@ -169,7 +179,9 @@ void FallingNotesView::destroyVulkanView()
 void FallingNotesView::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
+#if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) return;
+#endif
     if (m_geometryDirty) {
         m_geometry = m_layoutEngine.layout(size(), m_state.chart.get(), m_state.lookAheadUs);
         m_geometryDirty = false;

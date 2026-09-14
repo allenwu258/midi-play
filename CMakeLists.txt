@@ -11,17 +11,34 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
 option(MIDI_PLAY_ENABLE_VULKAN "Build the experimental Vulkan renderer" ON)
+set(MIDI_PLAY_HAS_VULKAN OFF)
+set(MIDI_PLAY_VULKAN_STATUS "disabled by configuration")
 if (MIDI_PLAY_ENABLE_VULKAN)
-    find_package(Vulkan QUIET)
-    find_program(GLSLANG_VALIDATOR glslangValidator
-        HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
-    if (NOT Vulkan_FOUND OR NOT GLSLANG_VALIDATOR)
-        message(WARNING "Vulkan SDK or glslangValidator not found; building without Vulkan")
-        set(MIDI_PLAY_ENABLE_VULKAN OFF)
+    get_target_property(MIDI_PLAY_QT_GUI_FEATURES Qt6::Gui QT_ENABLED_PUBLIC_FEATURES)
+    if (NOT "vulkan" IN_LIST MIDI_PLAY_QT_GUI_FEATURES)
+        set(MIDI_PLAY_VULKAN_STATUS "Qt Gui was built without Vulkan support")
+    else()
+        find_package(Vulkan QUIET)
+        if (NOT Vulkan_FOUND)
+            set(MIDI_PLAY_VULKAN_STATUS "Vulkan SDK not found")
+        else()
+            find_program(GLSLANG_VALIDATOR glslangValidator
+                HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
+            if (NOT GLSLANG_VALIDATOR OR NOT EXISTS "${GLSLANG_VALIDATOR}")
+                set(MIDI_PLAY_VULKAN_STATUS "glslangValidator not found")
+            else()
+                set(MIDI_PLAY_HAS_VULKAN ON)
+                set(MIDI_PLAY_VULKAN_STATUS "enabled")
+            endif()
+        endif()
+    endif()
+    if (NOT MIDI_PLAY_HAS_VULKAN)
+        message(WARNING "${MIDI_PLAY_VULKAN_STATUS}; building with the traditional renderer only")
     endif()
 endif()
+message(STATUS "MIDI Play Vulkan: ${MIDI_PLAY_VULKAN_STATUS} (requested: ${MIDI_PLAY_ENABLE_VULKAN})")
 
-if (MIDI_PLAY_ENABLE_VULKAN)
+if (MIDI_PLAY_HAS_VULKAN)
     set(VULKAN_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/presentation/visualization/shaders")
     set(VULKAN_SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-vulkan-shaders")
     file(MAKE_DIRECTORY "${VULKAN_SHADER_BINARY_DIR}")
@@ -147,7 +164,7 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/visualization/fallingnotesview.h
     src/presentation/visualization/fallingnotesview.cpp
 )
-if (MIDI_PLAY_ENABLE_VULKAN)
+if (MIDI_PLAY_HAS_VULKAN)
     list(APPEND MIDI_PLAY_COMMON_SOURCES
         src/presentation/visualization/fallingnotesvulkanwindow.h
         src/presentation/visualization/fallingnotesvulkanwindow.cpp
@@ -156,7 +173,7 @@ if (MIDI_PLAY_ENABLE_VULKAN)
 endif()
 
 add_library(midi_play_core STATIC ${MIDI_PLAY_COMMON_SOURCES})
-if (MIDI_PLAY_ENABLE_VULKAN)
+if (MIDI_PLAY_HAS_VULKAN)
     set_source_files_properties(${VULKAN_SHADER_BINARIES} PROPERTIES GENERATED TRUE)
     qt_add_resources(midi_play_core midi_play_vulkan_resources
         PREFIX "/midi_play/shaders"
@@ -165,14 +182,14 @@ if (MIDI_PLAY_ENABLE_VULKAN)
 endif()
 target_include_directories(midi_play_core PUBLIC src)
 target_link_libraries(midi_play_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
-if (MIDI_PLAY_ENABLE_VULKAN)
+if (MIDI_PLAY_HAS_VULKAN)
     add_dependencies(midi_play_core midi_play_vulkan_shaders)
     target_link_libraries(midi_play_core PUBLIC Vulkan::Vulkan)
     target_include_directories(midi_play_core PUBLIC "${Vulkan_INCLUDE_DIRS}")
-    target_compile_definitions(midi_play_core PUBLIC MIDI_PLAY_HAS_VULKAN=1)
-else()
-    target_compile_definitions(midi_play_core PUBLIC MIDI_PLAY_HAS_VULKAN=0)
 endif()
+# This definition affects the public FallingNotesView layout and must reach
+# consumers and AUTOMOC with the same value as the library itself.
+target_compile_definitions(midi_play_core PUBLIC MIDI_PLAY_HAS_VULKAN=$<BOOL:${MIDI_PLAY_HAS_VULKAN}>)
 
 qt_add_executable(midi_play src/main.cpp)
 target_link_libraries(midi_play PRIVATE midi_play_core)
@@ -237,6 +254,15 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_presentation_tests tests/presentationtests.cpp)
+    target_link_libraries(midi_play_presentation_tests PRIVATE midi_play_core)
+    add_test(NAME presentation_backend_configuration
+        COMMAND midi_play_presentation_tests -platform offscreen)
+    if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        set_tests_properties(presentation_backend_configuration PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+    endif()
+
     add_executable(midi_play_soundfont_tests
         tests/soundfontinspectortests.cpp
         src/infrastructure/audio/soundfontinspector.h

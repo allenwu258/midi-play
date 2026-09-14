@@ -52,9 +52,14 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     m_graphicsModeCombo->addItem(QStringLiteral("传统 Qt 绘制"),
                                  midi_play::settings::graphicsModePersistentValue(
                                      midi_play::settings::GraphicsMode::Traditional));
+#if MIDI_PLAY_HAS_VULKAN
     m_graphicsModeCombo->addItem(QStringLiteral("Vulkan（实验）"),
                                  midi_play::settings::graphicsModePersistentValue(
                                      midi_play::settings::GraphicsMode::VulkanExperimental));
+#else
+    m_graphicsModeCombo->setEnabled(false);
+    m_graphicsModeCombo->setToolTip(QStringLiteral("此版本未包含 Vulkan，当前使用传统 Qt 绘制"));
+#endif
     form->addRow(QStringLiteral("图形模式"), m_graphicsModeCombo);
 
     m_customRefreshRateLabel = new QLabel(QStringLiteral("自定义刷新率"), this);
@@ -302,6 +307,10 @@ void SettingsDialog::updateTitleBarModeSelection(midi_play::settings::TitleBarMo
 void SettingsDialog::updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode)
 {
     if (!m_graphicsModeCombo) return;
+#if !MIDI_PLAY_HAS_VULKAN
+    // Display the available backend without overwriting the saved preference.
+    mode = midi_play::settings::GraphicsMode::Traditional;
+#endif
     const int index = m_graphicsModeCombo->findData(
         midi_play::settings::graphicsModePersistentValue(mode));
     if (index < 0 || index == m_graphicsModeCombo->currentIndex()) return;
