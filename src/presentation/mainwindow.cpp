@@ -98,6 +98,46 @@ QIcon windowControlIcon(WindowControlGlyph glyph)
     return QIcon(pixmap);
 }
 
+enum class TransportGlyph {
+    Play,
+    Pause,
+    Stop,
+};
+
+QIcon transportIcon(TransportGlyph glyph)
+{
+    constexpr int kIconSize = 26;
+    QIcon icon;
+    const auto makePixmap = [glyph, kIconSize](const QColor& color) {
+        QPixmap pixmap(kIconSize, kIconSize);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        switch (glyph) {
+        case TransportGlyph::Play: {
+            QPolygonF triangle;
+            triangle << QPointF(6.0, 3.0) << QPointF(22.0, 13.0) << QPointF(6.0, 23.0);
+            painter.drawPolygon(triangle);
+            break;
+        }
+        case TransportGlyph::Pause:
+            painter.drawRoundedRect(QRectF(5.0, 3.0, 6.0, 20.0), 1.5, 1.5);
+            painter.drawRoundedRect(QRectF(15.0, 3.0, 6.0, 20.0), 1.5, 1.5);
+            break;
+        case TransportGlyph::Stop:
+            painter.drawRoundedRect(QRectF(4.0, 4.0, 18.0, 18.0), 1.5, 1.5);
+            break;
+        }
+        return pixmap;
+    };
+    icon.addPixmap(makePixmap(QColor(QStringLiteral("#f7faf8"))), QIcon::Normal);
+    icon.addPixmap(makePixmap(QColor(QStringLiteral("#65706b"))), QIcon::Disabled);
+    icon.addPixmap(makePixmap(QColor(QStringLiteral("#ffffff"))), QIcon::Active);
+    return icon;
+}
+
 } // namespace
 
 MainWindow::MainWindow(app::PlayerApplicationService* service,
@@ -215,12 +255,19 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     auto* controlRow = new QHBoxLayout();
     controlRow->setContentsMargins(0, 0, 0, 0);
     controlRow->setSpacing(6);
-    m_playButton = toolButton(transport, style()->standardIcon(QStyle::SP_MediaPlay), QStringLiteral("播放"),
+    m_playButton = toolButton(transport, transportIcon(TransportGlyph::Play), QStringLiteral("播放"),
                               QStringLiteral("播放"), true);
-    m_pauseButton = toolButton(transport, style()->standardIcon(QStyle::SP_MediaPause), QStringLiteral("暂停"),
+    m_pauseButton = toolButton(transport, transportIcon(TransportGlyph::Pause), QStringLiteral("暂停"),
                                QStringLiteral("暂停"), true);
-    m_stopButton = toolButton(transport, style()->standardIcon(QStyle::SP_MediaStop), QStringLiteral("停止"),
+    m_stopButton = toolButton(transport, transportIcon(TransportGlyph::Stop), QStringLiteral("停止"),
                               QStringLiteral("停止并回到开头"), true);
+    m_playButton->setObjectName(QStringLiteral("playButton"));
+    m_pauseButton->setObjectName(QStringLiteral("pauseButton"));
+    m_stopButton->setObjectName(QStringLiteral("stopButton"));
+    for (auto* button : {m_playButton, m_pauseButton, m_stopButton}) {
+        button->setFixedSize(48, 44);
+        button->setIconSize(QSize(26, 26));
+    }
     controlRow->addWidget(m_playButton);
     controlRow->addWidget(m_pauseButton);
     controlRow->addWidget(m_stopButton);
@@ -249,6 +296,20 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         QToolButton:hover { background: #292c2f; border-color: #3a3e41; }
         QToolButton:pressed { background: #34383b; }
         QToolButton:disabled { color: #676c68; }
+        QToolButton#playButton, QToolButton#pauseButton, QToolButton#stopButton {
+            border: 1px solid #4b5350; border-radius: 6px; padding: 5px;
+        }
+        QToolButton#playButton { background: #176b56; }
+        QToolButton#playButton:hover { background: #21866b; border-color: #48c9a2; }
+        QToolButton#playButton:pressed { background: #0f5141; }
+        QToolButton#pauseButton { background: #76581d; }
+        QToolButton#pauseButton:hover { background: #967126; border-color: #f2c45c; }
+        QToolButton#pauseButton:pressed { background: #5d4517; }
+        QToolButton#stopButton { background: #71323a; }
+        QToolButton#stopButton:hover { background: #91434c; border-color: #f07b86; }
+        QToolButton#stopButton:pressed { background: #56252c; }
+        QToolButton#playButton:disabled, QToolButton#pauseButton:disabled,
+        QToolButton#stopButton:disabled { background: #24282a; border-color: #363b3b; }
         QToolButton#windowCloseButton:hover { background: #c42b2b; border-color: #c42b2b; }
         QToolButton#windowCloseButton:pressed { background: #a51f1f; border-color: #a51f1f; }
         QSlider::groove:horizontal { height: 4px; background: #393d3f; }
