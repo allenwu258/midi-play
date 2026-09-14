@@ -170,6 +170,10 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
             const qreal y = g.strikeLineY - (it->timeUs - state.transportPositionUs) * g.pixelsPerMicrosecond;
             if (y < g.fallingRect.top() || y >= g.fallingRect.bottom()) continue;
             rect(m_background, {left,y,right-left,it->measureStart ? 2.0 : 1.0}, it->measureStart ? m_theme.measureLine : m_theme.beatLine);
+            // Use a dedicated primitive kind for moving horizontal lines.
+            // The negative kind is independent from the ellipse/texture flags
+            // in options and is rasterized with analytic edge coverage.
+            m_background.back().times[3] = -1.0f;
             if (it->measureStart) text(m_background, it->measureLabel, gridFont, {4,y-10,left-9,20}, m_theme.subtleText, Qt::AlignRight|Qt::AlignVCenter);
         }
     }

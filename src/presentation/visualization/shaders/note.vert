@@ -23,6 +23,13 @@ void main() {
     vec2 corner = corners[gl_VertexIndex];
     vec4 r = rectangle;
     float kind = times.w;
+    if (kind < 0.0) {
+        // Expand by half a physical pixel on both sides. The fragment shader
+        // then computes smooth coverage while the line remains continuously
+        // positioned in logical coordinates.
+        r.y -= 0.5 / frame.dpr;
+        r.w += 1.0 / frame.dpr;
+    }
     float stroke = options.x;
     color = fill;
     edge = border;

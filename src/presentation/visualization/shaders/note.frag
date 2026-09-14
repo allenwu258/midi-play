@@ -16,7 +16,12 @@ layout(location=0) out vec4 outputColor;
 void main() {
     if (shape.w>0 && (world.y<frame.clipTop || world.y>=frame.clipBottom)) discard;
     vec4 c=color;
-    if (flags.z>0) {
+    if (shape.w < 0.0) {
+        float feather = max(0.5 / frame.dpr, 0.001);
+        float edgeDistance = min(local.y, shape.y - local.y);
+        float coverage = smoothstep(0.0, feather, edgeDistance);
+        c.a *= coverage;
+    } else if (flags.z>0) {
         c.a *= texture(atlas,texcoord).a;
     } else if (flags.w>0) {
         vec2 normalized=local/shape.xy*2-1;
