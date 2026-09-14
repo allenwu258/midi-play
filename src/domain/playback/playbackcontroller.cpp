@@ -34,6 +34,11 @@ bool PlaybackController::setDocument(std::shared_ptr<const music::MusicDocument>
         if (error) *error = QStringLiteral("无法创建无效的播放会话");
         return false;
     }
+    auto newSession = std::make_unique<PlaybackSession>(std::move(document), std::move(audioService));
+    if (!newSession->setPlaybackRatePercent(m_playbackRatePercent)) {
+        if (error) *error = QStringLiteral("此音频后端尚不支持播放变速");
+        return false;
+    }
     if (m_session) {
         QMetaObject::invokeMethod(m_session.get(), "stop", Qt::BlockingQueuedConnection);
         m_playbackThread.quit();
@@ -42,7 +47,8 @@ bool PlaybackController::setDocument(std::shared_ptr<const music::MusicDocument>
     }
     m_positionTimer.stop();
     m_positionThrottler.reset();
-    m_session = std::make_unique<PlaybackSession>(std::move(document), std::move(audioService));
+    m_supportsPlaybackRate = newSession->supportsPlaybackRate();
+    m_session = std::move(newSession);
     m_playbackThread.start();
     m_session->moveToThread(&m_playbackThread);
     connect(m_session.get(), &PlaybackSession::stateChanged, this,
@@ -104,6 +110,27 @@ void PlaybackController::setPositionPublishRate(int refreshRate)
     m_positionPublishRate = normalizedRefreshRate;
     m_positionTimer.setInterval(settings::visualizationRefreshPeriod(m_positionPublishRate));
     flushPositionUpdate();
+}
+
+bool PlaybackController::setPlaybackRatePercent(int percent)
+{
+    const int normalized = midi_play::settings::normalizePlaybackRatePercent(percent);
+    if (normalized == m_playbackRatePercent) return true;
+    if (m_session && !m_supportsPlaybackRate) {
+        emit errorOccurred(QStringLiteral("此音频后端尚不支持播放变速"));
+        return false;
+    }
+    m_playbackRatePercent = normalized;
+    if (!m_session) return true;
+
+    // Slider edits must not block the GUI behind a SoundFont load. Posting to
+    // the session preserves ordering with play/pause/seek and cancels safely
+    // when that session is destroyed. Do not capture the replaceable member.
+    auto* session = m_session.get();
+    QMetaObject::invokeMethod(session, [session, normalized] {
+        session->setPlaybackRatePercent(normalized);
+    }, Qt::QueuedConnection);
+    return true;
 }
 
 void PlaybackController::play() { if (m_session) QMetaObject::invokeMethod(m_session.get(), "play", Qt::QueuedConnection); }

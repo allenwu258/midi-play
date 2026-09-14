@@ -176,6 +176,23 @@ void PlaybackSession::seek(qint64 microseconds)
     }
 }
 
+bool PlaybackSession::setPlaybackRatePercent(int percent)
+{
+    const int normalized = midi_play::settings::normalizePlaybackRatePercent(percent);
+    if (m_playbackRatePercent == normalized) return true;
+    if (!supportsPlaybackRate()) return false;
+
+    // Keep scheduler cursors, note state and generation intact. Both MIDI
+    // dispatch and visualization continue to consume the same musical time.
+    m_playbackRatePercent = normalized;
+    m_playHead.setRate(static_cast<double>(normalized) / 100.0);
+    if (m_state == State::Playing) {
+        m_positionUs = m_playHead.positionUs();
+        emitPosition();
+    }
+    return true;
+}
+
 void PlaybackSession::onTimer()
 {
     if (m_state != State::Playing || !m_document) {

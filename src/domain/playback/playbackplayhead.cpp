@@ -38,6 +38,11 @@ void PlaybackPlayHead::seek(qint64 positionUs)
     m_audioPositionUs = resolved;
 }
 
+void PlaybackPlayHead::setRate(double rate)
+{
+    m_clock.setRate(rate);
+}
+
 void PlaybackPlayHead::setAudioPositionUs(qint64 positionUs)
 {
     if (positionUs < 0) {

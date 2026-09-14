@@ -1,5 +1,6 @@
 #include "domain/playback/iplaybackaudioservice.h"
 #include "domain/playback/playbacksession.h"
+#include "domain/playback/playbackclock.h"
 #include "domain/playback/playbackpositionthrottler.h"
 #include "domain/playback/playbackcontext.h"
 #include "domain/playback/playbackcontroller.h"
@@ -16,12 +17,14 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QSettings>
+#include <QSemaphore>
 #include <QThread>
 #include <QTemporaryDir>
 
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <limits>
 
 namespace {
 
@@ -39,6 +42,7 @@ using midi_play::playback::PlaybackEvent;
 using midi_play::playback::PlaybackEventKind;
 using midi_play::playback::PlaybackPositionThrottler;
 using midi_play::playback::PlaybackSession;
+using midi_play::playback::PlaybackClock;
 using midi_play::playback::State;
 using midi_play::settings::PlayerSettings;
 
@@ -791,6 +795,195 @@ void testPositionThrottlerUsesLatestSample()
     require(!throttler.takeLatest(snapshot), "reset must discard pending samples");
 }
 
+void testPlaybackClockRateChangeIsContinuous()
+{
+    PlaybackClock clock;
+    clock.start(100'000);
+    QThread::msleep(20);
+    QElapsedTimer changeTime;
+    changeTime.start();
+    const qint64 before = clock.positionUs();
+    clock.setRate(2.0);
+    const qint64 rebased = clock.positionUs();
+    require(rebased >= before && rebased - before <= changeTime.nsecsElapsed() / 500 + 2'000,
+            "changing playback rate must keep the clock position continuous");
+    for (const double rate : {2.0, 0.2, 1.25}) {
+        clock.setRate(rate);
+        QElapsedTimer wallTime;
+        wallTime.start();
+        const qint64 start = clock.positionUs();
+        QThread::msleep(30);
+        const qint64 delta = clock.positionUs() - start;
+        const qint64 expected = static_cast<qint64>(wallTime.nsecsElapsed() / 1000.0 * rate);
+        require(std::llabs(delta - expected) < 5'000,
+                "clock progress must follow the selected rate and actual elapsed wall time");
+    }
+
+    clock.pause(clock.positionUs());
+    const qint64 paused = clock.positionUs();
+    clock.setRate(0.5);
+    QThread::msleep(15);
+    require(clock.positionUs() == paused,
+            "changing rate while paused must not advance the clock");
+    clock.setRate(std::numeric_limits<double>::quiet_NaN());
+    clock.setRate(std::numeric_limits<double>::infinity());
+    clock.setRate(-1.0);
+    require(clock.rate() == 0.5, "invalid floating-point rates must leave the clock valid");
+    clock.start(std::numeric_limits<qint64>::max() - 100);
+    QThread::msleep(2);
+    require(clock.positionUs() == std::numeric_limits<qint64>::max(),
+            "scaled clock arithmetic must saturate rather than overflow");
+}
+
+void testPlaybackSessionRateChangePreservesAudioState()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    PlaybackSession session(testDocument(), std::move(audio));
+    session.play();
+    require(waitUntil([&] { return session.positionMicroseconds() > 20'000; }),
+            "session must advance before changing playback rate");
+    const int starts = recording->startCount;
+    const int pauses = recording->pauseCount;
+    const int flushes = recording->flushCount;
+    const qint64 before = session.positionMicroseconds();
+    session.setPlaybackRatePercent(200);
+    require(session.playbackRatePercent() == 200,
+            "session must expose the normalized playback rate");
+    require(recording->startCount == starts && recording->pauseCount == pauses
+                && recording->flushCount == flushes,
+            "changing playback rate must not restart or flush the audio service");
+    require(std::llabs(session.positionMicroseconds() - before) < 5'000,
+            "session rate change must keep the transport position continuous");
+    session.setPlaybackRatePercent(1);
+    require(session.playbackRatePercent() == 20,
+            "session must clamp playback rate to the 20 percent minimum");
+    session.pause();
+    const qint64 paused = session.positionMicroseconds();
+    session.setPlaybackRatePercent(250);
+    processEventsFor(20);
+    require(session.playbackRatePercent() == 200 && session.positionMicroseconds() == paused,
+            "upper bound normalization while paused must preserve the position");
+    session.seek(350'000);
+    require(session.positionMicroseconds() == 350'000 && session.state() == State::Paused,
+            "seek must continue to accept source music time at non-default speeds");
+    session.play();
+    require(waitUntil([&] { return session.positionMicroseconds() > 360'000; }),
+            "play must resume a rate-adjusted paused seek");
+    require(session.loadSoundFont(QStringLiteral("test.sf2"), nullptr)
+                && session.playbackRatePercent() == 200,
+            "SoundFont replacement must retain the selected rate");
+    session.stop();
+    require(session.playbackRatePercent() == 200 && session.positionMicroseconds() == 0,
+            "stop must reset position while retaining speed");
+    session.play();
+    session.seek(session.durationMicroseconds() - 10'000);
+    require(waitUntil([&] { return session.state() == State::Stopped; }),
+            "a rate-adjusted playhead must still stop at the end of the song");
+}
+
+void testRateChangesPreserveEventOrderAndPitch()
+{
+    auto document = std::make_shared<MusicDocument>();
+    document->tempos().push_back({0, 120.0, 0});
+    document->tempos().push_back({96, 60.0, 1});
+    document->setDuration(960);
+    Track track;
+    track.id = QStringLiteral("rate-test");
+    NoteEvent note;
+    note.noteId = 1;
+    note.start = 48; // 50 ms of music time.
+    note.duration = 144; // Ends at 300 ms, spanning the tempo change.
+    note.pitch = 64;
+    track.notes.push_back(note);
+    track.controlChanges.push_back({72, 0, 64, 127, 1});
+    track.controlChanges.push_back({240, 0, 64, 0, 2});
+    document->tracks().push_back(track);
+    document->rebuildMeasureGrid();
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    PlaybackSession session(document, std::move(audio));
+    session.setPlaybackRatePercent(200);
+    session.play();
+    require(waitUntil([&] { return containsNoteOn(recording->submittedEvents); }),
+            "200 percent playback must dispatch note-on");
+    const quint64 generation = recording->currentGeneration;
+    session.setPlaybackRatePercent(20);
+    processEventsFor(30);
+    session.setPlaybackRatePercent(125);
+    require(waitUntil([&] { return session.positionMicroseconds() >= 450'000; }, 2000),
+            "live rate changes must continue beyond note release and sustain release");
+
+    QVector<PlaybackEvent> relevant;
+    for (const auto& event : recording->submittedEvents) {
+        if (event.kind == PlaybackEventKind::NoteOn || event.kind == PlaybackEventKind::NoteOff
+            || (event.kind == PlaybackEventKind::ControlChange && event.controller == 64)) {
+            relevant.push_back(event);
+        }
+    }
+    require(relevant.size() == 4 && relevant[0].kind == PlaybackEventKind::NoteOn
+                && relevant[1].kind == PlaybackEventKind::ControlChange
+                && relevant[2].kind == PlaybackEventKind::NoteOff
+                && relevant[3].kind == PlaybackEventKind::ControlChange,
+            "changing speed must neither duplicate nor lose notes and sustain events");
+    require(relevant[0].pitch == 64 && relevant[2].pitch == 64
+                && relevant[0].timestampUs == 50'000 && relevant[2].timestampUs == 300'000,
+            "speed changes must preserve pitch and tempo-derived source timestamps");
+    require(recording->currentGeneration == generation && recording->flushCount == 0,
+            "live speed changes must keep the audio generation and sounding notes intact");
+    session.pause();
+}
+
+void testControllerRateChangesAreQueuedAndInherited()
+{
+    midi_play::playback::PlaybackController controller;
+    controller.setPlaybackRatePercent(150);
+    require(controller.setDocument(testDocument(), std::make_unique<RecordingAudioService>(), nullptr),
+            "controller must create a session with a preselected speed");
+    auto* session = controller.session();
+    int appliedRate = 0;
+    QMetaObject::invokeMethod(session, [&] { appliedRate = session->playbackRatePercent(); },
+                              Qt::BlockingQueuedConnection);
+    require(appliedRate == 150, "new sessions must inherit the preselected speed");
+
+    QSemaphore entered;
+    QSemaphore resume;
+    QMetaObject::invokeMethod(session, [&] {
+        entered.release();
+        resume.tryAcquire(1, 1000);
+    }, Qt::QueuedConnection);
+    require(entered.tryAcquire(1, 1000), "test must occupy the playback worker");
+    QElapsedTimer elapsed;
+    elapsed.start();
+    controller.setPlaybackRatePercent(20);
+    controller.setPlaybackRatePercent(75);
+    controller.setPlaybackRatePercent(200);
+    require(elapsed.elapsed() < 200, "rate edits must not block behind a busy playback worker");
+    resume.release();
+    QMetaObject::invokeMethod(session, [&] { appliedRate = session->playbackRatePercent(); },
+                              Qt::BlockingQueuedConnection);
+    require(appliedRate == 200, "queued edits must finish with the latest selected rate");
+    require(controller.setDocument(testDocument(), std::make_unique<RecordingAudioService>(), nullptr),
+            "controller must support replacing a rate-adjusted session");
+    session = controller.session();
+    QMetaObject::invokeMethod(session, [&] { appliedRate = session->playbackRatePercent(); },
+                              Qt::BlockingQueuedConnection);
+    require(appliedRate == 200, "song replacement must retain the current speed");
+}
+
+void testUnsupportedBackendCannotSilentlyIgnoreRate()
+{
+    for (const auto capabilities : {
+             PlaybackBackendCapabilities {PlaybackClockSource::AudioDevice, false, false},
+             PlaybackBackendCapabilities {PlaybackClockSource::SoftwareMonotonic, true, false}}) {
+        auto audio = std::make_unique<RecordingAudioService>();
+        audio->reportedCapabilities = capabilities;
+        PlaybackSession session(testDocument(), std::move(audio));
+        require(!session.setPlaybackRatePercent(200) && session.playbackRatePercent() == 100,
+                "device-clock or timed backends need a rate contract before accepting speed changes");
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -810,6 +1003,11 @@ int main(int argc, char* argv[])
     testThreadedAudioClockWithoutSnapshotFallsBackSafely();
     testAudioClockCapabilityEnablesClockSampling();
     testPositionThrottlerUsesLatestSample();
+    testPlaybackClockRateChangeIsContinuous();
+    testPlaybackSessionRateChangePreservesAudioState();
+    testRateChangesPreserveEventOrderAndPitch();
+    testControllerRateChangesAreQueuedAndInherited();
+    testUnsupportedBackendCannotSilentlyIgnoreRate();
     testSeekPreservesTransportIntent();
     testSoundFontChangeRestoresPlayingAudioState();
     testSoundFontChangeFreezesAndRestoresTransport();

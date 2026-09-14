@@ -22,6 +22,7 @@ namespace midi_play::presentation::windowchrome { class CustomTitleBar; }
 namespace midi_play::presentation::visualization { class FallingNotesView; }
 
 namespace midi_play::presentation {
+class PlaybackRateControl;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -68,6 +69,7 @@ private:
     QToolButton* m_playButton = nullptr;
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_stopButton = nullptr;
+    PlaybackRateControl* m_playbackRateControl = nullptr;
     QToolButton* m_minimizeButton = nullptr;
     QToolButton* m_maximizeButton = nullptr;
     QToolButton* m_closeButton = nullptr;

@@ -4,6 +4,7 @@
 #include "app/settingsservice.h"
 #include "playbackmetadatapresenter.h"
 #include "presentation/settings/settingsdialog.h"
+#include "presentation/transport/playbackratecontrol.h"
 #include "presentation/windowchrome/customtitlebar.h"
 #include "presentation/visualization/fallingnotesview.h"
 
@@ -184,7 +185,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     m_tempoLabel = new QLabel(QStringLiteral("-- BPM"), topBar);
     m_tempoLabel->setObjectName(QStringLiteral("metricLabel"));
     m_tempoLabel->setAccessibleName(QStringLiteral("当前速度"));
-    m_tempoLabel->setToolTip(QStringLiteral("当前速度"));
+    m_tempoLabel->setToolTip(QStringLiteral("原曲当前位置的 BPM（不含播放倍率）"));
     topLayout->addWidget(m_keyLabel);
     topLayout->addWidget(m_timeSignatureLabel);
     topLayout->addWidget(m_tempoLabel);
@@ -268,9 +269,13 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         button->setFixedSize(48, 44);
         button->setIconSize(QSize(26, 26));
     }
+    m_playbackRateControl = new PlaybackRateControl(transport);
+    m_playbackRateControl->setRatePercent(m_service ? m_service->playbackRatePercent()
+                                                  : midi_play::settings::kDefaultPlaybackRatePercent);
     controlRow->addWidget(m_playButton);
     controlRow->addWidget(m_pauseButton);
     controlRow->addWidget(m_stopButton);
+    controlRow->addWidget(m_playbackRateControl);
     controlRow->addStretch();
     controlRow->addWidget(m_timeLabel);
     controlRow->addWidget(verticalSeparator(transport));
@@ -375,6 +380,10 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
             this, &MainWindow::updatePosition);
     connect(m_service, &app::PlayerApplicationService::playbackStateChanged,
             this, &MainWindow::updatePlaybackState);
+    connect(m_service, &app::PlayerApplicationService::playbackRateChanged,
+            m_playbackRateControl, &PlaybackRateControl::setRatePercent);
+    connect(m_playbackRateControl, &PlaybackRateControl::ratePercentEdited,
+            m_service, &app::PlayerApplicationService::setPlaybackRatePercent);
     connect(m_service, &app::PlayerApplicationService::soundFontLoaded, this, [this] {
         m_statusLabel->setText(QStringLiteral("音源已加载"));
     });

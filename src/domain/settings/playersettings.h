@@ -11,6 +11,9 @@
 namespace midi_play::settings {
 
 inline constexpr int kDefaultVisualizationRefreshRate = 60;
+inline constexpr int kDefaultPlaybackRatePercent = 100;
+inline constexpr int kMinimumPlaybackRatePercent = 20;
+inline constexpr int kMaximumPlaybackRatePercent = 200;
 inline constexpr int kMinimumVisualizationRefreshRate = 1;
 inline constexpr int kMaximumVisualizationRefreshRate = 1000;
 inline constexpr int kSettingsSchemaVersion = 4;
@@ -26,6 +29,8 @@ struct PlayerSettings {
 
 bool isValidVisualizationRefreshRate(int refreshRate) noexcept;
 int normalizeVisualizationRefreshRate(int refreshRate) noexcept;
+bool isValidPlaybackRatePercent(int percent) noexcept;
+int normalizePlaybackRatePercent(int percent) noexcept;
 std::chrono::nanoseconds visualizationRefreshPeriod(int refreshRate) noexcept;
 
 } // namespace midi_play::settings

@@ -3,6 +3,7 @@
 #include "iplaybackaudioservice.h"
 #include "playbacksession.h"
 #include "playbackpositionthrottler.h"
+#include "domain/settings/playersettings.h"
 
 #include <QObject>
 #include <QChronoTimer>
@@ -18,6 +19,7 @@ public:
     ~PlaybackController() override;
     PlaybackSession* session() const { return m_session.get(); }
     int positionPublishRate() const noexcept { return m_positionPublishRate; }
+    int playbackRatePercent() const noexcept { return m_playbackRatePercent; }
 
     bool setDocument(std::shared_ptr<const music::MusicDocument> document,
                      std::unique_ptr<IPlaybackAudioService> audioService,
@@ -25,6 +27,7 @@ public:
     bool loadSoundFont(const QString& path, QString* error);
     void loadSoundFontAsync(const QString& path);
     void setPositionPublishRate(int refreshRate);
+    bool setPlaybackRatePercent(int percent);
 
 public slots:
     void play();
@@ -53,6 +56,8 @@ private:
     QChronoTimer m_positionTimer;
     PlaybackPositionThrottler m_positionThrottler;
     int m_positionPublishRate = 60;
+    int m_playbackRatePercent = midi_play::settings::kDefaultPlaybackRatePercent;
+    bool m_supportsPlaybackRate = true;
 };
 
 } // namespace midi_play::playback

@@ -7,6 +7,7 @@
 #include "playbackeventscheduler.h"
 #include "playbackclock.h"
 #include "playbackplayhead.h"
+#include "domain/settings/playersettings.h"
 
 #include <QObject>
 #include <QTimer>
@@ -25,6 +26,8 @@ public:
     State state() const { return m_state; }
     qint64 positionMicroseconds() const { return m_positionUs; }
     qint64 durationMicroseconds() const { return m_durationUs; }
+    int playbackRatePercent() const { return m_playbackRatePercent; }
+    bool supportsPlaybackRate() const { return m_audioCapabilities.supportsSoftwarePlaybackRate(); }
     bool loadSoundFont(const QString& path, QString* error);
 
 public slots:
@@ -33,6 +36,7 @@ public slots:
     void pause();
     void stop();
     void seek(qint64 microseconds);
+    bool setPlaybackRatePercent(int percent);
 
 signals:
     void stateChanged(midi_play::playback::State state);
@@ -62,6 +66,7 @@ private:
     State m_state = State::Ready;
     qint64 m_positionUs = 0;
     qint64 m_clockBaseUs = 0;
+    int m_playbackRatePercent = midi_play::settings::kDefaultPlaybackRatePercent;
     PlaybackPlayHead m_playHead;
     PlaybackEventScheduler m_scheduler;
     quint64 m_eventGeneration = 1;

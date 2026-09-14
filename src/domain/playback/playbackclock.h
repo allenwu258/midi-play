@@ -13,12 +13,15 @@ public:
     void start(qint64 positionUs);
     void pause(qint64 positionUs);
     void seek(qint64 positionUs);
+    void setRate(double rate);
+    double rate() const { return m_rate; }
     qint64 positionUs() const;
     bool isRunning() const { return m_running; }
 
 private:
     QElapsedTimer m_timer;
     qint64 m_baseUs = 0;
+    double m_rate = 1.0;
     bool m_running = false;
 };
 

@@ -146,6 +146,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/infrastructure/midi/mididocumentbuilder.cpp
     src/presentation/mainwindow.h
     src/presentation/mainwindow.cpp
+    src/presentation/transport/playbackratecontrol.h
+    src/presentation/transport/playbackratecontrol.cpp
     src/presentation/playbackmetadatapresenter.h
     src/presentation/playbackmetadatapresenter.cpp
     src/presentation/settings/settingsdialog.h

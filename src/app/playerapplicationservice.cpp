@@ -80,6 +80,7 @@ void PlayerApplicationService::openFile(const QString& path)
         auto audioService = std::make_unique<audio::ThreadedPlaybackAudioService>(std::move(fluidsynthService));
         auto newController = std::make_unique<playback::PlaybackController>(this);
         newController->setPositionPublishRate(m_visualizationRefreshRate);
+        newController->setPlaybackRatePercent(m_playbackRatePercent);
         QString controllerError;
         if (!newController->setDocument(result.readResult.document, std::move(audioService),
                                         &controllerError)) {
@@ -259,6 +260,19 @@ void PlayerApplicationService::setVisualizationRefreshRate(int refreshRate)
     if (m_controller) {
         m_controller->setPositionPublishRate(m_visualizationRefreshRate);
     }
+}
+
+void PlayerApplicationService::setPlaybackRatePercent(int percent)
+{
+    const int normalized = settings::normalizePlaybackRatePercent(percent);
+    if (m_playbackRatePercent == normalized) return;
+
+    if (m_controller && !m_controller->setPlaybackRatePercent(normalized)) {
+        emit playbackRateChanged(m_playbackRatePercent);
+        return;
+    }
+    m_playbackRatePercent = normalized;
+    emit playbackRateChanged(normalized);
 }
 
 void PlayerApplicationService::setGraphicsMode(settings::GraphicsMode mode)

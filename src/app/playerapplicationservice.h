@@ -22,6 +22,7 @@ public:
     qint64 positionMicroseconds() const { return m_positionUs; }
     qint64 durationMicroseconds() const { return m_durationUs; }
     int visualizationRefreshRate() const noexcept { return m_visualizationRefreshRate; }
+    int playbackRatePercent() const noexcept { return m_playbackRatePercent; }
     bool loadFallbackSoundFont(const QString& path);
 
 public slots:
@@ -30,6 +31,7 @@ public slots:
     bool loadSoundFont(const QString& path);
     void requestSoundFontLoad(const QString& path);
     void setVisualizationRefreshRate(int refreshRate);
+    void setPlaybackRatePercent(int percent);
     void setGraphicsMode(settings::GraphicsMode mode);
     settings::GraphicsMode graphicsMode() const noexcept { return m_graphicsMode; }
     void play();
@@ -48,6 +50,7 @@ signals:
     void playbackStateChanged(midi_play::playback::State state);
     void visualizationReady(midi_play::visualization::VisualChartPtr chart);
     void graphicsModeChanged(midi_play::settings::GraphicsMode mode);
+    void playbackRateChanged(int percent);
     void errorOccurred(const QString& message);
 
 private:
@@ -72,6 +75,7 @@ private:
     qint64 m_durationUs = 0;
     quint64 m_loadGeneration = 0;
     int m_visualizationRefreshRate = settings::kDefaultVisualizationRefreshRate;
+    int m_playbackRatePercent = settings::kDefaultPlaybackRatePercent;
     settings::GraphicsMode m_graphicsMode = settings::kDefaultGraphicsMode;
 };
 

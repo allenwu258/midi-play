@@ -1,5 +1,7 @@
 #include "playersettings.h"
 
+#include <algorithm>
+
 namespace midi_play::settings {
 
 bool isValidVisualizationRefreshRate(int refreshRate) noexcept
@@ -12,6 +14,16 @@ int normalizeVisualizationRefreshRate(int refreshRate) noexcept
 {
     return isValidVisualizationRefreshRate(refreshRate)
         ? refreshRate : kDefaultVisualizationRefreshRate;
+}
+
+bool isValidPlaybackRatePercent(int percent) noexcept
+{
+    return percent >= kMinimumPlaybackRatePercent && percent <= kMaximumPlaybackRatePercent;
+}
+
+int normalizePlaybackRatePercent(int percent) noexcept
+{
+    return std::clamp(percent, kMinimumPlaybackRatePercent, kMaximumPlaybackRatePercent);
 }
 
 std::chrono::nanoseconds visualizationRefreshPeriod(int refreshRate) noexcept

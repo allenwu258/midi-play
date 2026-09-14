@@ -23,6 +23,10 @@ struct PlaybackBackendCapabilities {
     bool perNoteExpression = false;
 
     bool usesAudioClock() const { return clockSource == PlaybackClockSource::AudioDevice; }
+    // Scaling the transport alone is valid only for immediate MIDI dispatch.
+    // Device clocks and prequeued timed events need a backend rate contract
+    // before variable playback can be enabled for them.
+    bool supportsSoftwarePlaybackRate() const { return !usesAudioClock() && !timedEvents; }
 };
 
 // Atomic handoff owned by an AudioDevice backend and shared with its

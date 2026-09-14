@@ -1,7 +1,10 @@
 #include "app/settingsservice.h"
+#include "app/playerapplicationservice.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/settings/qsettingsstore.h"
 #include "presentation/settings/settingsdialog.h"
+#include "presentation/mainwindow.h"
+#include "presentation/transport/playbackratecontrol.h"
 #include "presentation/visualization/fallingnotesview.h"
 
 #if MIDI_PLAY_HAS_VULKAN
@@ -12,8 +15,16 @@
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QFrame>
+#include <QKeyEvent>
+#include <QLineEdit>
+#include <QMouseEvent>
+#include <QScreen>
+#include <QSlider>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QWindow>
 
 #include <cstdio>
 #include <cstdlib>
@@ -136,6 +147,134 @@ void testGraphicsModePreference()
             "saving unrelated settings must preserve the Vulkan preference");
 }
 
+void processEventsFor(int milliseconds)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < milliseconds) {
+        QApplication::processEvents();
+        QThread::msleep(1);
+    }
+}
+
+void typePercent(QSpinBox* editor, const QString& digits)
+{
+    editor->selectAll();
+    auto* lineEdit = editor->findChild<QLineEdit*>();
+    require(lineEdit != nullptr, "percentage editor must accept text input");
+    for (const auto digit : digits) {
+        QKeyEvent key(QEvent::KeyPress, Qt::Key_0 + digit.digitValue(),
+                      Qt::NoModifier, QString(digit));
+        QApplication::sendEvent(lineEdit, &key);
+    }
+}
+
+void testPlaybackRateInteraction(GraphicsMode mode = GraphicsMode::Traditional)
+{
+    midi_play::app::PlayerApplicationService service;
+    midi_play::presentation::MainWindow window(&service, nullptr);
+    auto* view = window.findChild<FallingNotesView*>();
+    require(view != nullptr, "main window must expose the visualization");
+    view->setGraphicsMode(mode);
+    const auto chart = makeChart();
+    view->setChart(chart);
+    view->setTransportPosition(600'000, chart->durationUs());
+    view->setTransportState(State::Playing);
+    window.show();
+    processEventsFor(30);
+    auto* button = window.findChild<midi_play::presentation::PlaybackRateControl*>();
+    auto* slider = window.findChild<QSlider*>(QStringLiteral("playbackRateSlider"));
+    auto* editor = window.findChild<QSpinBox*>(QStringLiteral("playbackRateSpinBox"));
+    auto* panel = window.findChild<QFrame*>(QStringLiteral("playbackRatePopup"));
+    require(button && slider && editor && panel, "transport must expose all playback rate inputs");
+    require(button->text() == QStringLiteral("100%") && service.playbackRatePercent() == 100,
+            "playback must default to 100 percent");
+    require(slider->minimum() == 20 && slider->maximum() == 200
+                && editor->minimum() == 20 && editor->maximum() == 200,
+            "both inputs must support the complete 20 to 200 percent range");
+    int changes = 0;
+    QObject::connect(&service, &midi_play::app::PlayerApplicationService::playbackRateChanged,
+                     &window, [&](int) { ++changes; });
+    slider->setValue(20);
+    slider->setValue(200);
+    require(service.playbackRatePercent() == 200 && editor->value() == 200
+                && button->text() == QStringLiteral("200%") && changes == 2,
+            "slider edits must apply once and synchronize the button and editor");
+    service.setPlaybackRatePercent(80);
+    require(slider->value() == 80 && editor->value() == 80 && changes == 3,
+            "model changes must update both inputs without feedback");
+
+    const QPoint buttonCenter = button->mapToGlobal(button->rect().center());
+    QEnterEvent enter(button->rect().center(), window.mapFromGlobal(buttonCenter), buttonCenter);
+    QApplication::sendEvent(button, &enter);
+    require(panel->isVisible() && QApplication::activePopupWidget() == nullptr,
+            "hover must open the panel without a modal popup mouse grab");
+    require(button->screen()->availableGeometry().contains(panel->geometry()),
+            "hover panel must stay within the available screen");
+    require(!panel->geometry().intersects(QRect(button->mapToGlobal(QPoint()), button->size())),
+            "hover panel must not cover its trigger");
+
+    button->click();
+    processEventsFor(30);
+    typePercent(editor, QStringLiteral("125"));
+    require(service.playbackRatePercent() == 80 && changes == 3,
+            "partial keyboard input must not change playback speed");
+    QKeyEvent commit(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(editor, &commit);
+    require(service.playbackRatePercent() == 125 && slider->value() == 125
+                && changes == 4 && !panel->isVisible(),
+            "Enter must apply a complete percentage once and dismiss the editor");
+
+    button->click();
+    processEventsFor(30);
+    typePercent(editor, QStringLiteral("50"));
+    QKeyEvent cancel(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(editor, &cancel);
+    require(service.playbackRatePercent() == 125 && editor->value() == 125 && !panel->isVisible(),
+            "Escape must discard an uncommitted percentage");
+
+    button->click();
+    processEventsFor(30);
+    typePercent(editor, QStringLiteral("90"));
+    // Match native clicking: the OS activates the target window before Qt
+    // receives its mouse event. sendEvent alone does not perform activation.
+    window.activateWindow();
+    processEventsFor(30);
+    const QPoint outside = window.mapToGlobal(QPoint(window.width() - 20, 100));
+    QMouseEvent outsidePress(QEvent::MouseButtonPress, QPointF(window.width() - 20, 100),
+                             outside, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(window.windowHandle(), &outsidePress);
+    QMouseEvent outsideRelease(QEvent::MouseButtonRelease, QPointF(window.width() - 20, 100),
+                               outside, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(window.windowHandle(), &outsideRelease);
+    require(!panel->isVisible() && service.playbackRatePercent() == 90,
+            "native window clicks outside the panel must commit and dismiss it");
+
+    button->click();
+    processEventsFor(30);
+    require(panel->isVisible(), "click must reopen the rate panel after an outside click");
+    slider->setSliderDown(true);
+    slider->setValue(140);
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(panel, &leave);
+    processEventsFor(260);
+    if (!panel->isVisible() || service.playbackRatePercent() != 140) {
+        std::fprintf(stderr, "Rate drag: visible=%d, down=%d, rate=%d, applicationState=%d\n",
+                     panel->isVisible(), slider->isSliderDown(), service.playbackRatePercent(),
+                     int(QGuiApplication::applicationState()));
+    }
+    require(panel->isVisible() && service.playbackRatePercent() == 140,
+            "hover timeout must not interrupt an active slider drag");
+    slider->setSliderDown(false);
+    view->setTransportState(State::Paused);
+    window.hide();
+    require(!panel->isVisible(), "hiding the owner must also hide its rate panel");
+
+    midi_play::app::PlayerApplicationService restarted;
+    require(restarted.playbackRatePercent() == 100,
+            "a new application service must start at 100 percent");
+}
+
 #if MIDI_PLAY_HAS_VULKAN
 void testVulkanSwitching()
 {
@@ -190,9 +329,11 @@ int main(int argc, char* argv[])
     QApplication application(argc, argv);
     testTraditionalViewUpdates();
     testGraphicsModePreference();
+    testPlaybackRateInteraction();
     if (application.arguments().contains(QStringLiteral("--vulkan-smoke"))) {
 #if MIDI_PLAY_HAS_VULKAN
         testVulkanSwitching();
+        testPlaybackRateInteraction(GraphicsMode::VulkanExperimental);
 #else
         require(false, "Vulkan smoke check requested for a traditional-only build");
 #endif

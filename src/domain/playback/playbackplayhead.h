@@ -20,6 +20,7 @@ public:
     void start(qint64 positionUs);
     void pause(qint64 positionUs);
     void seek(qint64 positionUs);
+    void setRate(double rate);
     void setAudioPositionUs(qint64 positionUs);
     void clearAudioPosition();
 
@@ -27,6 +28,7 @@ public:
     qint64 positionUs() const;
     qint64 framePosition() const;
     int sampleRate() const { return m_sampleRate; }
+    double rate() const { return m_clock.rate(); }
 
 private:
     PlaybackClock m_clock;
