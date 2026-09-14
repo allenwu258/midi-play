@@ -67,86 +67,126 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 
 ### Windows 前置条件
 
-当前仓库已经验证的开发环境为：
+一键发行构建支持 Windows x64，使用普通的 **64 位 PowerShell 5.1 或 PowerShell 7**，不要求预先打开 Developer PowerShell。请安装：
 
-- Windows x64；
-- Visual Studio 2022，包含 Desktop C++ 工作负载；
-- CMake >= 3.24；
-- Qt >= 6.8 的 MSVC 64-bit 套件；
-- 启用 `sndfile` feature 的 FluidSynth 2.x/3.x 运行时；
-- PowerShell（推荐使用 Developer PowerShell for VS 2022）。
+- **Visual Studio 2022 / Build Tools 2022**：包括“使用 C++ 的桌面开发”、MSVC v143 x64 工具、Windows SDK 和 C++ CMake 工具；
+- **Qt 6.8 或更新的 Qt 6 MSVC x64 套件**：包含 Core、Gui、Widgets、Concurrent、Xml 和 `windeployqt`；MinGW、ARM64 和静态 Qt 套件不适用；
+- **Git**：`git.exe` 可从 PATH 找到；
+- **vcpkg**：准备独立的 vcpkg checkout，例如使用 `git clone https://github.com/microsoft/vcpkg.git <目标目录>`；脚本会在缺少 `vcpkg.exe` 时执行该 checkout 的 bootstrap；
+- **Vulkan SDK**：构建 Vulkan 版本时需要 x64 头文件、导入库和 `glslangValidator`。只构建传统版本可以不安装；
+- **CMake >= 3.24**：默认使用所配置 Visual Studio 附带的版本，也可以单独指定。
 
-项目不链接 Qt6::Multimedia。音频由 FluidSynth 的原生实时音频驱动输出，因此不会因为缺少 Qt Multimedia backend 而影响本项目的正常架构。
+不需要预先安装 FluidSynth。脚本根据 `vcpkg.json` 自动下载或恢复缓存并构建 FluidSynth、libsndfile 和 Ogg/Vorbis/FLAC/Opus 等传递依赖。首次构建需要联网，耗时取决于网络和 vcpkg 缓存；后续构建复用已安装依赖。程序通过 `QLibrary` 使用 FluidSynth，不链接 Qt Multimedia。
 
-### 配置依赖路径
+### 统一环境配置
 
-不要把本机 SDK 绝对路径写入项目文件。先在当前 PowerShell 会话中设置环境变量：
+在仓库根目录执行：
 
 ~~~powershell
-$env:QT_ROOT = '<Qt MSVC 64-bit 套件根目录>'
-$env:VCPKG_ROOT = '<vcpkg 根目录>'
-
-if (-not (Test-Path "$env:QT_ROOT/bin/windeployqt.exe")) {
-    throw 'QT_ROOT 未指向有效的 Qt MSVC 套件'
-}
-if (-not (Test-Path "$env:VCPKG_ROOT/vcpkg.exe")) {
-    throw 'VCPKG_ROOT 未指向有效的 vcpkg 根目录'
-}
+Copy-Item build.env.sample.psd1 build.env.psd1
+notepad build.env.psd1
 ~~~
 
-VCPKG_ROOT 只用于准备 FluidSynth 运行时和辅助复制 DLL；当前程序通过 Qt QLibrary 在运行时解析 FluidSynth API，不需要在 CMake 中链接 FluidSynth import library。
+`build.env.psd1` 是 PowerShell **数据文件**，通过 `Import-PowerShellDataFile` 读取，不作为脚本执行。路径写在单引号中，反斜杠不用转义；不支持 `$env:...` 或命令插值。填写自己安装的 SDK 路径即可：
 
-如果未设置 `VCPKG_ROOT`，可以通过 `-DFLUIDSYNTH_DLL` 直接指定运行时 DLL，或通过 `-DVCPKG_INSTALLED_DIR` 指定 vcpkg installed 根目录。CMake 不依赖某一台开发机的固定 vcpkg 目录；未提供 FluidSynth DLL 时会明确提示跳过运行时复制，程序仍可使用系统库。
+| 配置项 | 含义 |
+| --- | --- |
+| `VisualStudioRoot` | VS 2022 或 Build Tools 实例根目录，包含 `Common7` 和 `VC` |
+| `QtRoot` | Qt 的 MSVC x64 套件目录，包含 `bin`、`lib`、`plugins`，不是 Qt 安装器根目录 |
+| `VcpkgRoot` | vcpkg checkout 根目录，包含 `scripts/buildsystems/vcpkg.cmake` |
+| `VulkanSdk` | Vulkan SDK 版本目录，包含 `Include`、`Lib`、`Bin`；传统构建可留空 |
+| `CMakeExe` | 可选的 `cmake.exe` 绝对路径，空字符串表示使用上述 VS 实例的 CMake |
+| `EnableVulkan` | `$true` 构建 Vulkan 版本，`$false` 仅构建传统版本 |
 
-### Debug 构建
+Git 只保存 `build.env.sample.psd1`。实际配置 `build.env.psd1` 和 `build.env.*.local.psd1` 已加入 `.gitignore`，不会被复制到发行包。构建不读取 `documents/SDK` 或任何开发机私有说明文件，也不向系统写入永久环境变量。
+
+仅检查环境：
 
 ~~~powershell
-& "$env:VCPKG_ROOT/vcpkg.exe" install "fluidsynth[sndfile]:x64-windows" --classic --recurse
-cmake --preset windows-msvc-debug -DCMAKE_PREFIX_PATH="$env:QT_ROOT" -DFLUIDSYNTH_DLL="$env:VCPKG_ROOT/installed/x64-windows/bin/libfluidsynth-3.dll"
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -CheckEnvironment
+~~~
+
+配置文件缺失、路径错误、工具缺失或架构不匹配时，脚本会报错并说明配置位置，不继续生成发行目录。`-ExecutionPolicy Bypass` 只作用于本次 PowerShell 进程。
+
+### 一键发行构建
+
+~~~powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1
+~~~
+
+脚本按以下顺序执行：
+
+1. 检查配置并初始化指定 VS 实例的 x64 编译环境，显式选用配置的 Qt 和 Vulkan，清除调用者残留的 SDK 搜索变量；
+2. 使用清单模式安装 `x64-windows` 依赖到 `build/dependencies/vcpkg_installed`，不修改 vcpkg 的 classic installed 目录。`vcpkg.json` 中的 `builtin-baseline` 固定依赖版本解析基线；
+3. 重新配置 CMake，复用对象文件进行 Release 构建，并运行全部 CTest；启用 Vulkan 时缺少任何必需能力会直接失败，不会静默产出传统版本；
+4. 在独立临时目录安装 GUI、CLI 和默认 SoundFont，用 `windeployqt` 部署 Qt DLL/插件，部署 FluidSynth 的传递依赖及 VS 提供的 **app-local MSVC CRT DLL**；
+5. 移除 PATH 中的开发 SDK，检查每个 EXE/DLL/插件的依赖闭包，并运行发行包 CLI 和实际 Qt 渲染检查；
+6. 校验成功后替换正式发行目录，写入不含本机 SDK 路径的 `build-info.json`，附带项目许可证、vcpkg 依赖版权文件及 SDK 提供的 Qt SBOM。
+
+默认结果如下，整个文件夹即可用于分发，不生成 ZIP：
+
+~~~text
+dist/midi-play-windows-x64/
+  midi_play.exe
+  midi_play_cli.exe
+  Qt6*.dll
+  libfluidsynth-3.dll
+  sndfile.dll、ogg.dll、vorbis*.dll 等实际依赖
+  msvcp140*.dll、vcruntime140*.dll 等 MSVC CRT
+  platforms/qwindows.dll
+  styles/、imageformats/ 等 Qt 插件
+  assets/midisound.sf2
+  licenses/
+  LICENSE
+  build-info.json
+~~~
+
+`build/windows-release/Release` 是开发构建目录，**请分发 `dist` 中的完整目录**。用户机器不需要安装 Qt、vcpkg、MSVC 或 Vulkan SDK；Windows 系统组件和支持 Vulkan 的显卡驱动仍由操作系统/驱动提供，发行包不会携带 SDK 的 Vulkan loader 或验证层。
+
+重复运行会复用编译结果，但每次重新部署一个干净的临时目录，防止旧 DLL 混入新包。构建或验证失败不会替换上一份成功的发行目录；部署阶段失败时会保留路径中带 `staging` 的目录用于诊断。同一仓库的脚本构建使用排他锁。不要向脚本生成的正式发行目录中存放个人文件，它会在下次成功构建时整体替换。
+
+如果新包已经发布，但旧目录中的文件被正在运行的程序占用，脚本会提示旧目录保留的位置；新包仍可使用。
+
+### 常用选项
+
+~~~powershell
+# 不要求 Vulkan SDK，另存一份传统版本
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -Traditional -BuildName windows-traditional -PackageName midi-play-traditional
+
+# 同时验证发行包的真实 FluidSynth 音频输出，会播放约 1.5 秒测试音
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -AudioSmoke
+
+# 使用另一份本地配置并限制并行度
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -EnvironmentFile build.env.other.local.psd1 -Jobs 4
+~~~
+
+`-AudioSmoke` 需要可用音频设备，失败也会阻止发行目录替换；默认构建不依赖音频设备。`-CheckEnvironment` 只检查环境，不下载依赖或编译。`-BuildName` 和 `-PackageName` 只接受字母、数字、下划线和连字符，输出固定限制在本仓库的 `build` 和 `dist` 下。
+
+常见错误的处理：
+
+| 情况 | 处理 |
+| --- | --- |
+| 未找到环境文件 | 复制 sample，填写路径后重试 |
+| 找不到 `cl.exe`、Windows SDK 或 CRT | 在配置的 VS 实例中补装 C++ 工作负载和 v143 工具 |
+| Qt 为 MinGW/ARM64 或版本过低 | 修改 `QtRoot`，选择 Qt 6.8+ MSVC x64 套件 |
+| Vulkan 检查失败 | 补装 SDK / 使用支持 Vulkan 的 Qt，或使用 `-Traditional` |
+| vcpkg 下载失败 | 检查访问源码站点的网络/代理配置后重试；脚本保留原始诊断输出 |
+| 正式发行目录正在使用 | 关闭该目录启动的程序后重试 |
+| 依赖闭包不完整 | 根据报错检查 Qt/VS/vcpkg 安装；不要从其他版本手工混入 DLL |
+
+### 手动开发构建
+
+一键脚本只生成经过测试和部署的 Release 包。需要 Debug、IDE 或跨平台开发时仍可直接使用 CMake；预设中的 Qt 路径来自 `QT_ROOT`，不包含本机固定路径。以下示例在准备好 CMake 和 MSVC 的 Developer PowerShell 中执行；Qt 和依赖路径来自同一个数据文件及上述脚本创建的依赖目录：
+
+~~~powershell
+$buildEnvironment = Import-PowerShellDataFile ./build.env.psd1
+$env:QT_ROOT = $buildEnvironment.QtRoot
+$env:VULKAN_SDK = $buildEnvironment.VulkanSdk
+cmake --preset windows-msvc-debug -DFLUIDSYNTH_DLL="$PWD/build/dependencies/vcpkg_installed/x64-windows/bin/libfluidsynth-3.dll"
 cmake --build --preset windows-msvc-debug
-& "$env:QT_ROOT/bin/windeployqt.exe" --debug --compiler-runtime 'build/windows-msvc-debug/Debug/midi_play.exe'
 ~~~
 
-构建后，CMake 会在可用时自动复制：
-
-~~~text
-build/windows-msvc-debug/Debug/midi_play.exe
-build/windows-msvc-debug/Debug/midi_play_cli.exe
-build/windows-msvc-debug/Debug/libfluidsynth-3.dll
-build/windows-msvc-debug/Debug/sndfile.dll
-build/windows-msvc-debug/Debug/ogg.dll
-build/windows-msvc-debug/Debug/vorbis.dll
-build/windows-msvc-debug/Debug/assets/midisound.sf2
-~~~
-
-### Release 构建
-
-可以复用同一个多配置 Visual Studio 构建目录：
-
-~~~powershell
-cmake --build build/windows-msvc-debug --config Release
-& "$env:QT_ROOT/bin/windeployqt.exe" --release --compiler-runtime 'build/windows-msvc-debug/Release/midi_play.exe'
-~~~
-
-发行目录至少需要同时包含以下内容：
-
-~~~text
-midi_play.exe
-midi_play_cli.exe
-libfluidsynth-3.dll
-sndfile.dll、ogg.dll、vorbis.dll 及其实际传递依赖
-assets/midisound.sf2
-platforms/qwindows.dll
-由 windeployqt 根据实际依赖复制的 Qt 运行时 DLL
-~~~
-
-Qt DLL 和插件必须与目标架构、Qt 版本及构建类型一致。Debug 使用 qwindowsd.dll，Release 使用 qwindows.dll，两者不能混用。
-
-如果 FluidSynth 不在 vcpkg 默认目录，可以显式指定：
-
-~~~powershell
-cmake --preset windows-msvc-debug -DCMAKE_PREFIX_PATH="$env:QT_ROOT" -DFLUIDSYNTH_DLL='<FluidSynth x64 DLL 的完整路径>'
-~~~
+直接使用 CMake 时，`MIDI_PLAY_ENABLE_VULKAN=ON` 默认允许在依赖缺失时降级；`MIDI_PLAY_REQUIRE_VULKAN=ON` 可要求必须成功启用。明确指定 `FLUIDSYNTH_DLL` 的优先级最高。底层 CMake 安装规则保留开发用途，一键发行脚本会额外完成 Qt/CRT 部署及闭包校验。Debug 插件和 Release 插件不能混用，Debug 输出不作为发行包。
 
 ## 图形界面使用
 
@@ -207,7 +247,7 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 以下命令均从项目根目录执行。`midi_play.exe` 是主播放器，采用 Windows GUI subsystem，双击启动时不显示命令行窗口。`midi_play_cli.exe` 是 Console 程序，负责所有自动化、诊断和离屏渲染命令。
 
 ~~~powershell
-$midiPlayCliExe = 'build/windows-msvc-debug/Debug/midi_play_cli.exe'
+$midiPlayCliExe = 'dist/midi-play-windows-x64/midi_play_cli.exe'
 ~~~
 
 ### 直接解析文件
@@ -317,11 +357,13 @@ UI 不直接解析 XML/MIDI，也不直接调用 FluidSynth；播放域不依赖
 配置并构建后运行：
 
 ~~~powershell
-ctest --test-dir build/windows-msvc-debug -C Debug --output-on-failure
+ctest --test-dir build/windows-release -C Release --output-on-failure
 ~~~
 
 当前测试目标包括：
 
+- presentation_backend_configuration：真实呈现层的后端编译边界、状态更新、传统渲染及模式设置；
+- soundfont_inspector：SoundFont 内容和格式检查；
 - visualization_domain：可视化投影、时间窗口、区间索引和场景数据；
 - playback_session_transport：播放、暂停、停止、seek、事件代际和 transport 状态。
 
@@ -377,10 +419,13 @@ src/
   infrastructure/settings/            QSettings INI 存储
   infrastructure/resources/           默认资源定位和项目资源模型
   presentation/                       Qt Widgets、设置窗口和渲染器
-tests/                                领域和 transport 测试
+tests/                                呈现层、领域、transport 测试及部署样例
+scripts/Build-Windows.ps1              Windows 环境检查、一键构建和发行校验
+build.env.sample.psd1                  环境配置模板（本地实际配置不入 Git）
+cmake/                                DLL 部署与发行目录依赖检查
 CMakeLists.txt                        构建目标、资源复制和安装规则
 CMakePresets.json                     Windows MSVC / Ninja 预设
-vcpkg.json                            FluidSynth 逻辑依赖声明
+vcpkg.json                            锁定基线的 FluidSynth / SF3 依赖清单
 ~~~
 
 ## 参与开发
