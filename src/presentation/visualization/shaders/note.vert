@@ -9,6 +9,7 @@ layout(location=6) in vec4 options;
 layout(push_constant) uniform Frame {
     float width; float height; float position; float strike;
     float scale; float clipTop; float clipBottom; float dpr;
+    float bodyOpacity;
 } frame;
 layout(location=0) out vec2 local;
 layout(location=1) out vec2 world;
@@ -33,7 +34,7 @@ void main() {
     float stroke = options.x;
     color = fill;
     edge = border;
-    bool isActiveNow = times.x <= frame.position && times.z > frame.position;
+    flags=options;
     if (kind > 0) {
         float startY = frame.strike - (times.x-frame.position)*frame.scale;
         float keyY = frame.strike - (times.y-frame.position)*frame.scale;
@@ -42,24 +43,27 @@ void main() {
         float h = max(4,startY-top);
         stroke = 0;
         if (kind == 1) {
-            r = vec4(r.x+r.z*.2,endY,r.z*.6,max(2,keyY-endY));
+            r = vec4(r.x+r.z*.31,endY,r.z*.38,max(0,keyY-endY));
         } else if (kind == 2) {
-            r.y=top; r.w=h; stroke=isActiveNow ? 2 : 1;
-            edge=isActiveNow ? activeBorder : border;
+            r.y=top; r.w=h;
         } else if (kind == 3) {
-            r=vec4(r.x+1,startY-.5,max(0,r.z-2),1);
-            color=isActiveNow ? activeBorder : border;
+            r=vec4(r.x,startY-2.5,r.z,2.5);
+            color=activeBorder;
         } else {
             r=vec4(r.x+3,top+h*.5-3,max(0,r.z-6),6);
             color=vec4(1,1,1,110.0/255);
             if (h<=14) r.z=0;
         }
+        color.a *= clamp(1-(frame.position-times.z)/.24,0,1);
+        if (kind<=2) color.a*=frame.bodyOpacity;
     }
     local=corner*r.zw;
+    // Include half a physical pixel for the square rectangle's edge coverage.
+    if (kind>0 && kind<4 && r.z>0 && r.w>0)
+        local += (corner*2-1)*(.5/frame.dpr);
     world=r.xy+local;
     texcoord=uv.xy+corner*uv.zw;
     shape=vec4(r.zw,stroke,kind);
-    flags=options;
     vec2 physicalWorld = world * frame.dpr;
     gl_Position=vec4(physicalWorld.x/frame.width*2-1,physicalWorld.y/frame.height*2-1,0,1);
 }

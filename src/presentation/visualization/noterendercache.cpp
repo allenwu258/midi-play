@@ -2,87 +2,54 @@
 
 #include <QColor>
 #include <QHash>
+#include <QLinearGradient>
 
 #include <algorithm>
 
 namespace midi_play::presentation::visualization {
 namespace {
 
-using midi_play::visualization::ColorRgba;
 using midi_play::visualization::TremoloNote;
 using midi_play::visualization::VisualChart;
 using midi_play::visualization::VisualNote;
 
-QColor toColor(const ColorRgba& color)
-{
-    return QColor(color.red, color.green, color.blue, color.alpha);
-}
-
-QColor compositeOverOpaque(const QColor& foreground, const QColor& background)
-{
-    const int alpha = foreground.alpha();
-    const int inverseAlpha = 255 - alpha;
-    const auto channel = [alpha, inverseAlpha](int foregroundValue, int backgroundValue) {
-        return (foregroundValue * alpha + backgroundValue * inverseAlpha + 127) / 255;
-    };
-    return QColor(channel(foreground.red(), background.red()),
-                  channel(foreground.green(), background.green()),
-                  channel(foreground.blue(), background.blue()), 255);
-}
-
 quint64 styleKey(const VisualNote& note)
 {
-    const quint64 track = static_cast<quint64>(std::max(0, note.trackIndex));
-    const qreal velocity = std::clamp(note.velocity / 127.0, 0.0, 1.0);
-    const quint64 lightness = static_cast<quint64>(88.0 + velocity * 30.0);
-    const quint64 alpha = note.isGhost()
-        ? 120U : static_cast<quint64>(190.0 + velocity * 55.0);
-    return (track << 17U) | (lightness << 9U) | (alpha << 1U)
-        | static_cast<quint64>(note.isGhost());
+    return noteMaterialKey(note);
 }
 
-NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note,
-                          const NoteRenderPalette& palette)
+NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note)
 {
-    QColor fill = note.trackIndex >= 0 && note.trackIndex < chart.tracks().size()
-        ? toColor(chart.tracks().at(note.trackIndex).color)
-        : QColor(Qt::white);
-    const qreal velocity = std::clamp(note.velocity / 127.0, 0.0, 1.0);
-    fill = fill.lighter(static_cast<int>(88.0 + velocity * 30.0));
-    fill.setAlpha(note.isGhost() ? 120 : static_cast<int>(190 + velocity * 55));
-
-    QColor tail = fill;
-    tail.setAlpha(std::max(38, fill.alpha() / 3));
-    QColor inactiveBorder = fill.lighter(112);
-    inactiveBorder.setAlpha(240);
-    QColor activeBorder = fill.lighter(145);
-    activeBorder.setAlpha(240);
-
     NoteRenderStyle style;
-    style.fillBrush = QBrush(fill);
-    style.tailBrush = QBrush(tail);
-    style.activeWhiteKeyBrush = QBrush(compositeOverOpaque(fill, palette.keyboardBackground));
-    style.activeBlackKeyBrush = QBrush(compositeOverOpaque(fill, palette.whiteKey));
-    style.activeDrumKeyBrush = style.activeWhiteKeyBrush;
-    style.inactiveBorderPen = QPen(inactiveBorder, 1);
-    style.activeBorderPen = QPen(activeBorder, 2);
-    style.inactiveAttackLinePen = QPen(inactiveBorder, 1);
-    style.activeAttackLinePen = QPen(activeBorder, 1);
-    if (note.isGhost()) {
-        style.inactiveBorderPen.setStyle(Qt::DashLine);
-        style.activeBorderPen.setStyle(Qt::DashLine);
-    }
+    style.material = makeNoteMaterial(chart, note);
+    const QColor fill = style.material.body;
+    const QColor tail = style.material.tail;
+    QLinearGradient bodyGradient(0, 0, 1, 0);
+    bodyGradient.setCoordinateMode(QGradient::ObjectBoundingMode);
+    QColor side = fill;
+    side.setAlphaF(fill.alphaF() * 0.66);
+    bodyGradient.setColorAt(0, side);
+    bodyGradient.setColorAt(0.32, fill);
+    side.setAlphaF(fill.alphaF() * 0.78);
+    bodyGradient.setColorAt(1, side);
+    style.bodyGradientBrush = QBrush(bodyGradient);
+    QLinearGradient tailGradient(0, 0, 0, 1);
+    tailGradient.setCoordinateMode(QGradient::ObjectBoundingMode);
+    QColor tip = tail;
+    tip.setAlphaF(tail.alphaF() * 0.16);
+    tailGradient.setColorAt(0, tip);
+    tailGradient.setColorAt(1, tail);
+    style.tailGradientBrush = QBrush(tailGradient);
     return style;
 }
 
 } // namespace
 
 void NoteRenderCache::prepare(const midi_play::visualization::VisualChartPtr& chart,
-                              const PlaybackSceneGeometry& geometry,
-                              const NoteRenderPalette& palette)
+                              const PlaybackSceneGeometry& geometry)
 {
-    if (m_chart.get() != chart.get() || !m_hasPalette || m_palette != palette) {
-        rebuildChart(chart, palette);
+    if (m_chart.get() != chart.get()) {
+        rebuildChart(chart);
         m_geometrySize = {};
     }
     if (m_geometrySize != geometry.bounds.size()) {
@@ -93,7 +60,6 @@ void NoteRenderCache::prepare(const midi_play::visualization::VisualChartPtr& ch
 void NoteRenderCache::clear()
 {
     m_chart = nullptr;
-    m_hasPalette = false;
     m_geometrySize = {};
     m_styles.clear();
     m_notes.clear();
@@ -112,12 +78,9 @@ const NoteRenderStyle* NoteRenderCache::styleForNote(int noteIndex) const
         : nullptr;
 }
 
-void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPtr& chart,
-                                   const NoteRenderPalette& palette)
+void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPtr& chart)
 {
     m_chart = chart;
-    m_palette = palette;
-    m_hasPalette = true;
     m_styles.clear();
     m_notes.clear();
     ++m_chartBuildCount;
@@ -134,7 +97,7 @@ void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPt
         if (styleIt == styleIndices.cend()) {
             styleIndex = m_styles.size();
             styleIndices.insert(key, styleIndex);
-            m_styles.push_back(makeStyle(*m_chart, source, m_palette));
+            m_styles.push_back(makeStyle(*m_chart, source));
         } else {
             styleIndex = styleIt.value();
         }
@@ -173,8 +136,9 @@ void NoteRenderCache::rebuildGeometry(const PlaybackSceneGeometry& geometry)
 
         if (source.coincidentCount > 1) {
             const qreal partWidth = fullWidth / source.coincidentCount;
-            prepared.left = center - fullWidth * 0.5 + source.coincidentIndex * partWidth + 0.5;
-            prepared.width = std::max<qreal>(1.0, partWidth - 1.0);
+            const qreal gutter = std::min<qreal>(1.0, partWidth * 0.24);
+            prepared.left = center - fullWidth * 0.5 + source.coincidentIndex * partWidth + gutter * 0.5;
+            prepared.width = partWidth - gutter;
         } else {
             prepared.left = center - fullWidth * 0.5;
             prepared.width = fullWidth;

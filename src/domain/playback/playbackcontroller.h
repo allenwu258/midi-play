@@ -44,7 +44,7 @@ signals:
     // Coalesced transport samples, normally published once per controller
     // frame interval. Transport boundaries may publish an immediate endpoint;
     // audio scheduling remains owned by PlaybackSession.
-    void positionChanged(qint64 position, qint64 duration);
+    void positionChanged(qint64 position, qint64 duration, qint64 sampledAtUs = 0);
     void errorOccurred(const QString& message);
     void soundFontLoadFinished(bool success, const QString& error);
     void metronomeAvailabilityChanged(bool available, const QString& reason);

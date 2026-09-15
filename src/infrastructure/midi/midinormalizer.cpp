@@ -96,7 +96,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
 
             QHash<int, QVector<PendingNote>> pending;
             QVector<int> sustained;
-            QSet<int> sostenutoCaptured;
+            QSet<quint64> sostenutoCaptured;
             bool sustainDown = false;
             bool sostenutoDown = false;
             int currentProgram = 0;
@@ -127,7 +127,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                         const int noteIndex = appendClosedNote(pendingIt.key(), pendingNote, tick, tick);
                         if (forceAudibleEnd) continue;
                         const bool heldByPedal = sustainDown
-                            || (sostenutoDown && sostenutoCaptured.contains(pendingIt.key()));
+                            || (sostenutoDown && sostenutoCaptured.contains(pendingNote.sequence));
                         if (heldByPedal) sustained.push_back(noteIndex);
                     }
                 }
@@ -138,11 +138,13 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                 for (const int index : sustained) {
                     if (index < 0 || index >= track.notes.size()) continue;
                     auto& note = track.notes[index];
-                    if (!sustainDown && !sostenutoDown) note.audibleEnd = tick;
+                    if (!sustainDown && (!sostenutoDown || !sostenutoCaptured.contains(note.sequence)))
+                        note.audibleEnd = tick;
                 }
                 sustained.erase(std::remove_if(sustained.begin(), sustained.end(), [&](int index) {
                     return index < 0 || index >= track.notes.size()
-                        || (!sustainDown && !sostenutoDown);
+                        || (!sustainDown && (!sostenutoDown
+                            || !sostenutoCaptured.contains(track.notes[index].sequence)));
                 }), sustained.end());
             };
 
@@ -168,7 +170,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                     const PendingNote note = pendingIt->takeLast();
                     if (pendingIt->isEmpty()) pending.erase(pendingIt);
                     const int noteIndex = appendClosedNote(event.data1, note, tick, tick);
-                    const bool heldByPedal = sustainDown || (sostenutoDown && sostenutoCaptured.contains(event.data1));
+                    const bool heldByPedal = sustainDown || (sostenutoDown && sostenutoCaptured.contains(note.sequence));
                     if (heldByPedal) sustained.push_back(noteIndex);
                     break;
                 }
@@ -190,7 +192,8 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                         sostenutoDown = controllerValue(event) >= 64;
                         if (!wasDown && sostenutoDown) {
                             for (auto pendingIt = pending.cbegin(); pendingIt != pending.cend(); ++pendingIt) {
-                                if (!pendingIt->isEmpty()) sostenutoCaptured.insert(pendingIt.key());
+                                for (const auto& pendingNote : pendingIt.value())
+                                    sostenutoCaptured.insert(pendingNote.sequence);
                             }
                         } else if (wasDown && !sostenutoDown) {
                             releaseHeld(tick);

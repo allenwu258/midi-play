@@ -1,4 +1,5 @@
 #include "fallingnotesview.h"
+#include "domain/settings/playersettings.h"
 #if MIDI_PLAY_HAS_VULKAN
 #include "fallingnotesvulkanwindow.h"
 #endif
@@ -24,11 +25,22 @@ FallingNotesView::FallingNotesView(QWidget* parent)
     setObjectName(QStringLiteral("fallingNotesView"));
     setAttribute(Qt::WA_OpaquePaintEvent);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_frameTimer.setTimerType(Qt::PreciseTimer);
+    setRefreshRate(60);
+    connect(&m_frameTimer, &QChronoTimer::timeout, this, [this] {
+        if (!isVisible()) return;
+#if MIDI_PLAY_HAS_VULKAN
+        if (m_vulkanWindow) return;
+#endif
+        update();
+    });
 }
 
 void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
 {
     m_state.chart = std::move(chart);
+    m_state.effectsStartUs = 0;
+    m_visualClock.sample(0, m_state.chart ? m_state.chart->durationUs() : 0);
     if (m_state.chart) {
         m_noteIndex.rebuild(m_state.chart->notes());
         m_state.durationUs = m_state.chart->durationUs();
@@ -48,28 +60,50 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
     update();
 }
 
-void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs)
+void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs, qint64 sampledAtUs)
 {
     m_state.transportPositionUs = std::clamp<qint64>(positionUs, 0, std::max<qint64>(0, durationUs));
     m_state.durationUs = std::max<qint64>(0, durationUs);
+    m_visualClock.sample(m_state.transportPositionUs, m_state.durationUs, sampledAtUs);
     m_frameStateDirty = true;
 #if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setTransportPosition(m_state.transportPositionUs, m_state.durationUs);
 #endif
-    // PlaybackController is the single UI frame clock. Every published
-    // transport sample invalidates this view; the Qt event loop coalesces
-    // multiple update requests into one paint event when the UI is busy.
+    // Both consumers sample the same bounded presentation clock at draw time.
     update();
 }
 
 void FallingNotesView::setTransportState(midi_play::playback::State state)
 {
+    if (state == midi_play::playback::State::Playing && m_state.transportState != state)
+        resetTransientEffects(m_state.transportPositionUs);
     m_state.transportState = state;
+    m_visualClock.setPlaying(state == midi_play::playback::State::Playing);
+    if (state == midi_play::playback::State::Playing) m_frameTimer.start();
+    else m_frameTimer.stop();
     m_frameStateDirty = true;
 #if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setTransportState(state);
 #endif
     update();
+}
+
+void FallingNotesView::setPlaybackRate(int percent)
+{
+    m_visualClock.setRate(percent);
+}
+
+void FallingNotesView::setRefreshRate(int hz)
+{
+    m_frameTimer.setInterval(midi_play::settings::visualizationRefreshPeriod(hz));
+}
+
+void FallingNotesView::resetTransientEffects(qint64 positionUs)
+{
+    m_state.effectsStartUs = std::max<qint64>(0, positionUs);
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setEffectsStart(m_state.effectsStartUs);
+#endif
 }
 
 void FallingNotesView::setLoading(bool loading)
@@ -145,6 +179,8 @@ bool FallingNotesView::createVulkanView()
     }
     layout()->addWidget(m_vulkanContainer);
     m_vulkanWindow = window;
+    m_vulkanWindow->setVisualClock(&m_visualClock);
+    m_vulkanWindow->setEffectsStart(m_state.effectsStartUs);
     connect(window, &FallingNotesVulkanWindow::initializationFailed, this,
             [this](const QString& message) {
                 qWarning() << message;
@@ -186,6 +222,11 @@ void FallingNotesView::paintEvent(QPaintEvent* event)
         m_geometry = m_layoutEngine.layout(size(), m_state.chart.get(), m_state.lookAheadUs);
         m_geometryDirty = false;
         m_staticKeyboardDirty = true;
+    }
+    const qint64 displayedPosition = m_visualClock.position();
+    if (m_state.transportPositionUs != displayedPosition) {
+        m_state.transportPositionUs = displayedPosition;
+        m_frameStateDirty = true;
     }
     rebuildFrameState();
 

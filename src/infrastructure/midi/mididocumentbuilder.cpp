@@ -89,10 +89,11 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
         }
 
         for (const auto& note : normalizedTrack.notes) {
-            const music::Tick end = std::max(note.start + 1, note.audibleEnd);
+            const music::Tick end = std::max(note.start + 1, note.keyRelease);
             music::NoteEvent event;
             event.start = note.start;
             event.duration = std::max<music::Tick>(1, end - note.start);
+            event.sustainEnd = std::max(end, note.audibleEnd);
             event.pitch = note.pitch;
             event.velocity = note.velocity;
             event.channel = note.channel;

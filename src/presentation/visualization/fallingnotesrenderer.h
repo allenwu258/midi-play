@@ -3,6 +3,8 @@
 #include "domain/visualization/activenotelookup.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "noterendercache.h"
+#include "noteframestate.h"
+#include "noterastercache.h"
 #include "playbackoverlaytimeline.h"
 #include "scenegeometry.h"
 #include "textlayoutcache.h"
@@ -48,23 +50,6 @@ public:
     qsizetype activeNoteCount() const { return m_activeNoteCount; }
 
 private:
-    struct NoteStyleBatch {
-        QVector<QRectF> tails;
-        QVector<QRectF> inactiveBodies;
-        QVector<QRectF> activeBodies;
-        QVector<QLineF> inactiveAttackLines;
-        QVector<QLineF> activeAttackLines;
-
-        void clear()
-        {
-            tails.clear();
-            inactiveBodies.clear();
-            activeBodies.clear();
-            inactiveAttackLines.clear();
-            activeAttackLines.clear();
-        }
-    };
-
     void prepareScene(const PlaybackSceneGeometry& geometry,
                       const midi_play::visualization::PlaybackSceneState& state);
     void drawPitchBands(QPainter& painter, const PlaybackSceneGeometry& geometry) const;
@@ -86,14 +71,11 @@ private:
     PlaybackOverlayTimeline m_overlayTimeline;
     TextLayoutCache m_textLayoutCache;
     NoteRenderCache m_noteRenderCache;
-    QVector<NoteStyleBatch> m_noteBatches;
-    QVector<quint32> m_batchEpochs;
-    QVector<int> m_usedStyleIndices;
-    QVector<QLineF> m_tremoloLines;
+    NoteFrameState m_noteFrame;
+    NoteRasterCache m_noteRasterCache;
     QVector<QRectF> m_pitchBandRects;
     QVector<QRectF> m_blackKeyForegroundRects;
     quint64 m_keyboardGeometryBuildCount = 0;
-    quint32 m_batchEpoch = 0;
     qsizetype m_visibleNoteCount = 0;
     qsizetype m_activeNoteCount = 0;
 };

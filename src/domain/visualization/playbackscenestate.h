@@ -19,9 +19,10 @@ struct PlaybackSceneState {
     VisualTime transportPositionUs = 0;
     VisualTime durationUs = 0;
     VisualTime lookAheadUs = 5'000'000;
-    VisualTime afterglowUs = 160'000;
+    VisualTime afterglowUs = 240'000;
+    VisualTime effectsStartUs = 0;
     VisualTime visibilityGuardUs = 250'000;
-    VisualTime visibleWindowStartUs = -160'000;
+    VisualTime visibleWindowStartUs = -240'000;
     VisualTime visibleWindowEndUs = 5'000'000;
     std::span<const int> candidateNoteIndices;
     bool loading = false;

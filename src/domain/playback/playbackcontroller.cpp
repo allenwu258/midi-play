@@ -203,7 +203,7 @@ void PlaybackController::flushPositionUpdate()
     if (!m_positionThrottler.takeLatest(snapshot)) {
         return;
     }
-    emit positionChanged(snapshot.positionUs, snapshot.durationUs);
+    emit positionChanged(snapshot.positionUs, snapshot.durationUs, snapshot.sampledAtUs);
 }
 
 } // namespace midi_play::playback

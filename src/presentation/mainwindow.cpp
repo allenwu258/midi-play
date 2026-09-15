@@ -414,6 +414,16 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
             this, &MainWindow::updatePlaybackState);
     connect(m_service, &app::PlayerApplicationService::playbackRateChanged,
             m_playbackRateControl, &PlaybackRateControl::setRatePercent);
+    connect(m_service, &app::PlayerApplicationService::playbackRateChanged,
+            m_visualization, &visualization::FallingNotesView::setPlaybackRate);
+    connect(m_service, &app::PlayerApplicationService::playbackDiscontinuity,
+            m_visualization, &visualization::FallingNotesView::resetTransientEffects);
+    m_visualization->setPlaybackRate(m_service->playbackRatePercent());
+    m_visualization->setRefreshRate(m_service->visualizationRefreshRate());
+    if (m_settingsService) {
+        connect(m_settingsService, &app::SettingsService::visualizationRefreshRateChanged,
+                m_visualization, &visualization::FallingNotesView::setRefreshRate);
+    }
     connect(m_playbackRateControl, &PlaybackRateControl::ratePercentEdited,
             m_service, &app::PlayerApplicationService::setPlaybackRatePercent);
     connect(m_service, &app::PlayerApplicationService::soundFontLoaded, this, [this] {
@@ -614,7 +624,7 @@ void MainWindow::showSettings()
     m_settingsDialog->activateWindow();
 }
 
-void MainWindow::updatePosition(qint64 position, qint64 duration)
+void MainWindow::updatePosition(qint64 position, qint64 duration, qint64 sampledAtUs)
 {
     m_positionUs = std::clamp<qint64>(position, 0, std::max<qint64>(0, duration));
     m_durationUs = std::max<qint64>(0, duration);
@@ -636,7 +646,7 @@ void MainWindow::updatePosition(qint64 position, qint64 duration)
         updateTimeDisplay(m_positionUs, m_durationUs);
         updateMetadata(m_positionUs);
     }
-    m_visualization->setTransportPosition(m_positionUs, m_durationUs);
+    m_visualization->setTransportPosition(m_positionUs, m_durationUs, sampledAtUs);
 }
 
 void MainWindow::updatePlaybackState(playback::State state)

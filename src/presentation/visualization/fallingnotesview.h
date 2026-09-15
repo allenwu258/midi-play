@@ -7,10 +7,12 @@
 #include "domain/visualization/visiblenotewindowcache.h"
 #include "fallingnotesrenderer.h"
 #include "scenelayoutengine.h"
+#include "visualplaybackclock.h"
 
 #include <QImage>
 #include <QSize>
 #include <QWidget>
+#include <QChronoTimer>
 #if MIDI_PLAY_HAS_VULKAN
 #include <QVulkanInstance>
 #endif
@@ -32,7 +34,10 @@ public:
 
 public slots:
     void setChart(midi_play::visualization::VisualChartPtr chart);
-    void setTransportPosition(qint64 positionUs, qint64 durationUs);
+    void setTransportPosition(qint64 positionUs, qint64 durationUs, qint64 sampledAtUs = 0);
+    void setPlaybackRate(int percent);
+    void setRefreshRate(int hz);
+    void resetTransientEffects(qint64 positionUs);
     void setTransportState(midi_play::playback::State state);
     void setGraphicsMode(midi_play::settings::GraphicsMode mode);
     void setLoading(bool loading);
@@ -57,6 +62,8 @@ private:
     SceneLayoutEngine m_layoutEngine;
     FallingNotesRenderer m_renderer;
     PlaybackSceneGeometry m_geometry;
+    VisualPlaybackClock m_visualClock;
+    QChronoTimer m_frameTimer;
     QImage m_staticKeyboard;
     QRect m_staticKeyboardLogicalRect;
     QSize m_staticKeyboardPhysicalSize;

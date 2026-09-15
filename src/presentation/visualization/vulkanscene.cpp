@@ -17,7 +17,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
                           QSize size, qreal dpr, const QFont& font)
 {
     const bool chartChanged = m_chart != state.chart;
-    const bool layoutChanged = chartChanged || m_size != size;
+    const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs;
     if (chartChanged) {
         m_chart = state.chart;
         m_index = {};
@@ -28,6 +28,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     }
     if (layoutChanged) {
         m_size = size;
+        m_lookAheadUs = state.lookAheadUs;
         m_geometry = SceneLayoutEngine().layout(size, m_chart.get(), state.lookAheadUs);
     }
     if (m_atlas.isNull() || m_dpr != dpr || m_atlasFull || m_atlasY > 1536 || chartChanged) {
@@ -45,19 +46,13 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         state.transportPositionUs - state.afterglowUs,
         state.transportPositionUs + state.lookAheadUs, state.visibilityGuardUs);
     if (candidatesChanged || layoutChanged) rebuildNotes(state);
-    m_active.reset(m_chart ? m_chart->drumLanes().size() : 0);
-    m_visibleNoteCount = 0;
-    if (m_chart) {
-        for (int index : m_window.candidateNoteIndices()) {
-            const auto& note = m_chart->notes()[index];
-            if (note.startUs > state.transportPositionUs + state.lookAheadUs
-                || note.audibleEndUs < state.transportPositionUs - state.afterglowUs) continue;
-            ++m_visibleNoteCount;
-            if (state.transportState == midi_play::playback::State::Playing
-                && note.startUs <= state.transportPositionUs && note.audibleEndUs > state.transportPositionUs)
-                m_active.add(index, note);
-        }
-    }
+    auto frameState = state;
+    const auto& indices = m_window.candidateNoteIndices();
+    frameState.candidateNoteIndices = {indices.constData(), size_t(indices.size())};
+    frameState.updateVisibleWindow();
+    m_noteFrame.prepare(frameState, m_geometry, m_cache);
+    m_active = m_noteFrame.active();
+    m_visibleNoteCount = m_noteFrame.visibleCount();
     buildDecorations(state, font);
 }
 
@@ -78,10 +73,9 @@ void VulkanScene::rebuildNotes(const midi_play::visualization::PlaybackSceneStat
             quad.rect = {float(note->left), 0, float(note->width), 0};
             quad.times = {seconds(note->startUs, m_timeOriginUs), seconds(note->keyEndUs, m_timeOriginUs),
                           seconds(note->audibleEndUs, m_timeOriginUs), float(kind)};
-            quad.color = rgba(kind == 1 ? style->tailBrush.color() : style->fillBrush.color());
-            quad.border = rgba(style->inactiveBorderPen.color());
-            quad.activeBorder = rgba(style->activeBorderPen.color());
-            quad.options = {1, style->inactiveBorderPen.style() == Qt::DashLine ? 1.f : 0.f, 0, 0};
+            quad.color = rgba(kind == 1 ? style->material.tail : style->material.body);
+            quad.activeBorder = rgba(style->material.head);
+            quad.options = {1, (note->flags & midi_play::visualization::GhostNote) ? 1.f : 0.f, 0, 0};
             m_notes.push_back(quad);
         }
     }
@@ -177,8 +171,14 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
             if (it->measureStart) text(m_background, it->measureLabel, gridFont, {4,y-10,left-9,20}, m_theme.subtleText, Qt::AlignRight|Qt::AlignVCenter);
         }
     }
-    rect(m_foreground, {left,g.strikeLineY-5,right-left,10}, QColor(244,211,94,45));
-    rect(m_foreground, {left,g.strikeLineY-1,right-left,2}, m_theme.strikeLine);
+    rect(m_foreground, {left,g.strikeLineY-3,right-left,6}, QColor(244,211,94,18));
+    QColor strike = m_theme.strikeLine;
+    strike.setAlpha(145);
+    rect(m_foreground, {left,g.strikeLineY-0.5,right-left,1}, strike);
+    for (const auto& glow : m_noteFrame.glows()) {
+        rect(m_foreground, glow.rect, glow.color);
+        m_foreground.back().options[3] = 2;
+    }
     if (m_chart) {
         QFont labelFont(font); labelFont.setPointSizeF(10); labelFont.setWeight(QFont::DemiBold);
         qreal x = left + 8;
@@ -200,11 +200,19 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     for (bool black : {false, true}) {
         for (const auto& slot : g.pitches) {
             if (!slot.valid || slot.blackKey != black) continue;
-            const auto* style = m_cache.styleForNote(m_active.noteIndexForPitch(slot.pitch));
-            const QColor color = style ? (black ? style->activeBlackKeyBrush.color() : style->activeWhiteKeyBrush.color())
-                                       : (black ? m_theme.blackKey : m_theme.whiteKey);
+            const auto& light = m_noteFrame.key(slot.pitch);
+            const auto* style = m_cache.styleForNote(light.noteIndex);
+            const QColor base = black ? m_theme.blackKey : m_theme.whiteKey;
+            const QColor color = style ? illuminatedKeyColor(base, style->material.body,
+                light.strength * (black ? 0.70 : 0.60)) : base;
             rect(m_foreground, slot.keyRect.adjusted(black ? .5 : 0,0,-.5,black ? -1 : -.5),
-                 color, black ? m_theme.blackKeyBorder : m_theme.whiteKeyBorder, 1);
+                  color, black ? m_theme.blackKeyBorder : m_theme.whiteKeyBorder, 1);
+            if (style) {
+                QColor top = style->material.head;
+                top.setAlphaF(light.strength);
+                rect(m_foreground, {slot.keyRect.left() + (black ? 0.5 : 0), slot.keyRect.top(),
+                    slot.keyRect.width() - (black ? 1 : 0.5), black ? 4.0 : 5.0}, top);
+            }
         }
     }
     QFont keyFont(font); keyFont.setPointSizeF(7.5);
@@ -215,8 +223,11 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     }
     if (m_chart) {
         for (const auto& slot : g.drumSlots) {
-            const auto* style = m_cache.styleForNote(m_active.noteIndexForDrumLane(slot.lane));
-            rect(m_foreground,slot.keyRect.adjusted(0,0,-.5,-.5),style ? style->activeDrumKeyBrush.color() : QColor("#292d30"),QColor(255,255,255,35),1);
+            const auto& light = m_noteFrame.drum(slot.lane);
+            const auto* style = m_cache.styleForNote(light.noteIndex);
+            rect(m_foreground,slot.keyRect.adjusted(0,0,-.5,-.5),style
+                ? illuminatedKeyColor(QColor("#292d30"), style->material.body, light.strength * 0.70)
+                : QColor("#292d30"),QColor(255,255,255,35),1);
             if (slot.lane < m_chart->drumLanes().size() && slot.keyRect.width() >= 18)
                 text(m_foreground,m_chart->drumLanes()[slot.lane].name,keyFont,slot.keyRect.adjusted(3,4,-3,-4),m_theme.primaryText,Qt::AlignHCenter|Qt::AlignBottom,slot.keyRect.width()-5);
         }

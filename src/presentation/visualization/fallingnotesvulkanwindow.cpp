@@ -49,8 +49,9 @@ struct FrameConstants {
     float clipTop;
     float clipBottom;
     float dpr;
+    float bodyOpacity;
 };
-static_assert(sizeof(FrameConstants) == 32);
+static_assert(sizeof(FrameConstants) == 36);
 }
 
 class FallingNotesVulkanRenderer final : public QVulkanWindowRenderer {
@@ -412,7 +413,8 @@ void FallingNotesVulkanRenderer::startNextFrame()
         const float dpr = float(m_window->devicePixelRatio());
         FrameConstants constants {float(m_window->width()) * dpr, float(m_window->height()) * dpr,
             float((state.transportPositionUs - m_scene.timeOriginUs())/1'000'000.0), float(g.strikeLineY),
-            float(g.pixelsPerMicrosecond*1'000'000), float(g.fallingRect.top()), float(g.fallingRect.bottom()), dpr};
+            float(g.pixelsPerMicrosecond*1'000'000), float(g.fallingRect.top()), float(g.fallingRect.bottom()), dpr,
+            float(m_scene.bodyOpacity())};
         VkViewport viewport {0, 0, float(physical.width()), float(physical.height()), 0, 1};
         VkRect2D scissor {{0, 0}, begin.renderArea.extent};
         m_df->vkCmdSetViewport(command, 0, 1, &viewport);
@@ -459,7 +461,8 @@ midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneStat
 {
     midi_play::visualization::PlaybackSceneState result;
     result.chart = m_chart;
-    result.transportPositionUs = m_positionUs;
+    result.transportPositionUs = m_visualClock ? m_visualClock->position() : m_positionUs;
+    result.effectsStartUs = m_effectsStartUs;
     result.durationUs = m_durationUs;
     result.transportState = m_state;
     result.loading = m_loading;

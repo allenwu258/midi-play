@@ -1,5 +1,7 @@
 #include "playbackvisualizationprojector.h"
 #include "domain/music/musicrhythmgrid.h"
+#include "domain/music/playbacksegmentbounds.h"
+#include "noteoverlaplayout.h"
 
 #include <QHash>
 #include <QSet>
@@ -170,6 +172,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
     }
 
     const auto segments = document.playbackSegments();
+    const auto continuousEnds = music::continuousPlaybackEnds(segments);
     QVector<VisualNote> projectedNotes;
     for (int segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
         const auto& segment = segments[segmentIndex];
@@ -177,7 +180,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
             const auto& track = document.tracks()[trackIndex];
             for (const auto& note : track.notes) {
                 if (note.rest || note.start < segment.sourceStart || note.start >= segment.sourceEnd) continue;
-                const Tick availableDuration = std::max<Tick>(1, segment.sourceEnd - note.start);
+                const Tick availableDuration = std::max<Tick>(1, continuousEnds[segmentIndex] - note.start);
                 const Tick sourceDuration = std::max<Tick>(1, std::min(note.duration, availableDuration));
                 double durationFactor = 1.0;
                 if (note.staccato) durationFactor *= 0.5;
@@ -185,7 +188,9 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
                 const Tick keyDuration = std::clamp<Tick>(
                     static_cast<Tick>(std::llround(sourceDuration * durationFactor)), 1, availableDuration);
                 const Tick keyEnd = note.start + keyDuration;
-                const Tick audibleEnd = pedalExtendedEnd(track, note.start, keyEnd, segment.sourceEnd);
+                const Tick audibleEnd = note.sustainEnd >= 0
+                    ? std::clamp(note.sustainEnd, keyEnd, continuousEnds[segmentIndex])
+                    : pedalExtendedEnd(track, note.start, keyEnd, continuousEnds[segmentIndex]);
 
                 VisualNote visual;
                 visual.sourceNoteId = note.noteId;
@@ -247,21 +252,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
     int minimumPitch = 127;
     int maximumPitch = 0;
     quint64 instanceId = 1;
-    for (int begin = 0; begin < chart->m_notes.size();) {
-        int end = begin + 1;
-        while (end < chart->m_notes.size()
-               && chart->m_notes[end].startUs == chart->m_notes[begin].startUs
-               && chart->m_notes[end].pitch == chart->m_notes[begin].pitch
-               && chart->m_notes[end].isPercussion() == chart->m_notes[begin].isPercussion()) {
-            ++end;
-        }
-        const int count = end - begin;
-        for (int index = begin; index < end; ++index) {
-            chart->m_notes[index].coincidentIndex = index - begin;
-            chart->m_notes[index].coincidentCount = count;
-        }
-        begin = end;
-    }
+    assignNoteOverlapLanes(chart->m_notes);
     for (int index = 0; index < chart->m_notes.size(); ++index) {
         auto& note = chart->m_notes[index];
         note.instanceId = instanceId++;

@@ -91,7 +91,7 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
             const qreal left = geometry.pianoRect.left() + whiteOrdinal * whiteWidth;
             slot.keyRect = QRectF(left, geometry.keyboardRect.top(), whiteWidth, keyboardHeight);
             slot.centerX = left + whiteWidth * 0.5;
-            slot.noteWidth = std::max<qreal>(2.0, whiteWidth * 0.76);
+            slot.noteWidth = std::max<qreal>(1.0, whiteWidth * 0.46);
             ++whiteOrdinal;
         } else {
             const qreal center = geometry.pianoRect.left() + whiteOrdinal * whiteWidth;
@@ -99,7 +99,7 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
             slot.keyRect = QRectF(center - blackWidth * 0.5, geometry.keyboardRect.top(),
                                   blackWidth, keyboardHeight * 0.62);
             slot.centerX = center;
-            slot.noteWidth = std::max<qreal>(2.0, blackWidth * 0.82);
+            slot.noteWidth = std::max<qreal>(1.0, whiteWidth * 0.42);
         }
     }
 

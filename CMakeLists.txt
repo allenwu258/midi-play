@@ -82,6 +82,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/domain/visualization/activenotelookup.cpp
     src/domain/visualization/playbackvisualizationprojector.h
     src/domain/visualization/playbackvisualizationprojector.cpp
+    src/domain/visualization/noteoverlaplayout.h
+    src/domain/visualization/noteoverlaplayout.cpp
     src/domain/visualization/visiblenoteindex.h
     src/domain/visualization/visiblenoteindex.cpp
     src/domain/visualization/visiblenotewindowcache.h
@@ -165,6 +167,12 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/visualization/fallingnotesrenderer.cpp
     src/presentation/visualization/noterendercache.h
     src/presentation/visualization/noterendercache.cpp
+    src/presentation/visualization/notematerial.h
+    src/presentation/visualization/notematerial.cpp
+    src/presentation/visualization/noteframestate.h
+    src/presentation/visualization/noteframestate.cpp
+    src/presentation/visualization/noterastercache.h
+    src/presentation/visualization/noterastercache.cpp
     src/presentation/visualization/textlayoutcache.h
     src/presentation/visualization/textlayoutcache.cpp
     src/presentation/visualization/playbackoverlaytimeline.h
@@ -271,6 +279,13 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_note_visual_tests tests/notevisualtests.cpp)
+    target_link_libraries(midi_play_note_visual_tests PRIVATE midi_play_core)
+    add_test(NAME note_visual_semantics_and_rendering COMMAND midi_play_note_visual_tests -platform offscreen)
+    if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        set_tests_properties(note_visual_semantics_and_rendering PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+    endif()
     add_executable(midi_play_metronome_tests tests/metronometests.cpp)
     target_link_libraries(midi_play_metronome_tests PRIVATE midi_play_core)
     add_test(NAME metronome_timeline_and_readers COMMAND midi_play_metronome_tests)
@@ -315,6 +330,8 @@ if (BUILD_TESTING)
         src/domain/visualization/activenotelookup.cpp
         src/domain/visualization/playbackvisualizationprojector.h
         src/domain/visualization/playbackvisualizationprojector.cpp
+        src/domain/visualization/noteoverlaplayout.h
+        src/domain/visualization/noteoverlaplayout.cpp
         src/domain/visualization/visiblenoteindex.h
         src/domain/visualization/visiblenoteindex.cpp
         src/domain/visualization/visiblenotewindowcache.h
@@ -326,6 +343,12 @@ if (BUILD_TESTING)
         src/presentation/visualization/rasterrenderpolicy.cpp
         src/presentation/visualization/noterendercache.h
         src/presentation/visualization/noterendercache.cpp
+        src/presentation/visualization/notematerial.h
+        src/presentation/visualization/notematerial.cpp
+        src/presentation/visualization/noteframestate.h
+        src/presentation/visualization/noteframestate.cpp
+        src/presentation/visualization/noterastercache.h
+        src/presentation/visualization/noterastercache.cpp
         src/presentation/visualization/textlayoutcache.h
         src/presentation/visualization/textlayoutcache.cpp
         src/presentation/visualization/playbackoverlaytimeline.h

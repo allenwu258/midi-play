@@ -295,7 +295,12 @@ void PlayerApplicationService::setGraphicsMode(settings::GraphicsMode mode)
 void PlayerApplicationService::play() { if (m_controller) m_controller->play(); }
 void PlayerApplicationService::pause() { if (m_controller) m_controller->pause(); }
 void PlayerApplicationService::stop() { if (m_controller) m_controller->stop(); }
-void PlayerApplicationService::seek(qint64 microseconds) { if (m_controller) m_controller->seek(microseconds); }
+void PlayerApplicationService::seek(qint64 microseconds)
+{
+    if (!m_controller) return;
+    m_controller->seek(microseconds);
+    emit playbackDiscontinuity(m_positionUs);
+}
 
 void PlayerApplicationService::connectSession()
 {
@@ -309,10 +314,10 @@ void PlayerApplicationService::connectSession()
     connect(m_controller.get(), &playback::PlaybackController::soundFontLoadFinished,
             this, &PlayerApplicationService::completeSoundFontLoad);
     connect(m_controller.get(), &playback::PlaybackController::positionChanged, this,
-            [this](qint64 position, qint64 duration) {
+            [this](qint64 position, qint64 duration, qint64 sampledAtUs) {
                 m_positionUs = position;
                 m_durationUs = duration;
-                emit positionChanged(position, duration);
+                emit positionChanged(position, duration, sampledAtUs);
             });
 }
 

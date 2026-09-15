@@ -47,18 +47,6 @@ void require(bool condition, const char* message)
     }
 }
 
-QColor compositeOverOpaqueForTest(const QColor& foreground, const QColor& background)
-{
-    const int alpha = foreground.alpha();
-    const int inverseAlpha = 255 - alpha;
-    const auto channel = [alpha, inverseAlpha](int foregroundValue, int backgroundValue) {
-        return (foregroundValue * alpha + backgroundValue * inverseAlpha + 127) / 255;
-    };
-    return QColor(channel(foreground.red(), background.red()),
-                  channel(foreground.green(), background.green()),
-                  channel(foreground.blue(), background.blue()), 255);
-}
-
 MusicDocument repeatedDocument()
 {
     MusicDocument document;
@@ -299,22 +287,12 @@ void testNoteRenderCacheStaticFlags()
     const auto* style = cache.styleForNote(0);
     require(prepared && prepared->hasTail && prepared->tremolo,
             "tail and tremolo flags must be resolved once during chart preparation");
-    require(style && style->fillBrush.color().alpha() == 120,
-            "ghost alpha must be precomputed in the shared fill style");
-    require(style && style->activeWhiteKeyBrush.color().alpha() == 255
-                && style->activeBlackKeyBrush.color().alpha() == 255
-                && style->activeDrumKeyBrush.color().alpha() == 255,
-            "active key brushes must be opaque final colors independent of cached key pixels");
-    require(style->activeWhiteKeyBrush.color()
-                == compositeOverOpaqueForTest(style->fillBrush.color(), QColor("#101214"))
-                && style->activeDrumKeyBrush.color() == style->activeWhiteKeyBrush.color(),
-            "white and drum highlights must resolve against the keyboard background");
-    require(style->activeBlackKeyBrush.color()
-                == compositeOverOpaqueForTest(style->fillBrush.color(), QColor("#dedfd9")),
-            "black-key highlights must resolve against the underlying white-key layer");
-    require(style->inactiveBorderPen.style() == Qt::DashLine
-                && style->activeBorderPen.style() == Qt::DashLine,
-            "ghost border pens must be precomputed for both transport states");
+    require(style && style->material.body.alphaF() > 0.1
+                && style->material.body.alphaF() < 0.3,
+            "ghost material must remain visible and quieter than a normal note");
+    require(style->material.head.alphaF() > style->material.body.alphaF()
+                && style->material.body.alphaF() > style->material.tail.alphaF(),
+            "ghosts must preserve the attack, hold and pedal material hierarchy");
 }
 
 void testNoteRenderCacheDeduplicatesResolvedVelocityColor()

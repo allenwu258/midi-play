@@ -53,7 +53,8 @@ signals:
     void soundFontSelectionCommitted(const QString& path);
     void soundFontLoadFailed(const QString& message);
     void soundFontLoadingChanged(bool loading);
-    void positionChanged(qint64 position, qint64 duration);
+    void positionChanged(qint64 position, qint64 duration, qint64 sampledAtUs = 0);
+    void playbackDiscontinuity(qint64 position);
     void playbackStateChanged(midi_play::playback::State state);
     void visualizationReady(midi_play::visualization::VisualChartPtr chart);
     void graphicsModeChanged(midi_play::settings::GraphicsMode mode);

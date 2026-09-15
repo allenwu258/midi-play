@@ -15,6 +15,7 @@ public:
         qint64 positionUs = 0;
         qint64 durationUs = 0;
         quint64 sequence = 0;
+        qint64 sampledAtUs = 0;
     };
 
     void publish(qint64 positionUs, qint64 durationUs) noexcept;
@@ -24,6 +25,7 @@ public:
 private:
     std::atomic<qint64> m_positionUs {0};
     std::atomic<qint64> m_durationUs {0};
+    std::atomic<qint64> m_sampledAtUs {0};
     std::atomic<quint64> m_sequence {0};
     quint64 m_consumedSequence = 0;
 };

@@ -38,6 +38,7 @@ public:
     qint64 timeOriginUs() const { return m_timeOriginUs; }
     const PlaybackSceneGeometry& geometry() const { return m_geometry; }
     qsizetype visibleNoteCount() const { return m_visibleNoteCount; }
+    qreal bodyOpacity() const { return m_noteFrame.bodyOpacity(); }
 
 private:
     struct Glyph { QRect pixels; QSizeF size; };
@@ -55,10 +56,12 @@ private:
     midi_play::visualization::VisibleNoteWindowCache m_window;
     midi_play::visualization::ActiveNoteLookup m_active;
     NoteRenderCache m_cache;
+    NoteFrameState m_noteFrame;
     PlaybackOverlayTimeline m_overlay;
     PlaybackSceneGeometry m_geometry;
     VisualizationTheme m_theme;
     QSize m_size;
+    qint64 m_lookAheadUs = 0;
     qreal m_dpr = 1;
     QImage m_atlas;
     QHash<QString, Glyph> m_glyphs;

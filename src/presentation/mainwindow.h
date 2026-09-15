@@ -39,7 +39,7 @@ protected:
 private slots:
     void openMusicFile();
     void showSettings();
-    void updatePosition(qint64 position, qint64 duration);
+    void updatePosition(qint64 position, qint64 duration, qint64 sampledAtUs = 0);
     void updatePlaybackState(midi_play::playback::State state);
 
 private:

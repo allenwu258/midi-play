@@ -74,6 +74,10 @@ struct NoteEvent {
     quint64 tieGroupId = 0;
     int lane = -1;
     bool hasWrittenPitch = false;
+    // Imported performance timing, in source ticks. A negative value means
+    // pedal duration must be resolved from score controller events. duration
+    // always ends at key release, never at pedal release.
+    Tick sustainEnd = -1;
 };
 
 struct Measure {

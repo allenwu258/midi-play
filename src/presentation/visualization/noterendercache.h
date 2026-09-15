@@ -2,31 +2,18 @@
 
 #include "domain/visualization/visualchart.h"
 #include "scenegeometry.h"
+#include "notematerial.h"
 
 #include <QBrush>
-#include <QPen>
 #include <QSizeF>
 #include <QVector>
 
 namespace midi_play::presentation::visualization {
 
-struct NoteRenderPalette {
-    QColor keyboardBackground = QColor("#101214");
-    QColor whiteKey = QColor("#dedfd9");
-
-    bool operator==(const NoteRenderPalette&) const = default;
-};
-
 struct NoteRenderStyle {
-    QBrush fillBrush;
-    QBrush tailBrush;
-    QBrush activeWhiteKeyBrush;
-    QBrush activeBlackKeyBrush;
-    QBrush activeDrumKeyBrush;
-    QPen inactiveBorderPen;
-    QPen activeBorderPen;
-    QPen inactiveAttackLinePen;
-    QPen activeAttackLinePen;
+    NoteMaterial material;
+    QBrush bodyGradientBrush;
+    QBrush tailGradientBrush;
 };
 
 struct PreparedNoteRenderData {
@@ -45,13 +32,12 @@ struct PreparedNoteRenderData {
 };
 
 // Presentation-side immutable data derived from a VisualChart. Styles are
-// deduplicated by track/velocity/ghost state, while note X geometry is rebuilt
+// deduplicated by identity/register/velocity/ghost state; X geometry is rebuilt
 // only when the scene layout changes.
 class NoteRenderCache final {
 public:
     void prepare(const midi_play::visualization::VisualChartPtr& chart,
-                 const PlaybackSceneGeometry& geometry,
-                 const NoteRenderPalette& palette = {});
+                 const PlaybackSceneGeometry& geometry);
     void clear();
 
     const QVector<NoteRenderStyle>& styles() const { return m_styles; }
@@ -64,13 +50,10 @@ public:
     quint64 geometryBuildCount() const { return m_geometryBuildCount; }
 
 private:
-    void rebuildChart(const midi_play::visualization::VisualChartPtr& chart,
-                      const NoteRenderPalette& palette);
+    void rebuildChart(const midi_play::visualization::VisualChartPtr& chart);
     void rebuildGeometry(const PlaybackSceneGeometry& geometry);
 
     midi_play::visualization::VisualChartPtr m_chart;
-    NoteRenderPalette m_palette;
-    bool m_hasPalette = false;
     QSizeF m_geometrySize;
     QVector<NoteRenderStyle> m_styles;
     QVector<PreparedNoteRenderData> m_notes;

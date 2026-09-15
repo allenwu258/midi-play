@@ -3,6 +3,7 @@ layout(set=0,binding=0) uniform sampler2D atlas;
 layout(push_constant) uniform Frame {
     float width; float height; float position; float strike;
     float scale; float clipTop; float clipBottom; float dpr;
+    float bodyOpacity;
 } frame;
 layout(location=0) in vec2 local;
 layout(location=1) in vec2 world;
@@ -21,11 +22,26 @@ void main() {
         float edgeDistance = min(local.y, shape.y - local.y);
         float coverage = smoothstep(0.0, feather, edgeDistance);
         c.a *= coverage;
+    } else if (shape.w>0 && shape.w<4) {
+        if (shape.x<=0 || shape.y<=0) discard;
+        // Independent box coverage preserves right-angle corners and smooth
+        // subpixel motion, including note lanes narrower than one pixel.
+        vec2 coverage=clamp(local*frame.dpr+.5,0,1)
+                     -clamp((local-shape.xy)*frame.dpr+.5,0,1);
+        c.a*=coverage.x*coverage.y;
+        if (shape.w==1) {
+            c.a*=mix(.16,1,clamp(local.y/shape.y,0,1));
+        } else if (shape.w==2) {
+            float u=clamp(local.x/shape.x,0,1);
+            c.a*=u<.32 ? mix(.66,1,u/.32) : mix(1,.78,(u-.32)/.68);
+        }
     } else if (flags.z>0) {
         c.a *= texture(atlas,texcoord).a;
     } else if (flags.w>0) {
         vec2 normalized=local/shape.xy*2-1;
-        if (dot(normalized,normalized)>1) discard;
+        float radius=length(normalized);
+        if (radius>1) discard;
+        if (flags.w==2) c.a*=1-radius;
     } else if (shape.w==4) {
         float distanceToLine=abs(local.y-(6-6*local.x/max(shape.x,1)));
         if (distanceToLine>.7) discard;

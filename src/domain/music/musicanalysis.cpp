@@ -1,4 +1,5 @@
 #include "musicanalysis.h"
+#include <QHash>
 
 #include <algorithm>
 #include <array>
@@ -233,12 +234,13 @@ void MusicAnalyzer::buildChordsAndTies(MusicDocument& document)
                 track.drumMap.push_back({note.pitch, QStringLiteral("GM-%1").arg(note.pitch), note.pitch, 0});
             }
         }
+        QHash<QString, quint64> openTies;
         for (int i = 0; i < track.notes.size(); ++i) {
             auto& note = track.notes[i];
             if (!note.tieStart && !note.tieStop) continue;
-            if (note.tieStop && i > 0 && track.notes[i - 1].pitch == note.pitch
-                && track.notes[i - 1].voice == note.voice && track.notes[i - 1].tieGroupId != 0) {
-                note.tieGroupId = track.notes[i - 1].tieGroupId;
+            const QString key = QStringLiteral("%1/%2/%3").arg(note.staff).arg(note.voice).arg(note.pitch);
+            if (note.tieStop && openTies.contains(key)) {
+                note.tieGroupId = openTies.value(key);
             } else {
                 note.tieGroupId = nextTie++;
                 track.ties.push_back({note.tieGroupId, {}});
@@ -247,6 +249,8 @@ void MusicAnalyzer::buildChordsAndTies(MusicDocument& document)
                 return tie.id == note.tieGroupId;
             });
             if (tieIt != track.ties.end()) tieIt->noteIds.push_back(note.noteId);
+            if (note.tieStart) openTies.insert(key, note.tieGroupId);
+            else openTies.remove(key);
         }
     }
 }

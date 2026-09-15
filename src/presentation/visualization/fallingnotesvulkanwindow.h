@@ -3,6 +3,7 @@
 #include "domain/playback/playbacktypes.h"
 #include "domain/visualization/visualchart.h"
 #include "domain/visualization/playbackscenestate.h"
+#include "visualplaybackclock.h"
 
 #include <QVulkanWindow>
 #include <QFont>
@@ -27,6 +28,8 @@ public:
     void setLoading(bool value) { m_loading = value; if (value) m_error.clear(); requestUpdate(); }
     void setErrorMessage(const QString& message) { m_error = message; m_loading = false; requestUpdate(); }
     void frameCompleted(bool success);
+    void setVisualClock(const VisualPlaybackClock* clock) { m_visualClock = clock; }
+    void setEffectsStart(qint64 time) { m_effectsStartUs = time; }
 
     QVulkanWindowRenderer* createRenderer() override;
 
@@ -43,6 +46,8 @@ private:
     bool m_loading = false;
     QString m_error;
     QFont m_font;
+    const VisualPlaybackClock* m_visualClock = nullptr;
+    qint64 m_effectsStartUs = 0;
 };
 
 } // namespace midi_play::presentation::visualization

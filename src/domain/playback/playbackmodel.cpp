@@ -1,4 +1,5 @@
 #include "playbackmodel.h"
+#include "domain/music/playbacksegmentbounds.h"
 
 #include <algorithm>
 
@@ -177,6 +178,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
     m_context = std::make_shared<PlaybackContext>(m_document, m_timeline);
     PlaybackEventsRenderer renderer(m_context);
     const auto& segments = m_timeline->segments();
+    const auto continuousEnds = music::continuousPlaybackEnds(segments);
     for (const auto& track : m_document->tracks()) {
         QMap<QString, QVector<const music::NoteEvent*>> voiceGroups;
         for (const auto& note : track.notes) {
@@ -187,12 +189,13 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
             PlaybackData data;
             data.trackId = group.key();
             data.setupData.soundId = track.program == 0 ? QStringLiteral("piano") : QStringLiteral("midi-program-%1").arg(track.program);
-        for (const auto& segment : segments) {
+        for (int segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
+            const auto& segment = segments[segmentIndex];
             for (const auto* note : group.value()) {
                 if (note->start < segment.sourceStart || note->start >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (note->start - segment.sourceStart);
                 const music::Tick segmentDuration = std::max<music::Tick>(1,
-                    std::min(note->duration, segment.sourceEnd - note->start));
+                    std::min(note->duration, continuousEnds[segmentIndex] - note->start));
                 const qint64 timestamp = m_timeline->outputTickToMicroseconds(outputTick);
                 const qint64 end = m_timeline->outputTickToMicroseconds(outputTick + segmentDuration);
                 PlaybackEvent event;
