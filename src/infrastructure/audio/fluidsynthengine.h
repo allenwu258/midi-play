@@ -66,8 +66,12 @@ private:
     bool resolveSymbols(QString* error);
     bool initializeSynth(const QString& soundFontPath, QString* error,
                          bool dynamicSampleLoading = true);
+    void initializeMetronomeSynth();
+    void releaseMetronomeSynth();
+    static int renderAudio(void* context, int frames, int effectCount,
+                           float** effects, int outputCount, float** outputs) noexcept;
     bool loadSoundFontIntoActiveSynth(const QString& soundFontPath, QString* error);
-    bool loadIntoSynth(const QString& soundFontPath, int resetPresets, int* soundFontId,
+    bool loadIntoSynth(fluid_synth_t* synth, const QString& soundFontPath, int resetPresets, int* soundFontId,
                        QString* error);
     void updateFormatCapability(SoundFontFormat format, bool loaded, const QStringList& logs);
     void release();
@@ -77,10 +81,13 @@ private:
     fluid_settings_t* m_settings = nullptr;
     fluid_synth_t* m_synth = nullptr;
     fluid_audio_driver_t* m_driver = nullptr;
+    // Fixed before the driver starts; destroyed only after its callback stops.
+    // Independent voice pools, mixed into the same device buffers and clock.
+    fluid_settings_t* m_metronomeSettings = nullptr;
+    fluid_synth_t* m_metronomeSynth = nullptr;
     int m_soundFontId = -1;
     int m_metronomeSoundFontId = -1;
     std::unique_ptr<QTemporaryFile> m_metronomeFile;
-    bool m_metronomeChannelsReserved = false;
     bool m_metronomeReady = false;
     bool m_loaded = false;
     FluidSynthCapabilities m_capabilities;
@@ -88,6 +95,7 @@ private:
     using NewSettings = fluid_settings_t* (*)();
     using DeleteSettings = void (*)(fluid_settings_t*);
     using SettingsSetNum = int (*)(fluid_settings_t*, const char*, double);
+    using SettingsGetNum = int (*)(fluid_settings_t*, const char*, double*);
     using SettingsSetInt = int (*)(fluid_settings_t*, const char*, int);
     using SettingsSetStr = int (*)(fluid_settings_t*, const char*, const char*);
     using FluidLogFunction = void (*)(int, const char*, void*);
@@ -96,6 +104,9 @@ private:
     using NewSynth = fluid_synth_t* (*)(fluid_settings_t*);
     using DeleteSynth = int (*)(fluid_synth_t*);
     using NewAudioDriver = fluid_audio_driver_t* (*)(fluid_settings_t*, fluid_synth_t*);
+    using AudioCallback = int (*)(void*, int, int, float**, int, float**);
+    using NewAudioDriver2 = fluid_audio_driver_t* (*)(fluid_settings_t*, AudioCallback, void*);
+    using Process = int (*)(fluid_synth_t*, int, int, float**, int, float**);
     using DeleteAudioDriver = void (*)(fluid_audio_driver_t*);
     using Sfload = int (*)(fluid_synth_t*, const char*, int);
     using Sfunload = int (*)(fluid_synth_t*, int, int);
@@ -109,11 +120,11 @@ private:
     using SystemReset = int (*)(fluid_synth_t*);
     using SetChannelType = int (*)(fluid_synth_t*, int, int);
     using AllSoundsOff = int (*)(fluid_synth_t*, int);
-    using CountMidiChannels = int (*)(fluid_synth_t*);
 
     NewSettings m_newSettings = nullptr;
     DeleteSettings m_deleteSettings = nullptr;
     SettingsSetNum m_settingsSetNum = nullptr;
+    SettingsGetNum m_settingsGetNum = nullptr;
     SettingsSetInt m_settingsSetInt = nullptr;
     SettingsSetStr m_settingsSetStr = nullptr;
     SetLogFunction m_setLogFunction = nullptr;
@@ -121,6 +132,8 @@ private:
     NewSynth m_newSynth = nullptr;
     DeleteSynth m_deleteSynth = nullptr;
     NewAudioDriver m_newAudioDriver = nullptr;
+    NewAudioDriver2 m_newAudioDriver2 = nullptr;
+    Process m_process = nullptr;
     DeleteAudioDriver m_deleteAudioDriver = nullptr;
     Sfload m_sfload = nullptr;
     Sfunload m_sfunload = nullptr;
@@ -134,8 +147,7 @@ private:
     SystemReset m_systemReset = nullptr;
     SetChannelType m_setChannelType = nullptr;
     AllSoundsOff m_allSoundsOff = nullptr;
-    CountMidiChannels m_countMidiChannels = nullptr;
-    static constexpr int kMetronomeChannel = 16;
+    static constexpr int kMetronomeChannel = 0;
 };
 
 } // namespace midi_play::audio

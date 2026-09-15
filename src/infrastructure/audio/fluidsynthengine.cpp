@@ -141,6 +141,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_newSettings = reinterpret_cast<NewSettings>(resolve("new_fluid_settings"));
     m_deleteSettings = reinterpret_cast<DeleteSettings>(resolve("delete_fluid_settings"));
     m_settingsSetNum = reinterpret_cast<SettingsSetNum>(resolve("fluid_settings_setnum"));
+    m_settingsGetNum = reinterpret_cast<SettingsGetNum>(resolve("fluid_settings_getnum"));
     m_settingsSetInt = reinterpret_cast<SettingsSetInt>(resolve("fluid_settings_setint"));
     m_settingsSetStr = reinterpret_cast<SettingsSetStr>(resolve("fluid_settings_setstr"));
     m_setLogFunction = reinterpret_cast<SetLogFunction>(resolve("fluid_set_log_function"));
@@ -148,6 +149,8 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_newSynth = reinterpret_cast<NewSynth>(resolve("new_fluid_synth"));
     m_deleteSynth = reinterpret_cast<DeleteSynth>(resolve("delete_fluid_synth"));
     m_newAudioDriver = reinterpret_cast<NewAudioDriver>(resolve("new_fluid_audio_driver"));
+    m_newAudioDriver2 = reinterpret_cast<NewAudioDriver2>(resolve("new_fluid_audio_driver2"));
+    m_process = reinterpret_cast<Process>(resolve("fluid_synth_process"));
     m_deleteAudioDriver = reinterpret_cast<DeleteAudioDriver>(resolve("delete_fluid_audio_driver"));
     m_sfload = reinterpret_cast<Sfload>(resolve("fluid_synth_sfload"));
     m_sfunload = reinterpret_cast<Sfunload>(resolve("fluid_synth_sfunload"));
@@ -161,7 +164,6 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_systemReset = reinterpret_cast<SystemReset>(resolve("fluid_synth_system_reset"));
     m_setChannelType = reinterpret_cast<SetChannelType>(resolve("fluid_synth_set_channel_type"));
     m_allSoundsOff = reinterpret_cast<AllSoundsOff>(resolve("fluid_synth_all_sounds_off"));
-    m_countMidiChannels = reinterpret_cast<CountMidiChannels>(resolve("fluid_synth_count_midi_channels"));
 
     if (!m_newSettings || !m_deleteSettings || !m_newSynth || !m_deleteSynth || !m_sfload
         || !m_programSelect || !m_noteOn || !m_noteOff || !m_systemReset
@@ -196,7 +198,6 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         // samples and catches codec/data errors before the user presses Play.
         m_settingsSetInt(m_settings, "synth.dynamic-sample-loading",
                          dynamicSampleLoading ? 1 : 0);
-        m_metronomeChannelsReserved = m_settingsSetInt(m_settings, "synth.midi-channels", 32) == 0;
     }
 
     m_synth = m_newSynth(m_settings);
@@ -205,13 +206,53 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         release();
         return false;
     }
-    m_metronomeChannelsReserved = m_metronomeChannelsReserved && m_countMidiChannels
-        && m_countMidiChannels(m_synth) > kMetronomeChannel;
-    if (!loadIntoSynth(soundFontPath, 1, &m_soundFontId, error)) {
+    if (!loadIntoSynth(m_synth, soundFontPath, 1, &m_soundFontId, error)) {
         release();
         return false;
     }
+    if (dynamicSampleLoading) initializeMetronomeSynth();
     return true;
+}
+
+void FluidSynthEngine::initializeMetronomeSynth()
+{
+    // An optional feature must never reduce song polyphony or prevent playback.
+    if (!m_newAudioDriver2 || !m_process || !m_settingsSetInt || !m_settingsSetNum
+        || !m_settingsGetNum || !m_setChannelType || !m_allSoundsOff || !m_cc) return;
+    double sampleRate = 0;
+    if (m_settingsGetNum(m_settings, "synth.sample-rate", &sampleRate) != 0) return;
+    m_metronomeSettings = m_newSettings();
+    if (!m_metronomeSettings) return;
+    const bool configured = m_settingsSetNum(m_metronomeSettings, "synth.sample-rate", sampleRate) == 0
+        && m_settingsSetNum(m_metronomeSettings, "synth.gain", 0.8) == 0
+        && m_settingsSetInt(m_metronomeSettings, "synth.polyphony", 16) == 0
+        && m_settingsSetInt(m_metronomeSettings, "synth.reverb.active", 0) == 0
+        && m_settingsSetInt(m_metronomeSettings, "synth.chorus.active", 0) == 0
+        && m_settingsSetInt(m_metronomeSettings, "synth.dynamic-sample-loading", 0) == 0;
+    if (configured) m_metronomeSynth = m_newSynth(m_metronomeSettings);
+    if (!m_metronomeSynth) releaseMetronomeSynth();
+}
+
+int FluidSynthEngine::renderAudio(void* context, int frames, int effectCount,
+                                  float** effects, int outputCount, float** outputs) noexcept
+{
+    auto& engine = *static_cast<FluidSynthEngine*>(context);
+    // FluidSynth drivers supply zeroed buffers. process() ADDS samples, so two
+    // synths need no intermediate buffers, allocation, locks or Qt calls here.
+    // Preserve song reverb/chorus on drivers with no separate effect outputs.
+    float* mixedEffects[2] {};
+    if (effectCount == 0 && outputCount >= 2) {
+        mixedEffects[0] = outputs[0];
+        mixedEffects[1] = outputs[1];
+        effects = mixedEffects;
+        effectCount = 2;
+    }
+    const int songResult = engine.m_process(engine.m_synth, frames, effectCount, effects,
+                                             outputCount, outputs);
+    // The click synth has no effects and a single stereo output group.
+    const int clickResult = engine.m_process(engine.m_metronomeSynth, frames, 0, nullptr,
+                                              std::min(outputCount, 2), outputs);
+    return songResult == 0 && clickResult == 0 ? 0 : -1;
 }
 
 bool FluidSynthEngine::validateSoundFont(const QString& soundFontPath, QString* error)
@@ -231,7 +272,11 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
     if (!initializeSynth(soundFontPath, error)) return false;
 
     // FluidSynth owns the realtime audio thread through its native driver.
-    m_driver = m_newAudioDriver(m_settings, m_synth);
+    if (m_metronomeSynth) {
+        m_driver = m_newAudioDriver2(m_settings, &FluidSynthEngine::renderAudio, this);
+        if (!m_driver) releaseMetronomeSynth();
+    }
+    if (!m_driver) m_driver = m_newAudioDriver(m_settings, m_synth);
     if (!m_driver) {
         if (error) *error = QStringLiteral("无法创建 FluidSynth 音频驱动");
         release();
@@ -257,7 +302,7 @@ bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath
     // replacement. A malformed file therefore cannot silence the previous
     // source or force the audio device through a second open/close cycle.
     int candidateId = -1;
-    if (!loadIntoSynth(soundFontPath, 0, &candidateId, error)) {
+    if (!loadIntoSynth(m_synth, soundFontPath, 0, &candidateId, error)) {
         return false;
     }
 
@@ -271,7 +316,7 @@ bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath
     return true;
 }
 
-bool FluidSynthEngine::loadIntoSynth(const QString& soundFontPath, int resetPresets,
+bool FluidSynthEngine::loadIntoSynth(fluid_synth_t* synth, const QString& soundFontPath, int resetPresets,
                                      int* soundFontId, QString* error)
 {
     QString inspectionError;
@@ -295,7 +340,7 @@ bool FluidSynthEngine::loadIntoSynth(const QString& soundFontPath, int resetPres
     QStringList logs;
     ScopedFluidLogCapture capture(&logs);
     const QByteArray encodedPath = soundFontPath.toUtf8();
-    const int id = m_sfload(m_synth, encodedPath.constData(), resetPresets);
+    const int id = m_sfload(synth, encodedPath.constData(), resetPresets);
     updateFormatCapability(inspection.format, id >= 0, logs);
     if (id < 0) {
         if (error) *error = soundFontLoadError(soundFontPath, inspection.format, logs);
@@ -345,9 +390,8 @@ bool FluidSynthEngine::supportsMetronome() const
 bool FluidSynthEngine::prepareMetronome(QString* error)
 {
     if (error) error->clear();
-    if (!m_loaded || !m_metronomeChannelsReserved || !m_setChannelType
-        || !m_allSoundsOff || !m_cc) {
-        if (error) *error = QStringLiteral("当前音频引擎无法提供独立的节拍器通道");
+    if (!m_loaded || !m_metronomeSynth) {
+        if (error) *error = QStringLiteral("当前音频引擎无法提供独立的节拍器合成与混音输出");
         return false;
     }
     if (m_metronomeSoundFontId < 0) {
@@ -365,9 +409,9 @@ bool FluidSynthEngine::prepareMetronome(QString* error)
         }
         const QString path = file->fileName();
         file->close();
-        // Keep the file alive as long as the synth: dynamic sample loading can
-        // reopen it later. Loading with reset=0 preserves all song channels.
-        if (!loadIntoSynth(path, 0, &m_metronomeSoundFontId, error)) return false;
+        // The click synth eagerly loads these tiny samples off the audio thread.
+        // Keep its backing file alive until the synth is released.
+        if (!loadIntoSynth(m_metronomeSynth, path, 0, &m_metronomeSoundFontId, error)) return false;
         m_metronomeFile = std::move(file);
     }
     m_metronomeReady = configureMetronomeChannel();
@@ -377,36 +421,36 @@ bool FluidSynthEngine::prepareMetronome(QString* error)
 
 bool FluidSynthEngine::configureMetronomeChannel()
 {
-    if (!m_synth || m_metronomeSoundFontId < 0 || !m_setChannelType || !m_cc) return false;
+    if (!m_metronomeSynth || m_metronomeSoundFontId < 0) return false;
     // This bank/preset exists only in the bundled font. Always select by font
     // ID, bypassing the ordinary channel % 16 path and user SoundFont fallback.
-    if (m_setChannelType(m_synth, kMetronomeChannel, 1) != 0
-        || m_programSelect(m_synth, kMetronomeChannel, m_metronomeSoundFontId, 128, 127) != 0) return false;
+    if (m_setChannelType(m_metronomeSynth, kMetronomeChannel, 1) != 0
+        || m_programSelect(m_metronomeSynth, kMetronomeChannel, m_metronomeSoundFontId, 128, 127) != 0) return false;
     for (int controller : {64, 66, 91, 93}) {
-        if (m_cc(m_synth, kMetronomeChannel, controller, 0) != 0) return false;
+        if (m_cc(m_metronomeSynth, kMetronomeChannel, controller, 0) != 0) return false;
     }
-    return m_cc(m_synth, kMetronomeChannel, 7, 100) == 0
-        && m_cc(m_synth, kMetronomeChannel, 11, 127) == 0;
+    return m_cc(m_metronomeSynth, kMetronomeChannel, 7, 100) == 0
+        && m_cc(m_metronomeSynth, kMetronomeChannel, 11, 127) == 0;
 }
 
 void FluidSynthEngine::submitMetronomeClick(bool accent)
 {
     if (!supportsMetronome()) return;
     // Finite, non-looping 60 ms samples need no delayed note-off task.
-    m_noteOn(m_synth, kMetronomeChannel, accent ? 60 : 61, 100);
+    m_noteOn(m_metronomeSynth, kMetronomeChannel, accent ? 60 : 61, 100);
 }
 
 void FluidSynthEngine::stopMetronome()
 {
-    if (m_synth && m_metronomeChannelsReserved && m_allSoundsOff)
-        m_allSoundsOff(m_synth, kMetronomeChannel);
+    if (m_metronomeSynth && m_allSoundsOff)
+        m_allSoundsOff(m_metronomeSynth, kMetronomeChannel);
 }
 
 bool FluidSynthEngine::flush()
 {
     if (!m_loaded) return false;
+    stopMetronome();
     const bool reset = m_systemReset && m_systemReset(m_synth) == 0;
-    if (m_metronomeSoundFontId >= 0) m_metronomeReady = configureMetronomeChannel();
     return reset;
 }
 
@@ -499,13 +543,21 @@ void FluidSynthEngine::release()
     m_driver = nullptr;
     if (m_synth && m_deleteSynth) m_deleteSynth(m_synth);
     m_synth = nullptr;
-    m_metronomeReady = false;
-    m_metronomeChannelsReserved = false;
-    m_metronomeSoundFontId = -1;
-    m_metronomeFile.reset();
+    releaseMetronomeSynth();
     if (m_settings && m_deleteSettings) m_deleteSettings(m_settings);
     m_settings = nullptr;
     m_soundFontId = -1;
+}
+
+void FluidSynthEngine::releaseMetronomeSynth()
+{
+    if (m_metronomeSynth && m_deleteSynth) m_deleteSynth(m_metronomeSynth);
+    m_metronomeSynth = nullptr;
+    if (m_metronomeSettings && m_deleteSettings) m_deleteSettings(m_metronomeSettings);
+    m_metronomeSettings = nullptr;
+    m_metronomeReady = false;
+    m_metronomeSoundFontId = -1;
+    m_metronomeFile.reset();
 }
 
 } // namespace midi_play::audio

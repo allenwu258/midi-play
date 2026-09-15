@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QTemporaryFile>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -23,7 +24,12 @@ struct FluidSynthEngineTestAccess {
         return reinterpret_cast<Function>(engine.m_library.resolve(name));
     }
     static fluid_synth_t* synth(FluidSynthEngine& engine) { return engine.m_synth; }
+    static fluid_synth_t* clickSynth(FluidSynthEngine& engine) { return engine.m_metronomeSynth; }
     static int clickFont(FluidSynthEngine& engine) { return engine.m_metronomeSoundFontId; }
+    static int render(FluidSynthEngine& engine, int frames, float** output)
+    {
+        return FluidSynthEngine::renderAudio(&engine, frames, 0, nullptr, 2, output);
+    }
 };
 }
 
@@ -240,13 +246,15 @@ void testFluidSynthAudio()
     require(prepared && engine.supportsMetronome(), qPrintable(error));
     const int clickFont = Access::clickFont(engine);
     auto* synth = Access::synth(engine);
-    const auto render = Access::resolve<int (*)(fluid_synth_t*, int, void*, int, int, void*, int, int)>(engine, "fluid_synth_write_float");
+    auto* clickSynth = Access::clickSynth(engine);
+    require(clickSynth && clickSynth != synth, "clicks must have an independent voice pool");
     const auto program = Access::resolve<int (*)(fluid_synth_t*, int, int*, int*, int*)>(engine, "fluid_synth_get_program");
     const auto cc = Access::resolve<int (*)(fluid_synth_t*, int, int, int*)>(engine, "fluid_synth_get_cc");
-    require(render && program && cc, "offline audio inspection API");
+    require(program && cc, "offline audio inspection API");
     auto energy = [&](int frames) {
         QVector<float> left(frames), right(frames);
-        require(render(synth, frames, left.data(), 0, 1, right.data(), 0, 1) == 0, "render actual FluidSynth frames");
+        float* output[] {left.data(), right.data()};
+        require(Access::render(engine, frames, output) == 0, "render through the production mixing callback");
         double sum = 0;
         for (int i = 0; i < frames; ++i) sum += left[i] * left[i] + right[i] * right[i];
         return sum;
@@ -266,16 +274,16 @@ void testFluidSynthAudio()
     int value = 0;
     cc(synth, 0, 64, &value);
     require(value == 127, "song sustain survives metronome stop");
-    cc(synth, 16, 64, &value);
+    cc(clickSynth, 0, 64, &value);
     require(value == 0, "private channel excludes sustain");
-    cc(synth, 16, 91, &value);
+    cc(clickSynth, 0, 91, &value);
     require(value == 0, "private channel excludes song reverb");
     engine.flush();
     const bool replaced = engine.load(userPath, &error) && engine.prepareMetronome(&error);
     require(replaced, qPrintable(error));
     engine.flush();
     int font = -1, bank = -1, preset = -1;
-    require(program(synth, 16, &font, &bank, &preset) == 0
+    require(program(clickSynth, 0, &font, &bank, &preset) == 0
         && font == clickFont && bank == 128 && preset == 127, "restore private font after reset and replacement");
     energy(22050); // Drain any pre-existing song reverb after the reset.
     engine.submitMetronomeClick(true);
@@ -284,6 +292,54 @@ void testFluidSynthAudio()
     engine.stopMetronome();
     require(energy(4410) < strong * 0.001, "stop cancels only the click voice immediately");
     std::printf("FluidSynth click energy: strong=%g weak=%g tail=%g\n", strong, weak, tail);
+
+    // Give the test font two sample layers across the full keyboard. Fill the
+    // actual song voice pool, including layered presets, before adding clicks.
+    const int igen = data.indexOf("igen");
+    require(igen > 0, "instrument generators");
+    for (int i = 0; i < 24; ++i) {
+        const int offset = igen + 8 + i * 4;
+        if (static_cast<unsigned char>(data[offset]) == 43 && data[offset + 1] == 0) {
+            data[offset + 2] = 0;
+            data[offset + 3] = 127;
+        }
+    }
+    QTemporaryFile layeredFont;
+    require(layeredFont.open() && layeredFont.write(data) == data.size()
+        && layeredFont.flush(), "layered test font");
+    const auto layeredPath = layeredFont.fileName();
+    layeredFont.close();
+    require(engine.load(layeredPath, &error), qPrintable(error));
+    engine.flush();
+    energy(22050);
+    const auto polyphony = Access::resolve<int (*)(fluid_synth_t*)>(engine, "fluid_synth_get_polyphony");
+    const auto voiceList = Access::resolve<void (*)(fluid_synth_t*, void**, int, int)>(engine, "fluid_synth_get_voicelist");
+    const auto playing = Access::resolve<int (*)(const void*)>(engine, "fluid_voice_is_playing");
+    const auto voiceId = Access::resolve<unsigned int (*)(const void*)>(engine, "fluid_voice_get_id");
+    require(polyphony && voiceList && playing && voiceId, "voice pressure inspection API");
+    auto voices = [&](fluid_synth_t* target) {
+        QVector<void*> list(polyphony(target), nullptr);
+        voiceList(target, list.data(), list.size(), -1);
+        QVector<unsigned int> ids;
+        for (auto* voice : list) if (voice && playing(voice)) ids.push_back(voiceId(voice));
+        std::sort(ids.begin(), ids.end());
+        return ids;
+    };
+    const int capacity = polyphony(synth);
+    for (int channel = 0; channel < 16 && voices(synth).size() < capacity; ++channel) {
+        require(engine.configureTrack(channel, 0, &error), qPrintable(error));
+        for (int key = 21; key <= 108 && voices(synth).size() < capacity; ++key)
+            engine.noteOn(channel, key, 100);
+    }
+    const auto before = voices(synth);
+    require(before.size() == capacity, "test must exhaust the real song voice pool");
+    for (int i = 0; i < 100; ++i) engine.submitMetronomeClick(i % 2 == 0);
+    require(!voices(clickSynth).isEmpty(), "clicks must play under song polyphony pressure");
+    require(voices(synth) == before, "clicks must preserve every song voice ID at full polyphony");
+    engine.stopMetronome();
+    require(voices(synth) == before, "stopping overloaded clicks must preserve every song voice");
+    require(energy(64) > 0.001, "song audio survives click pressure and cancellation");
+    std::printf("FluidSynth polyphony isolation: preserved %d song voices through 100 clicks\n", capacity);
 }
 } // namespace
 

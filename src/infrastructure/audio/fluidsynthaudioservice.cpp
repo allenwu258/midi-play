@@ -32,7 +32,7 @@ playback::PlaybackClockSource FluidSynthAudioService::clockSource() const
 }
 bool FluidSynthAudioService::supportsTimedEvents() const { return false; }
 bool FluidSynthAudioService::supportsPerNoteExpression() const { return false; }
-// FluidSynth reserves a private MIDI channel during initialization. Report the
+// FluidSynth creates a separate click synth during initialization. Report the
 // backend contract before a SoundFont is loaded so the session can expose the
 // control contract before load; prepareMetronome reports actual readiness.
 bool FluidSynthAudioService::supportsMetronome() const { return true; }
