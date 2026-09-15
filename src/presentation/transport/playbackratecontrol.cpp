@@ -77,17 +77,17 @@ PlaybackRateControl::PlaybackRateControl(QWidget* parent)
             });
 
     setStyleSheet(QStringLiteral(R"(
-        QToolButton#playbackRateButton { color: #e6fff6; background: #27453d; border: 1px solid #3c7766; border-radius: 6px; font-weight: 600; }
+        QToolButton#playbackRateButton { color: #e6fff6; background: #27453d; border: 1px solid #3c7766; border-radius: 0px; font-weight: 600; }
         QToolButton#playbackRateButton:hover, QToolButton#playbackRateButton:focus { background: #326153; border-color: #55c9a4; }
         QToolButton#playbackRateButton:pressed { background: #1d3831; }
-        QFrame#playbackRatePopup { background: #202528; border: 1px solid #4e625b; border-radius: 6px; }
+        QFrame#playbackRatePopup { background: #202528; border: 1px solid #4e625b; border-radius: 0px; }
         QLabel#playbackRateLabel { color: #e6ebe8; font-size: 12px; }
-        QSpinBox#playbackRateSpinBox { min-height: 28px; padding: 2px 6px; background: #2a3033; color: #f0f1ed; border: 1px solid #4a5652; border-radius: 4px; }
+        QSpinBox#playbackRateSpinBox { min-height: 28px; padding: 2px 6px; background: #2a3033; color: #f0f1ed; border: 1px solid #4a5652; border-radius: 0px; }
         QSpinBox#playbackRateSpinBox:focus { border-color: #55c9a4; }
-        QSlider#playbackRateSlider::groove:horizontal { height: 5px; background: #3b4542; border-radius: 2px; }
-        QSlider#playbackRateSlider::sub-page:horizontal { background: #35bd94; border-radius: 2px; }
-        QSlider#playbackRateSlider::add-page:horizontal { background: #3b4542; border-radius: 2px; }
-        QSlider#playbackRateSlider::handle:horizontal { width: 16px; height: 16px; margin: -6px 0; border-radius: 8px; background: #f7faf8; }
+        QSlider#playbackRateSlider::groove:horizontal { height: 5px; background: #3b4542; border-radius: 0px; }
+        QSlider#playbackRateSlider::sub-page:horizontal { background: #35bd94; border-radius: 0px; }
+        QSlider#playbackRateSlider::add-page:horizontal { background: #3b4542; border-radius: 0px; }
+        QSlider#playbackRateSlider::handle:horizontal { width: 16px; height: 16px; margin: -6px 0; border-radius: 0px; background: #f7faf8; }
         QSlider#playbackRateSlider::handle:horizontal:hover { background: #a9f5d8; }
     )"));
     setRatePercent(m_ratePercent);

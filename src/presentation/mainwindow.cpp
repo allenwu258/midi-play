@@ -316,7 +316,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         QToolButton:pressed { background: #34383b; }
         QToolButton:disabled { color: #676c68; }
         QToolButton#playButton, QToolButton#pauseButton, QToolButton#stopButton {
-            border: 1px solid #4b5350; border-radius: 6px; padding: 5px;
+            border: 1px solid #4b5350; border-radius: 0px; padding: 5px;
         }
         QToolButton#playButton { background: #176b56; }
         QToolButton#playButton:hover { background: #21866b; border-color: #48c9a2; }
@@ -329,7 +329,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         QToolButton#stopButton:pressed { background: #56252c; }
         QToolButton#playButton:disabled, QToolButton#pauseButton:disabled,
         QToolButton#stopButton:disabled { background: #24282a; border-color: #363b3b; }
-        QToolButton#metronomeButton { color: #eaf2ff; background: #314259; border: 1px solid #5a7395; border-radius: 6px; font-weight: 600; }
+        QToolButton#metronomeButton { color: #eaf2ff; background: #314259; border: 1px solid #5a7395; border-radius: 0px; font-weight: 600; }
         QToolButton#metronomeButton:hover { background: #405878; border-color: #8ab8ef; }
         QToolButton#metronomeButton:checked { color: #fff8d5; background: #725e22; border-color: #e7c75d; }
         QToolButton#metronomeButton:checked:hover { background: #927b2d; }
