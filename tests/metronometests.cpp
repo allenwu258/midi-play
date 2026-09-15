@@ -117,6 +117,50 @@ void testMetersAndTempo()
         1500000, 1750000, 2000000, 2250000, 2500000, 2750000});
 }
 
+void testClickUnitPhase()
+{
+    auto score = document(3840);
+    score->metronomeUnits() = {{0, 1}, {240, 1}, {840, 1}, {2280, 1}};
+    expectTimes(timeline(score), {0, 500000, 1000000, 1500000,
+                                  2000000, 2500000, 3000000, 3500000});
+    // A real tempo change changes elapsed time, never the quarter-note phase.
+    score->tempos().push_back({240, 60});
+    expectTimes(timeline(score), {0, 750000, 1750000, 2750000,
+                                  3750000, 4750000, 5750000, 6750000});
+    // Changing to an eighth at an off-grid point must wait for the next
+    // eighth on the existing bar grid; it must not insert an offbeat click.
+    score = document(1920);
+    score->metronomeUnits() = {{0, 1}, {360, 0.5}};
+    expectTimes(timeline(score), {0, 500000, 750000, 1000000, 1250000, 1500000, 1750000});
+
+    score = document(2400);
+    music::Measure pickup;
+    pickup.duration = 480;
+    pickup.implicit = true;
+    music::Measure bar;
+    bar.start = 480;
+    bar.duration = 1920;
+    bar.repeatStart = bar.repeatEnd = true;
+    score->tracks()[0].measures = {pickup, bar};
+    score->metronomeUnits() = {{0, 1}, {120, 1}, {720, 1}};
+    score->rebuildMeasureGrid();
+    const auto grid = timeline(score);
+    expectTimes(grid, {0, 500000, 1000000, 1500000, 2000000,
+                       2500000, 3000000, 3500000, 4000000});
+    require(grid.beats()[0].accent == MetronomeAccent::Beat
+        && grid.beats()[1].accent == MetronomeAccent::Measure
+        && grid.beats()[5].accent == MetronomeAccent::Measure,
+        "unit annotations preserve pickup and repeated bar accents");
+
+    QTemporaryFile xml;
+    require(xml.open(), "phase regression XML");
+    xml.write(R"(<score-partwise><part-list><score-part id="P"><part-name>Piano</part-name></score-part></part-list><part id="P"><measure number="1"><attributes><divisions>2</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>120</per-minute></metronome></direction-type></direction><note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note><direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>120</per-minute></metronome></direction-type></direction><note><pitch><step>D</step><octave>4</octave></pitch><duration>7</duration></note></measure></part></score-partwise>)");
+    require(xml.flush(), "write phase regression XML");
+    const auto read = musicxml::MusicXmlReader().read(xml.fileName());
+    require(read.ok(), qPrintable(read.error));
+    expectTimes(timeline(read.document), {0, 500000, 1000000, 1500000});
+}
+
 void testWrittenPickupAndRepeats()
 {
     auto score = document(4320);
@@ -349,6 +393,7 @@ int main(int argc, char** argv)
     if (app.arguments().contains(QStringLiteral("--audio"))) testFluidSynthAudio();
     else {
         testMetersAndTempo();
+        testClickUnitPhase();
         testWrittenPickupAndRepeats();
         testScheduler();
         testMusicXmlMetadata();

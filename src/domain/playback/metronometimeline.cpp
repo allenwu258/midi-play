@@ -88,8 +88,12 @@ bool buildSourceBeats(const music::MusicDocument& document, QVector<SourceBeat>&
             if (nextUnit != units.cend()) sliceEnd = std::min(sliceEnd, nextUnit->tick);
             const long double notated = denominatorTicks(signature);
             const long double nominal = notated * signature.beats;
-            const bool isPickup = pickup && sliceStart == start && end - start < nominal;
-            const long double anchor = isPickup ? end - nominal : sliceStart;
+            // A tempo/click-unit annotation splits evaluation, not musical
+            // phase. Keep the bar (or actual meter-change) anchor across unit
+            // slices, including a pickup whose first beat precedes tick zero.
+            const Tick meterStart = std::max(start, signature.tick);
+            const bool isPickup = pickup && meterStart == start && end - start < nominal;
+            const long double anchor = isPickup ? end - nominal : meterStart;
             QVector<long double> pattern;
             long double period = 0;
             if (nextUnit == units.cbegin() && signature.metronomeClocks == 0
