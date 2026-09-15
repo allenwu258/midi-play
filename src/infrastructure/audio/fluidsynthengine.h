@@ -8,6 +8,8 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QTemporaryFile>
+#include <memory>
 
 struct fluid_settings_t;
 struct fluid_synth_t;
@@ -44,6 +46,10 @@ public:
     bool setTransportPosition(qint64 microseconds);
     qint64 clockPositionUs() const;
     bool supportsTimedEvents() const;
+    bool supportsMetronome() const;
+    bool prepareMetronome(QString* error);
+    void submitMetronomeClick(bool accent);
+    void stopMetronome();
     bool flush();
     void submit(const playback::PlaybackEvent& event);
     void noteOn(int channel, int pitch, int velocity);
@@ -55,6 +61,8 @@ public:
     void polyPressure(int channel, int pitch, int value);
 
 private:
+    // Offline integration tests use the real synth without opening a device.
+    friend struct FluidSynthEngineTestAccess;
     bool resolveSymbols(QString* error);
     bool initializeSynth(const QString& soundFontPath, QString* error,
                          bool dynamicSampleLoading = true);
@@ -63,12 +71,17 @@ private:
                        QString* error);
     void updateFormatCapability(SoundFontFormat format, bool loaded, const QStringList& logs);
     void release();
+    bool configureMetronomeChannel();
 
     QLibrary m_library;
     fluid_settings_t* m_settings = nullptr;
     fluid_synth_t* m_synth = nullptr;
     fluid_audio_driver_t* m_driver = nullptr;
     int m_soundFontId = -1;
+    int m_metronomeSoundFontId = -1;
+    std::unique_ptr<QTemporaryFile> m_metronomeFile;
+    bool m_metronomeChannelsReserved = false;
+    bool m_metronomeReady = false;
     bool m_loaded = false;
     FluidSynthCapabilities m_capabilities;
 
@@ -94,6 +107,9 @@ private:
     using ChannelPressure = int (*)(fluid_synth_t*, int, int);
     using KeyPressure = int (*)(fluid_synth_t*, int, int, int);
     using SystemReset = int (*)(fluid_synth_t*);
+    using SetChannelType = int (*)(fluid_synth_t*, int, int);
+    using AllSoundsOff = int (*)(fluid_synth_t*, int);
+    using CountMidiChannels = int (*)(fluid_synth_t*);
 
     NewSettings m_newSettings = nullptr;
     DeleteSettings m_deleteSettings = nullptr;
@@ -116,6 +132,10 @@ private:
     ChannelPressure m_channelPressure = nullptr;
     KeyPressure m_keyPressure = nullptr;
     SystemReset m_systemReset = nullptr;
+    SetChannelType m_setChannelType = nullptr;
+    AllSoundsOff m_allSoundsOff = nullptr;
+    CountMidiChannels m_countMidiChannels = nullptr;
+    static constexpr int kMetronomeChannel = 16;
 };
 
 } // namespace midi_play::audio

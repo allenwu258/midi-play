@@ -2,6 +2,7 @@
 
 #include <QMetaObject>
 #include <QPointer>
+#include <chrono>
 
 namespace midi_play::audio {
 namespace {
@@ -137,6 +138,22 @@ bool ThreadedPlaybackAudioService::supportsPerNoteExpression() const
     return m_capabilities.perNoteExpression;
 }
 
+bool ThreadedPlaybackAudioService::supportsMetronome() const
+{
+    return m_capabilities.metronome;
+}
+
+bool ThreadedPlaybackAudioService::prepareMetronome(QString* error)
+{
+    bool result = false;
+    QString localError;
+    QMetaObject::invokeMethod(m_worker.get(), [this, &result, &localError] {
+        result = m_worker->m_service->prepareMetronome(&localError);
+    }, Qt::BlockingQueuedConnection);
+    if (error) *error = localError;
+    return result;
+}
+
 playback::PlaybackBackendCapabilities ThreadedPlaybackAudioService::capabilities() const
 {
     return m_capabilities;
@@ -183,6 +200,28 @@ void ThreadedPlaybackAudioService::submitBatch(const QVector<playback::PlaybackE
     QMetaObject::invokeMethod(m_worker.get(), [this, events, generation] {
         if (generation != m_worker->m_eventGeneration) return;
         m_worker->m_service->submitBatch(events, generation);
+    }, Qt::QueuedConnection);
+}
+
+void ThreadedPlaybackAudioService::submitMetronomeClick(bool accent, quint64 generation)
+{
+    const quint64 epoch = m_metronomeEpoch.load(std::memory_order_acquire);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+    QMetaObject::invokeMethod(m_worker.get(), [this, accent, generation, epoch, deadline] {
+        if (epoch != m_metronomeEpoch.load(std::memory_order_acquire)
+            || generation != m_submissionGeneration.load(std::memory_order_acquire)
+            || generation != m_worker->m_eventGeneration
+            || std::chrono::steady_clock::now() > deadline) return;
+        m_worker->m_service->submitMetronomeClick(accent, generation);
+    }, Qt::QueuedConnection);
+}
+
+void ThreadedPlaybackAudioService::stopMetronome()
+{
+    // Publish cancellation immediately, before waiting behind any worker load.
+    m_metronomeEpoch.fetch_add(1, std::memory_order_acq_rel);
+    QMetaObject::invokeMethod(m_worker.get(), [this] {
+        m_worker->m_service->stopMetronome();
     }, Qt::QueuedConnection);
 }
 

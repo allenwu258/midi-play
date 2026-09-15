@@ -108,6 +108,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/domain/playback/playbackplayhead.cpp
     src/domain/playback/playbackcontroller.h
     src/domain/playback/playbackcontroller.cpp
+    src/domain/playback/metronometimeline.h
+    src/domain/playback/metronometimeline.cpp
     src/domain/settings/playersettings.h
     src/domain/settings/playersettings.cpp
     src/domain/settings/graphicsmode.h
@@ -179,6 +181,10 @@ if (MIDI_PLAY_HAS_VULKAN)
 endif()
 
 add_library(midi_play_core STATIC ${MIDI_PLAY_COMMON_SOURCES})
+qt_add_resources(midi_play_core midi_play_metronome_resources
+    PREFIX "/midi_play/audio"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    FILES assets/metronome.sf2)
 if (MIDI_PLAY_HAS_VULKAN)
     set_source_files_properties(${VULKAN_SHADER_BINARIES} PROPERTIES GENERATED TRUE)
     qt_add_resources(midi_play_core midi_play_vulkan_resources
@@ -263,6 +269,18 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_metronome_tests tests/metronometests.cpp)
+    target_link_libraries(midi_play_metronome_tests PRIVATE midi_play_core)
+    add_test(NAME metronome_timeline_and_readers COMMAND midi_play_metronome_tests)
+    if (WIN32 AND EXISTS "${FLUIDSYNTH_DLL}")
+        add_custom_command(TARGET midi_play_metronome_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                "-DSOURCE_LIBRARY=${FLUIDSYNTH_DLL}"
+                "-DDESTINATION_DIR=$<TARGET_FILE_DIR:midi_play_metronome_tests>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeployFluidSynthRuntime.cmake"
+            VERBATIM)
+        add_test(NAME metronome_fluidsynth_audio COMMAND midi_play_metronome_tests --audio)
+    endif()
     add_executable(midi_play_presentation_tests tests/presentationtests.cpp)
     target_link_libraries(midi_play_presentation_tests PRIVATE midi_play_core)
     add_test(NAME presentation_backend_configuration
@@ -346,6 +364,8 @@ if (BUILD_TESTING)
         src/domain/playback/playbackpositionthrottler.cpp
         src/domain/playback/playbackcontroller.h
         src/domain/playback/playbackcontroller.cpp
+        src/domain/playback/metronometimeline.h
+        src/domain/playback/metronometimeline.cpp
         src/domain/settings/playersettings.h
         src/domain/settings/playersettings.cpp
         src/app/isettingsstore.h

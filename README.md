@@ -42,6 +42,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **统一时间线**：使用 tick、微秒和预计算 tempo map 表达音乐时间，并支持 tick 与实际播放时间双向转换。
 - **演奏语义**：支持反复段、ending、D.C.、D.S.、Segno、Coda、Fine 的基础播放展开，以及 tie、staccato、accent、tenuto、ghost、dynamic、hairpin 和 pedal 等播放相关语义。
 - **实时播放控制**：播放、暂停、停止、拖动进度和 seek 后的音色/控制器/延音状态重建。
+- **节拍器**：独立点击音源，跟随乐曲拍号、速度变化和重复段落，并随 20%～200% 播放倍率同步变速。
 - **SoundFont**：默认使用 assets/midisound.sf2，支持从设置窗口加载 .sf2 或 .sf3，并支持播放中事务化切换。SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
@@ -195,9 +196,14 @@ cmake --build --preset windows-msvc-debug
 3. 点击底部播放、暂停或停止按钮。
 4. 拖动底部进度条进行 seek。播放中释放后会直接从目标位置继续，暂停时释放后保持暂停。
 5. 悬停底部播放键右侧的百分比按钮，拖动滑块调节播放速度，范围 **20%～200%**，步进 1%。也可点击按钮，在滑块右侧输入百分比，按回车或移开焦点生效；Esc 取消尚未确认的输入并关闭面板。
-6. 点击顶部“设置”打开独立设置窗口。
+6. 点击播放键右侧的“节拍器”按钮开关节拍器。开启后按曲目的拍号、速度和反复展开实时点击，暂停、seek、停止和调速均保持同步。
+7. 点击顶部“设置”打开独立设置窗口。
 
 播放速度默认 **100%**。播放中变速不重启音频会话、不改变音高，音符、踏板、控制器事件和下落画面共用调整后的播放时钟。暂停、停止、拖动进度、换曲和切换音源保留本次选择的倍率，重启程序恢复 100%。进度、总时长和顶部 BPM 均按原曲音乐时间显示；例如 200% 播放时，原曲进度每秒推进约两秒。
+
+节拍器默认关闭，开启后按钮高亮；仅在播放时发声，小节首拍使用较强、较高的点击音。播放中开启会从下一拍加入，暂停、停止、拖动进度和切换音源会取消旧点击音，卡顿后跳过错过的节拍，不连续补响。开关在本次运行中保留，重启后恢复关闭。使用程序内嵌的原创短点击音源，不依赖所选 SF2/SF3 的打击乐音色，也不占用歌曲的 16 个 MIDI 通道。
+
+节拍规则优先采用文件中的明确标记：MIDI 的 `FF 58` 点击间隔和每 MIDI 四分音符对应的记谱单位、MusicXML 的节拍单位及附点；无明确标记时，简单拍按分母单位点击，6/8 等复合拍按三个分母单位分组，`3+2/8` 等加法拍按指定分组。MusicXML 使用实际小节边界，首个标为 `implicit="yes"` 的不完整小节按弱起处理；MIDI 缺少弱起信息时从文件起点建立小节。节拍点击单位可能大于下落视图的网格细分单位。SMPTE 时间码、无效拍号或超过一百万个节拍的异常乐曲会禁用节拍器，悬停按钮可查看原因，普通音乐播放仍可使用。
 
 设置窗口提供：
 
@@ -369,6 +375,10 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - soundfont_inspector：SoundFont 内容和格式检查；
 - visualization_domain：可视化投影、时间窗口、区间索引和场景数据；
 - playback_session_transport：播放、暂停、停止、seek、事件代际和 transport 状态。
+- metronome_timeline_and_readers：拍号、显式点击单位、附点速度、弱起、重复段落、MIDI format 2 和丢帧后的节拍调度。
+- metronome_fluidsynth_audio：使用真实 FluidSynth 离线合成，验证内置点击音的强弱、自然结束、通道隔离及音源切换；配置 Windows FluidSynth DLL 时启用，无需音频设备。
+
+节拍器点击资源 `assets/metronome.sf2` 已提交到源码并通过 Qt Resource 嵌入可执行文件。`scripts/generate-metronome-soundfont.py` 使用 Python 标准库生成原创采样，仅用于重建该资源，普通构建和运行不需要 Python。内置资源需要写入系统临时目录供 FluidSynth 读取，退出时自动清理；提取或准备失败时仅禁用节拍器并显示原因。
 
 普通 PowerShell 如果找不到 ctest，请调用与 CMake 同目录的 ctest.exe，或使用 Visual Studio Developer PowerShell。
 
@@ -381,6 +391,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | MIDI format 2 | 独立序列按规范串联，播放时长和轨道顺序合理 |
 | 拖动进度 | 播放中释放后继续播放，暂停中释放后保持暂停，下一次播放从目标位置开始 |
 | SoundFont | 默认 SF2 可加载，自定义 SF2/SF3 可切换，失败时显示错误并保留可恢复状态 |
+| 节拍器 | 小节首拍重音、变速同步，暂停和停止无声，关闭不截断钢琴音，切换音源后仍能发声 |
 | 设置持久化 | 重启后刷新率、标题栏模式和自定义音源路径仍可恢复 |
 | Release 部署 | exe、Qt 平台插件、FluidSynth DLL 和 assets/midisound.sf2 均可找到 |
 

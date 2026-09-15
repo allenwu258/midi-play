@@ -23,9 +23,13 @@ public:
     playback::PlaybackClockSource clockSource() const override;
     bool supportsTimedEvents() const override;
     bool supportsPerNoteExpression() const override;
+    bool supportsMetronome() const override;
+    bool prepareMetronome(QString* error) override;
     bool flush() override;
     void submit(const playback::PlaybackEvent& event) override;
     void submitOff(const playback::PlaybackEvent& event) override;
+    void submitMetronomeClick(bool accent, quint64 generation) override;
+    void stopMetronome() override;
 
 private:
     std::unique_ptr<FluidSynthEngine> m_engine;

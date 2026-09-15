@@ -24,6 +24,7 @@
 #include <QSpinBox>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QToolButton>
 #include <QWindow>
 
 #include <cstdio>
@@ -322,6 +323,31 @@ void testVulkanSwitching()
 }
 #endif
 
+
+void testMetronomeControl(GraphicsMode mode = GraphicsMode::Traditional)
+{
+    midi_play::app::PlayerApplicationService service;
+    midi_play::presentation::MainWindow window(&service, nullptr);
+    window.findChild<FallingNotesView*>()->setGraphicsMode(mode);
+    auto* button = window.findChild<QToolButton*>(QStringLiteral("metronomeButton"));
+    require(button && button->isCheckable() && !button->isChecked() && !button->isEnabled(),
+            "metronome starts off and unavailable before song load");
+    int changes = 0;
+    QObject::connect(&service, &midi_play::app::PlayerApplicationService::metronomeChanged,
+                     &window, [&](bool) { ++changes; });
+    service.metronomeAvailabilityChanged(true, {});
+    button->click();
+    require(service.metronomeEnabled() && button->isChecked() && changes == 1,
+            "metronome click updates service once");
+    service.metronomeAvailabilityChanged(false, QStringLiteral("SMPTE"));
+    require(!button->isEnabled() && button->isChecked() && service.metronomeEnabled()
+            && button->toolTip().contains("SMPTE"), "unavailable song retains preference and shows reason");
+    service.setMetronomeEnabled(false);
+    require(!button->isChecked() && changes == 2, "programmatic state sync must not feed back");
+    midi_play::app::PlayerApplicationService restarted;
+    require(!restarted.metronomeEnabled(), "metronome preference is session-only");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -330,9 +356,11 @@ int main(int argc, char* argv[])
     testTraditionalViewUpdates();
     testGraphicsModePreference();
     testPlaybackRateInteraction();
+    testMetronomeControl();
     if (application.arguments().contains(QStringLiteral("--vulkan-smoke"))) {
 #if MIDI_PLAY_HAS_VULKAN
         testVulkanSwitching();
+        testMetronomeControl(GraphicsMode::VulkanExperimental);
         testPlaybackRateInteraction(GraphicsMode::VulkanExperimental);
 #else
         require(false, "Vulkan smoke check requested for a traditional-only build");

@@ -276,6 +276,20 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     controlRow->addWidget(m_pauseButton);
     controlRow->addWidget(m_stopButton);
     controlRow->addWidget(m_playbackRateControl);
+    m_metronomeButton = toolButton(transport, QIcon(), QStringLiteral("节拍器"),
+                                   QStringLiteral("开启或关闭节拍器"));
+    m_metronomeButton->setObjectName(QStringLiteral("metronomeButton"));
+    m_metronomeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_metronomeButton->setCheckable(true);
+    m_metronomeButton->setFixedSize(84, 44);
+    m_metronomeButton->setAccessibleName(QStringLiteral("节拍器"));
+    m_metronomeButton->setFocusPolicy(Qt::StrongFocus);
+    m_metronomeButton->setEnabled(m_service && m_service->supportsMetronome());
+    m_metronomeButton->setChecked(m_service && m_service->metronomeEnabled());
+    m_metronomeButton->setToolTip(m_service && !m_service->supportsMetronome()
+        ? m_service->metronomeUnavailableReason()
+        : QStringLiteral("跟随乐曲节拍；小节首拍为重音，仅播放时发声"));
+    controlRow->addWidget(m_metronomeButton);
     controlRow->addStretch();
     controlRow->addWidget(m_timeLabel);
     controlRow->addWidget(verticalSeparator(transport));
@@ -315,6 +329,11 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         QToolButton#stopButton:pressed { background: #56252c; }
         QToolButton#playButton:disabled, QToolButton#pauseButton:disabled,
         QToolButton#stopButton:disabled { background: #24282a; border-color: #363b3b; }
+        QToolButton#metronomeButton { color: #eaf2ff; background: #314259; border: 1px solid #5a7395; border-radius: 6px; font-weight: 600; }
+        QToolButton#metronomeButton:hover { background: #405878; border-color: #8ab8ef; }
+        QToolButton#metronomeButton:checked { color: #fff8d5; background: #725e22; border-color: #e7c75d; }
+        QToolButton#metronomeButton:checked:hover { background: #927b2d; }
+        QToolButton#metronomeButton:disabled { color: #676c68; background: #24282a; border-color: #363b3b; }
         QToolButton#windowCloseButton:hover { background: #c42b2b; border-color: #c42b2b; }
         QToolButton#windowCloseButton:pressed { background: #a51f1f; border-color: #a51f1f; }
         QSlider::groove:horizontal { height: 4px; background: #393d3f; }
@@ -337,6 +356,19 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     connect(m_playButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::play);
     connect(m_pauseButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::pause);
     connect(m_stopButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::stop);
+    connect(m_metronomeButton, &QToolButton::toggled,
+            m_service, &app::PlayerApplicationService::setMetronomeEnabled);
+    connect(m_service, &app::PlayerApplicationService::metronomeChanged,
+            this, [this](bool enabled) {
+                const QSignalBlocker blocker(m_metronomeButton);
+                m_metronomeButton->setChecked(enabled);
+            });
+    connect(m_service, &app::PlayerApplicationService::metronomeAvailabilityChanged,
+            this, [this](bool available, const QString& reason) {
+                m_metronomeButton->setEnabled(available);
+                m_metronomeButton->setToolTip(available
+                    ? QStringLiteral("跟随乐曲节拍；小节首拍为重音，仅播放时发声") : reason);
+            });
     connect(m_positionSlider, &QSlider::sliderPressed, this, [this] { m_sliderDragging = true; });
     connect(m_positionSlider, &QSlider::sliderMoved, this, [this](int value) {
         if (m_durationUs <= 0) return;

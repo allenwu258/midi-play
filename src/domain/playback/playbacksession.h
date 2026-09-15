@@ -8,6 +8,7 @@
 #include "playbackclock.h"
 #include "playbackplayhead.h"
 #include "domain/settings/playersettings.h"
+#include "metronometimeline.h"
 
 #include <QObject>
 #include <QTimer>
@@ -28,6 +29,9 @@ public:
     qint64 durationMicroseconds() const { return m_durationUs; }
     int playbackRatePercent() const { return m_playbackRatePercent; }
     bool supportsPlaybackRate() const { return m_audioCapabilities.supportsSoftwarePlaybackRate(); }
+    bool supportsMetronome() const { return m_metronomeAvailable; }
+    const QString& metronomeUnavailableReason() const { return m_metronomeUnavailableReason; }
+    bool metronomeEnabled() const { return m_metronomeEnabled; }
     bool loadSoundFont(const QString& path, QString* error);
 
 public slots:
@@ -37,12 +41,14 @@ public slots:
     void stop();
     void seek(qint64 microseconds);
     bool setPlaybackRatePercent(int percent);
+    void setMetronomeEnabled(bool enabled);
 
 signals:
     void stateChanged(midi_play::playback::State state);
     void positionChanged(qint64 position, qint64 duration);
     void errorOccurred(const QString& message);
     void soundFontLoadFinished(bool success, const QString& error);
+    void metronomeAvailabilityChanged(bool available, const QString& reason);
 
 private slots:
     void onTimer();
@@ -56,6 +62,8 @@ private:
     void advanceEventGeneration();
     bool startPlaybackFromCurrentPosition();
     void updateAudioClockPosition();
+    void dispatchMetronome(qint64 positionUs);
+    void prepareMetronome();
 
     std::shared_ptr<const music::MusicDocument> m_document;
     std::unique_ptr<IPlaybackAudioService> m_audioService;
@@ -69,6 +77,11 @@ private:
     int m_playbackRatePercent = midi_play::settings::kDefaultPlaybackRatePercent;
     PlaybackPlayHead m_playHead;
     PlaybackEventScheduler m_scheduler;
+    std::unique_ptr<MetronomeTimeline> m_metronomeTimeline;
+    MetronomeScheduler m_metronomeScheduler;
+    bool m_metronomeEnabled = false;
+    bool m_metronomeAvailable = false;
+    QString m_metronomeUnavailableReason;
     quint64 m_eventGeneration = 1;
 };
 

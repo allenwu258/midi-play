@@ -16,7 +16,11 @@ void appendMeta(const MidiNormalizedFile& source, music::MusicDocument& document
             const int beats = static_cast<unsigned char>(event.payload.at(0));
             const int denominatorPower = static_cast<unsigned char>(event.payload.at(1));
             const music::TimeSignatureChange change {event.tick, beats,
-                                                      1 << std::clamp(denominatorPower, 0, 6)};
+                                                      denominatorPower <= 10 ? 1 << denominatorPower : 0,
+                                                      event.payload.size() >= 3
+                                                          ? static_cast<unsigned char>(event.payload.at(2)) : 0,
+                                                      event.payload.size() >= 4
+                                                          ? static_cast<unsigned char>(event.payload.at(3)) : 8};
             if (!document.tracks().isEmpty()) document.tracks().front().timeSignatures.push_back(change);
         } else if (event.metaType == 0x59 && event.payload.size() >= 2) {
             const int fifths = static_cast<qint8>(event.payload.at(0));
@@ -40,6 +44,8 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
     auto document = std::make_shared<music::MusicDocument>();
     document->setTitle(source.title);
     document->tempos() = source.tempos;
+    document->setMusicalTimebase(!source.header.smpte);
+    document->sequenceStarts() = source.sequenceStarts;
     quint64 nextNoteId = 1;
 
     for (const auto& normalizedTrack : source.tracks) {

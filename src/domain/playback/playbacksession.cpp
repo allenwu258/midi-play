@@ -20,6 +20,9 @@ PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> doc
     connect(m_timer, &QTimer::timeout, this, &PlaybackSession::onTimer);
     m_scheduler.setTracks(&m_playbackModel.tracks());
     m_scheduler.setGeneration(m_eventGeneration);
+    m_metronomeTimeline = std::make_unique<MetronomeTimeline>(m_document, m_playbackModel.timeline());
+    m_metronomeUnavailableReason = !m_metronomeTimeline->available()
+        ? m_metronomeTimeline->unavailableReason() : QStringLiteral("等待音源加载");
     m_playHead.configure(48000);
     m_audioService->setEventGeneration(m_eventGeneration);
 }
@@ -35,6 +38,8 @@ bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
         resumePositionUs = m_playHead.positionUs();
         m_positionUs = resumePositionUs;
         m_timer->stop();
+        m_audioService->stopMetronome();
+        m_metronomeScheduler.takeDue(*m_metronomeTimeline, resumePositionUs, m_playHead.rate());
         advanceEventGeneration();
         flushActiveNotes();
         m_audioService->pause();
@@ -47,6 +52,7 @@ bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
         }
         return false;
     }
+    prepareMetronome();
     for (const auto& track : m_playbackModel.tracks()) {
         if (!m_audioService->addTrack(track, error)) {
             if (wasPlaying) {
@@ -125,6 +131,8 @@ void PlaybackSession::pause()
     }
     m_positionUs = m_playHead.positionUs();
     m_timer->stop();
+    m_audioService->stopMetronome();
+    m_metronomeScheduler.takeDue(*m_metronomeTimeline, m_positionUs, m_playHead.rate());
     // Explicit note-off events are dispatched by this session. Flush them on
     // pause and reconstruct the exact state when play() resumes.
     flushActiveNotes();
@@ -142,6 +150,7 @@ void PlaybackSession::stop()
         return;
     }
     m_timer->stop();
+    m_audioService->stopMetronome();
     advanceEventGeneration();
     flushActiveNotes();
     m_audioService->stop();
@@ -149,6 +158,7 @@ void PlaybackSession::stop()
     m_clockBaseUs = 0;
     m_playHead.reset();
     m_scheduler.reset();
+    m_metronomeScheduler.seek(*m_metronomeTimeline, 0);
     emitPosition();
     setState(State::Stopped);
 }
@@ -162,6 +172,7 @@ void PlaybackSession::seek(qint64 microseconds)
     if (resume) {
         m_timer->stop();
     }
+    m_audioService->stopMetronome();
     advanceEventGeneration();
     flushActiveNotes();
     m_positionUs = std::clamp<qint64>(microseconds, 0, m_durationUs);
@@ -170,6 +181,7 @@ void PlaybackSession::seek(qint64 microseconds)
     m_playHead.seek(m_positionUs);
     m_audioService->setTransportPosition(m_positionUs);
     m_scheduler.seek(m_positionUs);
+    m_metronomeScheduler.seek(*m_metronomeTimeline, m_positionUs);
     emitPosition();
     if (resume) {
         startPlaybackFromCurrentPosition();
@@ -193,6 +205,21 @@ bool PlaybackSession::setPlaybackRatePercent(int percent)
     return true;
 }
 
+void PlaybackSession::setMetronomeEnabled(bool enabled)
+{
+    if (m_metronomeEnabled == enabled) return;
+
+    m_metronomeEnabled = enabled;
+    if (!enabled) {
+        m_audioService->stopMetronome();
+        return;
+    }
+
+    const qint64 position = m_state == State::Playing
+        ? m_playHead.positionUs() : m_positionUs;
+    m_metronomeScheduler.seek(*m_metronomeTimeline, position);
+}
+
 void PlaybackSession::onTimer()
 {
     if (m_state != State::Playing || !m_document) {
@@ -212,7 +239,30 @@ void PlaybackSession::onTimer()
         stop();
         return;
     }
+    dispatchMetronome(now);
     emitPosition();
+}
+
+void PlaybackSession::dispatchMetronome(qint64 positionUs)
+{
+    if (!m_metronomeEnabled || !m_metronomeAvailable) return;
+    if (const auto beat = m_metronomeScheduler.takeDue(*m_metronomeTimeline,
+                                                      positionUs, m_playHead.rate())) {
+        m_audioService->submitMetronomeClick(
+            beat->accent == MetronomeAccent::Measure, m_eventGeneration);
+    }
+}
+
+void PlaybackSession::prepareMetronome()
+{
+    QString reason;
+    if (!m_metronomeTimeline->available()) reason = m_metronomeTimeline->unavailableReason();
+    else if (!m_audioCapabilities.supportsMetronome()) reason = QStringLiteral("当前音频后端不支持节拍器");
+    else if (!m_audioService->prepareMetronome(&reason) && reason.isEmpty())
+        reason = QStringLiteral("无法准备节拍器音源");
+    m_metronomeAvailable = reason.isEmpty();
+    m_metronomeUnavailableReason = reason;
+    emit metronomeAvailabilityChanged(m_metronomeAvailable, reason);
 }
 
 void PlaybackSession::rebuildAudioState(qint64 targetUs)

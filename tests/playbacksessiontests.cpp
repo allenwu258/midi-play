@@ -117,10 +117,25 @@ public:
     void submitOff(const PlaybackEvent& event) override { submittedEvents.push_back(event); }
     void submitBatch(const QVector<PlaybackEvent>& events, quint64 generation) override
     {
+        if (blockNextSubmission.exchange(false)) {
+            submissionEntered.release();
+            require(resumeSubmission.tryAcquire(1, 2000), "release blocked audio worker");
+        }
         submittedGenerations.push_back(generation);
         submittedEvents += events;
     }
     void setEventGeneration(quint64 generation) override { currentGeneration = generation; }
+    bool prepareMetronome(QString* error) override
+    {
+        if (error) *error = failMetronome ? QStringLiteral("test click preparation failure") : QString();
+        return reportedCapabilities.metronome && !failMetronome;
+    }
+    void submitMetronomeClick(bool accent, quint64 generation) override
+    {
+        clickAccents.push_back(accent);
+        clickGenerations.push_back(generation);
+    }
+    void stopMetronome() override { ++clickStopCount; }
 
     void clearSubmissions()
     {
@@ -129,6 +144,13 @@ public:
     }
 
     int startCount = 0;
+    bool failMetronome = false;
+    int clickStopCount = 0;
+    QVector<bool> clickAccents;
+    QVector<quint64> clickGenerations;
+    std::atomic<bool> blockNextSubmission {false};
+    QSemaphore submissionEntered;
+    QSemaphore resumeSubmission;
     int pauseCount = 0;
     int flushCount = 0;
     int addTrackCount = 0;
@@ -984,6 +1006,141 @@ void testUnsupportedBackendCannotSilentlyIgnoreRate()
     }
 }
 
+
+void testMetronomeTransport()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    recording->reportedCapabilities.metronome = true;
+    PlaybackSession session(testDocument(), std::move(audio));
+    require(!session.metronomeEnabled(), "metronome defaults off");
+    require(session.loadSoundFont(QStringLiteral("test.sf2"), nullptr) && session.supportsMetronome(),
+            "prepare independent clicks with soundfont load");
+    session.setPlaybackRatePercent(200);
+    session.seek(250000);
+    session.play();
+    session.setMetronomeEnabled(true);
+    const int flushes = recording->flushCount;
+    processEventsFor(30);
+    require(recording->clickAccents.isEmpty(), "enabling mid-beat must not click immediately");
+    require(waitUntil([&] { return !recording->clickAccents.isEmpty(); }), "next beat sounds");
+    require(!recording->clickAccents.front()
+            && recording->clickGenerations.back() == recording->currentGeneration,
+            "weak beat uses the song generation");
+    session.setMetronomeEnabled(false);
+    const auto count = recording->clickAccents.size();
+    processEventsFor(30);
+    require(recording->clickAccents.size() == count && recording->flushCount == flushes,
+            "toggle off must leave song MIDI and its voices intact");
+    session.setMetronomeEnabled(true);
+    session.stop();
+    require(session.metronomeEnabled(), "stop retains metronome preference");
+    session.play();
+    require(waitUntil([&] { return recording->clickAccents.size() > count; }), "replay resets click cursor");
+    require(recording->clickAccents.back(), "replay begins with the first downbeat");
+    session.pause();
+    const auto pausedCount = recording->clickAccents.size();
+    processEventsFor(30);
+    require(recording->clickAccents.size() == pausedCount, "paused transport is silent");
+    session.play();
+    processEventsFor(20);
+    require(recording->clickAccents.size() == pausedCount, "resume must not duplicate consumed beat");
+    session.seek(1500000);
+    require(waitUntil([&] { return recording->clickAccents.size() > pausedCount; }), "seek to beat clicks once");
+    require(!recording->clickAccents.back(), "seek restores correct accent");
+    const auto beforeLoad = recording->clickAccents.size();
+    require(session.loadSoundFont(QStringLiteral("replacement.sf2"), nullptr), "replace user font while clicking");
+    processEventsFor(20);
+    require(recording->clickAccents.size() == beforeLoad, "font replacement must not replay current beat");
+    session.stop();
+    session.setPlaybackRatePercent(20);
+    session.seek(499000);
+    session.play();
+    require(waitUntil([&] { return recording->clickAccents.size() > beforeLoad; }), "20 percent follows source beat position");
+    session.seek(session.durationMicroseconds());
+    processEventsFor(10);
+    require(session.state() == State::Stopped && session.metronomeEnabled(),
+            "end-of-song stops sound and retains preference");
+}
+
+void testMetronomeFailureAndPreference()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    audio->reportedCapabilities.metronome = true;
+    audio->failMetronome = true;
+    PlaybackSession session(testDocument(), std::move(audio));
+    session.setMetronomeEnabled(true);
+    require(session.loadSoundFont(QStringLiteral("test.sf2"), nullptr),
+            "optional click preparation failure must not reject the song font");
+    require(!session.supportsMetronome() && !session.metronomeUnavailableReason().isEmpty(),
+            "unavailable metronome has an explicit reason");
+    session.play();
+    require(session.state() == State::Playing && session.metronomeEnabled(),
+            "song playback and desired preference survive metronome failure");
+    session.stop();
+
+    midi_play::playback::PlaybackController controller;
+    controller.setMetronomeEnabled(true);
+    require(controller.setDocument(testDocument(), std::make_unique<RecordingAudioService>(), nullptr),
+            "create unsupported session without losing desired state");
+    bool enabled = false;
+    auto* active = controller.session();
+    QMetaObject::invokeMethod(active, [&] { enabled = active->metronomeEnabled(); }, Qt::BlockingQueuedConnection);
+    require(enabled && controller.metronomeEnabled(), "controller and session retain preference when unavailable");
+    auto next = std::make_unique<RecordingAudioService>();
+    next->reportedCapabilities.metronome = true;
+    require(controller.setDocument(testDocument(), std::move(next), nullptr)
+            && controller.loadSoundFont(QStringLiteral("test.sf2"), nullptr)
+            && controller.supportsMetronome() && controller.metronomeEnabled(),
+            "next supported song restores enabled metronome");
+    // The preceding blocking load posted an availability signal which has not
+    // reached the GUI queue yet. Replace that session before delivering it.
+    require(controller.setDocument(testDocument(), std::make_unique<RecordingAudioService>(), nullptr),
+            "replace supported session before its queued notification arrives");
+    processEventsFor(10);
+    require(!controller.supportsMetronome(), "old session availability cannot overwrite a replacement song");
+}
+
+void testThreadedMetronomeCancellation()
+{
+    auto audio = std::make_unique<RecordingAudioService>();
+    auto* recording = audio.get();
+    recording->reportedCapabilities.metronome = true;
+    midi_play::audio::ThreadedPlaybackAudioService threaded(std::move(audio));
+    threaded.setEventGeneration(7);
+    require(threaded.prepareMetronome(nullptr), "prepare on audio worker");
+    PlaybackEvent event;
+    event.kind = PlaybackEventKind::NoteOn;
+    event.pitch = 60;
+    recording->blockNextSubmission.store(true);
+    threaded.submitBatch({event}, 7);
+    require(recording->submissionEntered.tryAcquire(1, 1000), "occupy audio worker");
+    threaded.submitMetronomeClick(true, 7);
+    threaded.submitBatch({event}, 7);
+    threaded.stopMetronome();
+    recording->resumeSubmission.release();
+    threaded.start(); // Worker barrier: inspect only after all queued work.
+    require(recording->clickAccents.isEmpty() && recording->clickStopCount == 1
+            && recording->submittedEvents.size() == 2, "cancel queued clicks without cancelling song MIDI");
+
+    recording->blockNextSubmission.store(true);
+    threaded.submitBatch({event}, 7);
+    require(recording->submissionEntered.tryAcquire(1, 1000), "occupy worker for deadline test");
+    threaded.submitMetronomeClick(false, 7);
+    QThread::msleep(80);
+    recording->resumeSubmission.release();
+    threaded.start();
+    require(recording->clickAccents.isEmpty(), "discard clicks delayed inside audio queue");
+    threaded.submitMetronomeClick(false, 7);
+    threaded.start();
+    require(recording->clickAccents.size() == 1 && !recording->clickAccents.front(),
+            "fresh clicks accepted with correct transport generation");
+    threaded.setEventGeneration(8);
+    threaded.submitMetronomeClick(true, 7);
+    threaded.start();
+    require(recording->clickAccents.size() == 1, "old transport generation is rejected");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -1008,6 +1165,9 @@ int main(int argc, char* argv[])
     testRateChangesPreserveEventOrderAndPitch();
     testControllerRateChangesAreQueuedAndInherited();
     testUnsupportedBackendCannotSilentlyIgnoreRate();
+    testMetronomeTransport();
+    testMetronomeFailureAndPreference();
+    testThreadedMetronomeCancellation();
     testSeekPreservesTransportIntent();
     testSoundFontChangeRestoresPlayingAudioState();
     testSoundFontChangeFreezesAndRestoresTransport();

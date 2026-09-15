@@ -91,6 +91,7 @@ struct Measure {
     bool dalSegno = false;
     bool toCoda = false;
     bool fine = false;
+    bool implicit = false; // Incomplete/unnumbered MusicXML measure, including pickups.
 };
 
 struct InstrumentChange {
@@ -142,6 +143,14 @@ struct TimeSignatureChange {
     Tick tick = 0;
     int beats = 4;
     int beatType = 4;
+    int metronomeClocks = 0;
+    int notated32nds = 8;
+    QVector<int> beatGroups; // Optional additive meter, e.g. 3+2/8.
+};
+
+struct MetronomeUnitChange {
+    Tick tick = 0;
+    double quarterNotes = 1.0;
 };
 
 struct KeySignatureChange {
@@ -280,6 +289,14 @@ public:
     const QVector<TempoChange>& tempos() const { return m_tempos; }
     QVector<TempoChange>& tempos() { m_tempoMap.clear(); return m_tempos; }
     void rebuildTempoMap() const;
+    // SMPTE ticks encode absolute time; the synthetic tempo used for their
+    // conversion must never be interpreted as a musical beat grid.
+    bool hasMusicalTimebase() const { return m_hasMusicalTimebase; }
+    void setMusicalTimebase(bool musical) { m_hasMusicalTimebase = musical; }
+    QVector<Tick>& sequenceStarts() { return m_sequenceStarts; }
+    const QVector<Tick>& sequenceStarts() const { return m_sequenceStarts; }
+    QVector<MetronomeUnitChange>& metronomeUnits() { return m_metronomeUnits; }
+    const QVector<MetronomeUnitChange>& metronomeUnits() const { return m_metronomeUnits; }
     Tick duration() const { return m_duration; }
     void setDuration(Tick value) { m_duration = value; }
     QString title() const { return m_title; }
@@ -294,6 +311,9 @@ public:
 private:
     QVector<Track> m_tracks;
     QVector<TempoChange> m_tempos;
+    QVector<MetronomeUnitChange> m_metronomeUnits;
+    QVector<Tick> m_sequenceStarts;
+    bool m_hasMusicalTimebase = true;
     Tick m_duration = 0;
     QString m_title;
     QVector<Measure> m_measures;

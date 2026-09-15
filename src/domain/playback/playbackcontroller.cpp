@@ -48,9 +48,21 @@ bool PlaybackController::setDocument(std::shared_ptr<const music::MusicDocument>
     m_positionTimer.stop();
     m_positionThrottler.reset();
     m_supportsPlaybackRate = newSession->supportsPlaybackRate();
+    m_supportsMetronome = newSession->supportsMetronome();
+    m_metronomeUnavailableReason = newSession->metronomeUnavailableReason();
+    newSession->setMetronomeEnabled(m_metronomeEnabled);
     m_session = std::move(newSession);
     m_playbackThread.start();
     m_session->moveToThread(&m_playbackThread);
+    connect(m_session.get(), &PlaybackSession::metronomeAvailabilityChanged, this,
+            [this, source = m_session.get()](bool available, const QString& reason) {
+                // Queued signals from a replaced session may already be in the
+                // GUI queue. They must not overwrite the new song's readiness.
+                if (m_session.get() != source) return;
+                m_supportsMetronome = available;
+                m_metronomeUnavailableReason = reason;
+                emit metronomeAvailabilityChanged(available, reason);
+            });
     connect(m_session.get(), &PlaybackSession::stateChanged, this,
             [this](State state) {
                 // State transitions are transport boundaries. Flush the
@@ -82,9 +94,15 @@ bool PlaybackController::loadSoundFont(const QString& path, QString* error)
     if (!m_session) return false;
     bool result = false;
     QString localError;
-    QMetaObject::invokeMethod(m_session.get(), [this, &result, &localError, path] {
+    bool available = false;
+    QString reason;
+    QMetaObject::invokeMethod(m_session.get(), [this, &result, &localError, &available, &reason, path] {
         result = m_session->loadSoundFont(path, &localError);
+        available = m_session->supportsMetronome();
+        reason = m_session->metronomeUnavailableReason();
     }, Qt::BlockingQueuedConnection);
+    m_supportsMetronome = available;
+    m_metronomeUnavailableReason = reason;
     if (error) *error = localError;
     return result;
 }
@@ -131,6 +149,18 @@ bool PlaybackController::setPlaybackRatePercent(int percent)
         session->setPlaybackRatePercent(normalized);
     }, Qt::QueuedConnection);
     return true;
+}
+
+void PlaybackController::setMetronomeEnabled(bool enabled)
+{
+    // Preserve the user's preference through songs/backends lacking a beat
+    // grid. Actual readiness is reported separately, never silently reset.
+    m_metronomeEnabled = enabled;
+    if (!m_session) return;
+    auto* session = m_session.get();
+    QMetaObject::invokeMethod(session, [session, enabled] {
+        session->setMetronomeEnabled(enabled);
+    }, Qt::QueuedConnection);
 }
 
 void PlaybackController::play() { if (m_session) QMetaObject::invokeMethod(m_session.get(), "play", Qt::QueuedConnection); }

@@ -81,6 +81,7 @@ void PlayerApplicationService::openFile(const QString& path)
         auto newController = std::make_unique<playback::PlaybackController>(this);
         newController->setPositionPublishRate(m_visualizationRefreshRate);
         newController->setPlaybackRatePercent(m_playbackRatePercent);
+        newController->setMetronomeEnabled(m_metronomeEnabled);
         QString controllerError;
         if (!newController->setDocument(result.readResult.document, std::move(audioService),
                                         &controllerError)) {
@@ -97,6 +98,8 @@ void PlayerApplicationService::openFile(const QString& path)
         }
 
         m_controller = std::move(newController);
+        emit metronomeAvailabilityChanged(m_controller->supportsMetronome(),
+                                          m_controller->metronomeUnavailableReason());
         m_fileName = path;
         connectSession();
         m_positionUs = 0;
@@ -275,6 +278,14 @@ void PlayerApplicationService::setPlaybackRatePercent(int percent)
     emit playbackRateChanged(normalized);
 }
 
+void PlayerApplicationService::setMetronomeEnabled(bool enabled)
+{
+    if (m_metronomeEnabled == enabled) return;
+    if (m_controller) m_controller->setMetronomeEnabled(enabled);
+    m_metronomeEnabled = enabled;
+    emit metronomeChanged(enabled);
+}
+
 void PlayerApplicationService::setGraphicsMode(settings::GraphicsMode mode)
 {
     m_graphicsMode = settings::normalizeGraphicsMode(mode);
@@ -288,6 +299,8 @@ void PlayerApplicationService::seek(qint64 microseconds) { if (m_controller) m_c
 
 void PlayerApplicationService::connectSession()
 {
+    connect(m_controller.get(), &playback::PlaybackController::metronomeAvailabilityChanged,
+            this, &PlayerApplicationService::metronomeAvailabilityChanged);
     connect(m_controller.get(), &playback::PlaybackController::stateChanged, this, [this](playback::State state) {
         m_playbackState = state;
         emit playbackStateChanged(state);

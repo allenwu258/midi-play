@@ -32,6 +32,11 @@ playback::PlaybackClockSource FluidSynthAudioService::clockSource() const
 }
 bool FluidSynthAudioService::supportsTimedEvents() const { return false; }
 bool FluidSynthAudioService::supportsPerNoteExpression() const { return false; }
+// FluidSynth reserves a private MIDI channel during initialization. Report the
+// backend contract before a SoundFont is loaded so the session can expose the
+// control contract before load; prepareMetronome reports actual readiness.
+bool FluidSynthAudioService::supportsMetronome() const { return true; }
+bool FluidSynthAudioService::prepareMetronome(QString* error) { return m_engine->prepareMetronome(error); }
 bool FluidSynthAudioService::flush() { return m_engine->flush(); }
 void FluidSynthAudioService::submit(const playback::PlaybackEvent& event)
 {
@@ -41,6 +46,16 @@ void FluidSynthAudioService::submit(const playback::PlaybackEvent& event)
 void FluidSynthAudioService::submitOff(const playback::PlaybackEvent& event)
 {
     m_engine->submit(event);
+}
+
+void FluidSynthAudioService::submitMetronomeClick(bool accent, quint64)
+{
+    m_engine->submitMetronomeClick(accent);
+}
+
+void FluidSynthAudioService::stopMetronome()
+{
+    m_engine->stopMetronome();
 }
 
 } // namespace midi_play::audio

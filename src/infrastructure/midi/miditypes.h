@@ -97,6 +97,7 @@ struct MidiNormalizedFile {
     QVector<MidiLogicalTrack> tracks;
     QVector<MidiRawEvent> globalEvents;
     QVector<music::TempoChange> tempos;
+    QVector<music::Tick> sequenceStarts;
     QString title;
     music::Tick duration = 0;
     MidiReadDiagnostics diagnostics;

@@ -54,6 +54,19 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
 
     music::Tick sequenceOffset = 0;
     for (const auto& rawTrack : source.tracks) {
+        if (source.header.format == 2) {
+            const auto start = scaleTick(sequenceOffset, source.header);
+            result->sequenceStarts.push_back(start);
+            // Independent format-2 sequences reset their tempo and meter.
+            tempos.push_back({start, source.header.smpte ? 60.0 : 120.0});
+            MidiRawEvent meter;
+            meter.kind = MidiMessageKind::Meta;
+            meter.metaType = 0x58;
+            meter.tick = start;
+            meter.sequence = globalSequence++;
+            meter.payload = QByteArray::fromHex("04021808");
+            result->globalEvents.push_back(meter);
+        }
         music::Tick rawTrackEnd = 0;
         for (const auto& rawEvent : rawTrack.events) rawTrackEnd = std::max(rawTrackEnd, rawEvent.tick);
         QMap<QPair<int, int>, QVector<const MidiRawEvent*>> byPortChannel;
@@ -236,7 +249,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
         if (left.tick != right.tick) return left.tick < right.tick;
         return left.sequence < right.sequence;
     });
-    std::sort(tempos.begin(), tempos.end(), [](const auto& left, const auto& right) { return left.tick < right.tick; });
+    std::stable_sort(tempos.begin(), tempos.end(), [](const auto& left, const auto& right) { return left.tick < right.tick; });
     QVector<music::TempoChange> dedupedTempos;
     for (const auto& tempo : tempos) {
         if (!dedupedTempos.isEmpty() && dedupedTempos.back().tick == tempo.tick) dedupedTempos.back() = tempo;

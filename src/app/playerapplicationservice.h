@@ -23,6 +23,12 @@ public:
     qint64 durationMicroseconds() const { return m_durationUs; }
     int visualizationRefreshRate() const noexcept { return m_visualizationRefreshRate; }
     int playbackRatePercent() const noexcept { return m_playbackRatePercent; }
+    bool metronomeEnabled() const noexcept { return m_metronomeEnabled; }
+    bool supportsMetronome() const noexcept { return m_controller && m_controller->supportsMetronome(); }
+    QString metronomeUnavailableReason() const
+    {
+        return m_controller ? m_controller->metronomeUnavailableReason() : QStringLiteral("请先加载乐曲");
+    }
     bool loadFallbackSoundFont(const QString& path);
 
 public slots:
@@ -32,6 +38,7 @@ public slots:
     void requestSoundFontLoad(const QString& path);
     void setVisualizationRefreshRate(int refreshRate);
     void setPlaybackRatePercent(int percent);
+    void setMetronomeEnabled(bool enabled);
     void setGraphicsMode(settings::GraphicsMode mode);
     settings::GraphicsMode graphicsMode() const noexcept { return m_graphicsMode; }
     void play();
@@ -51,6 +58,8 @@ signals:
     void visualizationReady(midi_play::visualization::VisualChartPtr chart);
     void graphicsModeChanged(midi_play::settings::GraphicsMode mode);
     void playbackRateChanged(int percent);
+    void metronomeChanged(bool enabled);
+    void metronomeAvailabilityChanged(bool available, const QString& reason);
     void errorOccurred(const QString& message);
 
 private:
@@ -76,6 +85,7 @@ private:
     quint64 m_loadGeneration = 0;
     int m_visualizationRefreshRate = settings::kDefaultVisualizationRefreshRate;
     int m_playbackRatePercent = settings::kDefaultPlaybackRatePercent;
+    bool m_metronomeEnabled = false;
     settings::GraphicsMode m_graphicsMode = settings::kDefaultGraphicsMode;
 };
 

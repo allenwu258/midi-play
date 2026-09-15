@@ -69,6 +69,7 @@ private:
     QToolButton* m_playButton = nullptr;
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_stopButton = nullptr;
+    QToolButton* m_metronomeButton = nullptr;
     PlaybackRateControl* m_playbackRateControl = nullptr;
     QToolButton* m_minimizeButton = nullptr;
     QToolButton* m_maximizeButton = nullptr;

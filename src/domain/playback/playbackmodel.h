@@ -21,6 +21,7 @@ public:
     const std::shared_ptr<const PlaybackEventIndex>& globalIndex() const { return m_globalIndex; }
     const std::shared_ptr<const music::ScorePlaybackDom>& scoreDom() const { return m_scoreDom; }
     qint64 durationUs() const { return m_timeline ? m_timeline->durationUs() : 0; }
+    const std::shared_ptr<const music::PlaybackTimeline>& timeline() const { return m_timeline; }
     const PlaybackData* track(const QString& id) const;
     const PlaybackContext& context() const { return *m_context; }
 

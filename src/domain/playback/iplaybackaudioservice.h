@@ -21,12 +21,14 @@ struct PlaybackBackendCapabilities {
     PlaybackClockSource clockSource = PlaybackClockSource::SoftwareMonotonic;
     bool timedEvents = false;
     bool perNoteExpression = false;
+    bool metronome = false;
 
     bool usesAudioClock() const { return clockSource == PlaybackClockSource::AudioDevice; }
     // Scaling the transport alone is valid only for immediate MIDI dispatch.
     // Device clocks and prequeued timed events need a backend rate contract
     // before variable playback can be enabled for them.
     bool supportsSoftwarePlaybackRate() const { return !usesAudioClock() && !timedEvents; }
+    bool supportsMetronome() const { return metronome && supportsSoftwarePlaybackRate(); }
 };
 
 // Atomic handoff owned by an AudioDevice backend and shared with its
@@ -77,9 +79,17 @@ public:
     virtual PlaybackClockSource clockSource() const { return PlaybackClockSource::SoftwareMonotonic; }
     virtual bool supportsTimedEvents() const { return false; }
     virtual bool supportsPerNoteExpression() const { return false; }
+    virtual bool supportsMetronome() const { return false; }
+    // Preparation may perform I/O; call after SoundFont load, never on a tick.
+    // Optional feature failure must not prevent ordinary music playback.
+    virtual bool prepareMetronome(QString* error)
+    {
+        if (error) error->clear();
+        return supportsMetronome();
+    }
     virtual PlaybackBackendCapabilities capabilities() const
     {
-        return {clockSource(), supportsTimedEvents(), supportsPerNoteExpression()};
+        return {clockSource(), supportsTimedEvents(), supportsPerNoteExpression(), supportsMetronome()};
     }
     virtual bool flush() = 0;
     virtual void submit(const PlaybackEvent& event) = 0;
@@ -101,6 +111,14 @@ public:
         Q_UNUSED(generation)
         submitBatch(events);
     }
+    // generation is the song transport generation. stopMetronome cancels only
+    // clicks, independently of MIDI, including clicks still queued for a worker.
+    virtual void submitMetronomeClick(bool accent, quint64 generation)
+    {
+        Q_UNUSED(accent)
+        Q_UNUSED(generation)
+    }
+    virtual void stopMetronome() {}
     virtual bool updateMainStream(const QString& trackId, const PlaybackEventMap& events)
     {
         Q_UNUSED(trackId)

@@ -159,6 +159,9 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_channelPressure = reinterpret_cast<ChannelPressure>(resolve("fluid_synth_channel_pressure"));
     m_keyPressure = reinterpret_cast<KeyPressure>(resolve("fluid_synth_key_pressure"));
     m_systemReset = reinterpret_cast<SystemReset>(resolve("fluid_synth_system_reset"));
+    m_setChannelType = reinterpret_cast<SetChannelType>(resolve("fluid_synth_set_channel_type"));
+    m_allSoundsOff = reinterpret_cast<AllSoundsOff>(resolve("fluid_synth_all_sounds_off"));
+    m_countMidiChannels = reinterpret_cast<CountMidiChannels>(resolve("fluid_synth_count_midi_channels"));
 
     if (!m_newSettings || !m_deleteSettings || !m_newSynth || !m_deleteSynth || !m_sfload
         || !m_programSelect || !m_noteOn || !m_noteOff || !m_systemReset
@@ -193,6 +196,7 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         // samples and catches codec/data errors before the user presses Play.
         m_settingsSetInt(m_settings, "synth.dynamic-sample-loading",
                          dynamicSampleLoading ? 1 : 0);
+        m_metronomeChannelsReserved = m_settingsSetInt(m_settings, "synth.midi-channels", 32) == 0;
     }
 
     m_synth = m_newSynth(m_settings);
@@ -201,6 +205,8 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         release();
         return false;
     }
+    m_metronomeChannelsReserved = m_metronomeChannelsReserved && m_countMidiChannels
+        && m_countMidiChannels(m_synth) > kMetronomeChannel;
     if (!loadIntoSynth(soundFontPath, 1, &m_soundFontId, error)) {
         release();
         return false;
@@ -331,11 +337,77 @@ bool FluidSynthEngine::seek(qint64) { return flush(); }
 bool FluidSynthEngine::setTransportPosition(qint64) { return m_loaded; }
 qint64 FluidSynthEngine::clockPositionUs() const { return -1; }
 bool FluidSynthEngine::supportsTimedEvents() const { return false; }
+bool FluidSynthEngine::supportsMetronome() const
+{
+    return m_loaded && m_metronomeReady;
+}
+
+bool FluidSynthEngine::prepareMetronome(QString* error)
+{
+    if (error) error->clear();
+    if (!m_loaded || !m_metronomeChannelsReserved || !m_setChannelType
+        || !m_allSoundsOff || !m_cc) {
+        if (error) *error = QStringLiteral("当前音频引擎无法提供独立的节拍器通道");
+        return false;
+    }
+    if (m_metronomeSoundFontId < 0) {
+        QFile resource(QStringLiteral(":/midi_play/audio/metronome.sf2"));
+        auto file = std::make_unique<QTemporaryFile>(
+            QDir::tempPath() + QStringLiteral("/midi-play-click-XXXXXX.sf2"));
+        if (!resource.open(QIODevice::ReadOnly) || !file->open()) {
+            if (error) *error = QStringLiteral("无法读取或提取内置节拍器音源");
+            return false;
+        }
+        const auto data = resource.readAll();
+        if (data.isEmpty() || file->write(data) != data.size() || !file->flush()) {
+            if (error) *error = QStringLiteral("无法写入节拍器临时音源");
+            return false;
+        }
+        const QString path = file->fileName();
+        file->close();
+        // Keep the file alive as long as the synth: dynamic sample loading can
+        // reopen it later. Loading with reset=0 preserves all song channels.
+        if (!loadIntoSynth(path, 0, &m_metronomeSoundFontId, error)) return false;
+        m_metronomeFile = std::move(file);
+    }
+    m_metronomeReady = configureMetronomeChannel();
+    if (!m_metronomeReady && error) *error = QStringLiteral("无法配置独立节拍器音色");
+    return m_metronomeReady;
+}
+
+bool FluidSynthEngine::configureMetronomeChannel()
+{
+    if (!m_synth || m_metronomeSoundFontId < 0 || !m_setChannelType || !m_cc) return false;
+    // This bank/preset exists only in the bundled font. Always select by font
+    // ID, bypassing the ordinary channel % 16 path and user SoundFont fallback.
+    if (m_setChannelType(m_synth, kMetronomeChannel, 1) != 0
+        || m_programSelect(m_synth, kMetronomeChannel, m_metronomeSoundFontId, 128, 127) != 0) return false;
+    for (int controller : {64, 66, 91, 93}) {
+        if (m_cc(m_synth, kMetronomeChannel, controller, 0) != 0) return false;
+    }
+    return m_cc(m_synth, kMetronomeChannel, 7, 100) == 0
+        && m_cc(m_synth, kMetronomeChannel, 11, 127) == 0;
+}
+
+void FluidSynthEngine::submitMetronomeClick(bool accent)
+{
+    if (!supportsMetronome()) return;
+    // Finite, non-looping 60 ms samples need no delayed note-off task.
+    m_noteOn(m_synth, kMetronomeChannel, accent ? 60 : 61, 100);
+}
+
+void FluidSynthEngine::stopMetronome()
+{
+    if (m_synth && m_metronomeChannelsReserved && m_allSoundsOff)
+        m_allSoundsOff(m_synth, kMetronomeChannel);
+}
 
 bool FluidSynthEngine::flush()
 {
     if (!m_loaded) return false;
-    return m_systemReset && m_systemReset(m_synth) == 0;
+    const bool reset = m_systemReset && m_systemReset(m_synth) == 0;
+    if (m_metronomeSoundFontId >= 0) m_metronomeReady = configureMetronomeChannel();
+    return reset;
 }
 
 void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
@@ -427,6 +499,10 @@ void FluidSynthEngine::release()
     m_driver = nullptr;
     if (m_synth && m_deleteSynth) m_deleteSynth(m_synth);
     m_synth = nullptr;
+    m_metronomeReady = false;
+    m_metronomeChannelsReserved = false;
+    m_metronomeSoundFontId = -1;
+    m_metronomeFile.reset();
     if (m_settings && m_deleteSettings) m_deleteSettings(m_settings);
     m_settings = nullptr;
     m_soundFontId = -1;

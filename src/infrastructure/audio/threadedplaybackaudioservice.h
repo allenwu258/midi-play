@@ -25,6 +25,8 @@ public:
     playback::PlaybackClockSource clockSource() const override;
     bool supportsTimedEvents() const override;
     bool supportsPerNoteExpression() const override;
+    bool supportsMetronome() const override;
+    bool prepareMetronome(QString* error) override;
     playback::PlaybackBackendCapabilities capabilities() const override;
     bool flush() override;
     void setEventGeneration(quint64 generation) override;
@@ -32,6 +34,8 @@ public:
     void submitOff(const playback::PlaybackEvent& event) override;
     void submitBatch(const QVector<playback::PlaybackEvent>& events) override;
     void submitBatch(const QVector<playback::PlaybackEvent>& events, quint64 generation) override;
+    void submitMetronomeClick(bool accent, quint64 generation) override;
+    void stopMetronome() override;
 
 private:
     class Worker;
@@ -40,6 +44,7 @@ private:
     QThread m_thread;
     std::unique_ptr<Worker> m_worker;
     std::atomic<quint64> m_submissionGeneration {0};
+    std::atomic<quint64> m_metronomeEpoch {0};
 };
 
 } // namespace midi_play::audio

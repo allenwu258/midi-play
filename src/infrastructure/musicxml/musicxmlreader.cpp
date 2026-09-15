@@ -9,6 +9,8 @@
 #include <QMap>
 
 #include <algorithm>
+#include <cmath>
+#include <numeric>
 
 namespace midi_play::musicxml {
 namespace {
@@ -212,14 +214,17 @@ int dynamicVelocity(const QString& name)
 }
 
 void parseDirection(QXmlStreamReader& xml, music::MusicDocument& document, music::Track& track,
-                    music::Measure& measure, music::Tick tick)
+                    music::Measure& measure, music::Tick tick, int divisions)
 {
     double bpm = -1;
+    double soundBpm = -1;
+    double beatUnit = 0;
+    music::Tick offset = 0;
     int velocity = -1;
     while (xml.readNextStartElement()) {
         if (xml.name() == u"sound") {
             const auto value = xml.attributes().value(u"tempo");
-            if (!value.isEmpty()) bpm = value.toDouble();
+            if (!value.isEmpty()) soundBpm = value.toDouble();
             const auto dynamics = xml.attributes().value(u"dynamics");
             if (!dynamics.isEmpty()) velocity = std::clamp(dynamics.toInt(), 1, 127);
             measure.daCapo = xml.attributes().value(u"dacapo") == u"yes";
@@ -232,9 +237,35 @@ void parseDirection(QXmlStreamReader& xml, music::MusicDocument& document, music
         } else if (xml.name() == u"direction-type") {
             while (xml.readNextStartElement()) {
                 if (xml.name() == u"metronome") {
+                    double perMinute = -1;
+                    double unit = 0;
+                    int dots = 0;
+                    int unitCount = 0;
                     while (xml.readNextStartElement()) {
-                        if (xml.name() == u"per-minute") bpm = xml.readElementText().toDouble();
+                        if (xml.name() == u"per-minute") perMinute = xml.readElementText().toDouble();
+                        else if (xml.name() == u"beat-unit") {
+                            ++unitCount;
+                            const QString name = xml.readElementText();
+                            static const QHash<QString, double> lengths {
+                                {QStringLiteral("maxima"), 32}, {QStringLiteral("long"), 16},
+                                {QStringLiteral("breve"), 8}, {QStringLiteral("whole"), 4},
+                                {QStringLiteral("half"), 2}, {QStringLiteral("quarter"), 1},
+                                {QStringLiteral("eighth"), 0.5}, {QStringLiteral("16th"), 0.25},
+                                {QStringLiteral("32nd"), 0.125}, {QStringLiteral("64th"), 0.0625},
+                                {QStringLiteral("128th"), 0.03125}, {QStringLiteral("256th"), 0.015625},
+                                {QStringLiteral("512th"), 0.0078125}, {QStringLiteral("1024th"), 0.00390625}
+                            };
+                            unit = lengths.value(name, 0);
+                        } else if (xml.name() == u"beat-unit-dot") {
+                            dots = std::min(dots + 1, 8);
+                            xml.skipCurrentElement();
+                        }
                         else xml.skipCurrentElement();
+                    }
+                    // A metric-modulation equation is not a per-minute tempo.
+                    if (unitCount == 1 && unit > 0 && std::isfinite(perMinute) && perMinute > 0) {
+                        beatUnit = unit * (2.0 - std::ldexp(1.0, -dots));
+                        bpm = perMinute * beatUnit;
                     }
                 } else if (xml.name() == u"dynamics") {
                     while (xml.readNextStartElement()) {
@@ -271,9 +302,25 @@ void parseDirection(QXmlStreamReader& xml, music::MusicDocument& document, music
                     xml.skipCurrentElement();
                 } else xml.skipCurrentElement();
             }
+        } else if (xml.name() == u"offset") {
+            const bool affectsSound = xml.attributes().value(u"sound") == u"yes";
+            bool ok = false;
+            const double value = xml.readElementText().toDouble(&ok);
+            const double ticks = value * music::MusicDocument::kPpq / divisions;
+            if (affectsSound && ok && std::isfinite(ticks) && std::abs(ticks) < 1e12) {
+                offset = static_cast<music::Tick>(std::llround(ticks));
+            }
         } else xml.skipCurrentElement();
     }
-    if (bpm > 0.0) document.tempos().push_back({tick, bpm});
+    // The sound attribute is already in quarter notes/minute and wins
+    // regardless of element order. A dotted-quarter marking is not quarter BPM.
+    if (std::isfinite(soundBpm) && soundBpm > 0) bpm = soundBpm;
+    const music::Tick tempoTick = std::max<music::Tick>(0, tick + offset);
+    if (std::isfinite(bpm) && bpm > 0) {
+        const auto sequence = static_cast<quint64>(document.tempos().size());
+        document.tempos().push_back({tempoTick, bpm, sequence});
+    }
+    if (beatUnit > 0) document.metronomeUnits().push_back({tempoTick, beatUnit});
     if (velocity > 0) track.dynamics.push_back({tick, velocity});
 }
 
@@ -417,6 +464,7 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
     music::Measure measureInfo;
     measureInfo.number = measureNumber;
     measureInfo.start = measureStart;
+    measureInfo.implicit = xml.attributes().value(u"implicit") == u"yes";
     while (xml.readNextStartElement()) {
         if (xml.name() == u"attributes") {
             while (xml.readNextStartElement()) {
@@ -426,14 +474,45 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
                     divisions = nextDivisions;
                 }
                 else if (xml.name() == u"time") {
-                    int beats = 4;
-                    int beatType = 4;
+                    QVector<int> groups;
+                    QVector<int> pending;
+                    int beatType = 1;
+                    bool valid = true;
                     while (xml.readNextStartElement()) {
-                        if (xml.name() == u"beats") beats = std::max(1, xml.readElementText().toInt());
-                        else if (xml.name() == u"beat-type") beatType = std::max(1, xml.readElementText().toInt());
+                        if (xml.name() == u"beats") {
+                            pending.clear();
+                            const auto values = xml.readElementText().split(u'+');
+                            for (const auto& value : values) {
+                                bool ok = false;
+                                const int group = value.trimmed().toInt(&ok);
+                                valid &= ok && group > 0 && group <= 1024;
+                                if (pending.size() >= 1024) valid = false;
+                                else pending.push_back(valid ? group : 1);
+                            }
+                        } else if (xml.name() == u"beat-type") {
+                            bool ok = false;
+                            const int denominator = xml.readElementText().toInt(&ok);
+                            if (!ok || denominator < 1 || denominator > 1024 || pending.isEmpty()) {
+                                valid = false;
+                                continue;
+                            }
+                            const int common = std::lcm(beatType, denominator);
+                            if (common > 1024) { valid = false; continue; }
+                            for (auto& group : groups) group *= common / beatType;
+                            for (int group : pending) {
+                                if (groups.size() >= 1024) valid = false;
+                                else groups.push_back(group * (common / denominator));
+                            }
+                            beatType = common;
+                            pending.clear();
+                        }
                         else xml.skipCurrentElement();
                     }
-                    track.timeSignatures.push_back({measureStart, beats, beatType});
+                    const qint64 beats = std::accumulate(groups.cbegin(), groups.cend(), qint64(0));
+                    valid &= pending.isEmpty() && beats > 0 && beats <= 1024;
+                    music::TimeSignatureChange signature {cursor, valid ? static_cast<int>(beats) : 0, beatType};
+                    if (valid && groups.size() > 1) signature.beatGroups = groups;
+                    track.timeSignatures.push_back(signature);
                 } else if (xml.name() == u"key") {
                     int fifths = 0;
                     QString mode = QStringLiteral("major");
@@ -531,7 +610,7 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
                 else xml.skipCurrentElement();
             }
         } else if (xml.name() == u"direction") {
-            parseDirection(xml, document, track, measureInfo, cursor);
+            parseDirection(xml, document, track, measureInfo, cursor, divisions);
         } else if (xml.name() == u"barline") {
             parseBarline(xml, measureInfo);
         } else {
@@ -621,7 +700,7 @@ ReadResult MusicXmlReader::read(const QString& path) const
     }
     if (xml.hasError()) return {nullptr, QStringLiteral("MusicXML 解析错误: %1").arg(xml.errorString())};
     if (document->tempos().isEmpty()) document->tempos().push_back({0, 120.0});
-    std::sort(document->tempos().begin(), document->tempos().end(), [](const auto& a, const auto& b) { return a.tick < b.tick; });
+    std::stable_sort(document->tempos().begin(), document->tempos().end(), [](const auto& a, const auto& b) { return a.tick < b.tick; });
     quint64 nextNoteId = 1;
     for (auto& track : document->tracks()) {
         for (auto& note : track.notes) note.noteId = nextNoteId++;
