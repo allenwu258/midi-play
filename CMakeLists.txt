@@ -67,6 +67,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/app/settingsservice.cpp
     src/domain/music/musicdocument.h
     src/domain/music/musicdocument.cpp
+    src/domain/music/musicrhythmgrid.h
+    src/domain/music/musicrhythmgrid.cpp
     src/domain/music/playbacktimeline.h
     src/domain/music/playbacktimeline.cpp
     src/domain/music/musicanalysis.h
@@ -303,6 +305,8 @@ if (BUILD_TESTING)
         tests/visualizationtests.cpp
         src/domain/music/musicdocument.h
         src/domain/music/musicdocument.cpp
+        src/domain/music/musicrhythmgrid.h
+        src/domain/music/musicrhythmgrid.cpp
         src/domain/music/musicanalysis.h
         src/domain/music/musicanalysis.cpp
         src/domain/visualization/visualchart.h
@@ -340,6 +344,8 @@ if (BUILD_TESTING)
         tests/playbacksessiontests.cpp
         src/domain/music/musicdocument.h
         src/domain/music/musicdocument.cpp
+        src/domain/music/musicrhythmgrid.h
+        src/domain/music/musicrhythmgrid.cpp
         src/domain/music/playbacktimeline.h
         src/domain/music/playbacktimeline.cpp
         src/domain/music/scoreplaybackdom.h

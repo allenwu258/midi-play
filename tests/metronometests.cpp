@@ -1,4 +1,5 @@
 #include "domain/playback/metronometimeline.h"
+#include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/musicxml/musicxmlreader.h"
 #include "infrastructure/midi/midinormalizer.h"
 #include "infrastructure/midi/mididocumentbuilder.h"
@@ -211,6 +212,77 @@ void testScheduler()
     require(!scheduler.takeDue(grid, 515000, 1), "mid-song enable waits for the next beat");
 }
 
+void expectSharedDownbeats(const std::shared_ptr<MusicDocument>& score,
+                          const QVector<qint64>& expected)
+{
+    const auto audio = timeline(score);
+    const auto visual = visualization::PlaybackVisualizationProjector().project(*score, 1, {});
+    require(audio.available() && visual, "both rhythm projections must succeed");
+    QVector<qint64> accents, barlines;
+    for (const auto& beat : audio.beats())
+        if (beat.accent == MetronomeAccent::Measure) accents.push_back(beat.timeUs);
+    for (const auto& line : visual->gridLines())
+        if (line.measureStart) barlines.push_back(line.timeUs);
+    require(accents == expected, "musical downbeat timestamps must match the score");
+    require(barlines == expected, "visual barlines must match audible downbeats");
+}
+
+void testSharedRhythmProjections()
+{
+    auto score = document(3840);
+    score->tracks()[0].timeSignatures = {{0, 4, 4, 24, 16}};
+    expectSharedDownbeats(score, {0, 1000000, 2000000, 3000000});
+    auto chart = visualization::PlaybackVisualizationProjector().project(*score, 1, {});
+    require(chart->gridLines().size() == 16 && timeline(score).beats().size() == 8,
+        "notated subdivisions may be finer than MIDI's explicit click period");
+
+    score = document(2880);
+    score->tracks()[0].timeSignatures = {{0, 6, 8, 36, 8}};
+    expectSharedDownbeats(score, {0, 1500000});
+    chart = visualization::PlaybackVisualizationProjector().project(*score, 1, {});
+    require(chart->gridLines().size() == 12 && timeline(score).beats().size() == 4,
+        "compound bars retain eighth-note visual subdivisions and dotted-quarter clicks");
+
+    score = document(2400);
+    score->tracks()[0].timeSignatures = {{0, 5, 8, 0, 8, {3, 2}}};
+    expectSharedDownbeats(score, {0, 1250000});
+    expectTimes(timeline(score), {0, 750000, 1250000, 2000000});
+    score->metronomeUnits() = {{0, 0.5}, {120, 0.5}};
+    expectSharedDownbeats(score, {0, 1250000});
+
+    score = document(3840);
+    score->tracks()[0].timeSignatures = {{0, 4, 4, 24, 8}, {240, 4, 4, 12, 8}};
+    expectSharedDownbeats(score, {0, 2000000});
+    chart = visualization::PlaybackVisualizationProjector().project(*score, 1, {});
+    require(chart->gridLines().size() == 8, "changing MIDI click clocks cannot move visual subdivisions");
+    score->tracks()[0].timeSignatures[1].metronomeClocks = 24;
+    expectSharedDownbeats(score, {0, 2000000});
+    expectTimes(timeline(score), {0, 500000, 1000000, 1500000, 2000000, 2500000, 3000000, 3500000});
+    score->tracks()[0].timeSignatures = {{0, 4, 4}, {960, 3, 4}};
+    expectSharedDownbeats(score, {0, 1000000, 2500000});
+
+    score = document(2880);
+    score->sequenceStarts() = {0, 1440};
+    expectSharedDownbeats(score, {0, 1500000});
+    score->setMusicalTimebase(false);
+    chart = visualization::PlaybackVisualizationProjector().project(*score, 1, {});
+    require(!timeline(score).available() && chart && chart->gridLines().isEmpty(),
+        "neither projection may invent a musical grid from SMPTE ticks");
+
+    score = document(2400);
+    music::Measure pickup;
+    pickup.duration = 480;
+    pickup.implicit = true;
+    music::Measure bar;
+    bar.start = 480;
+    bar.duration = 1920;
+    bar.repeatStart = bar.repeatEnd = true;
+    score->tracks()[0].measures = {pickup, bar};
+    score->tempos().push_back({480, 60});
+    score->rebuildMeasureGrid();
+    expectSharedDownbeats(score, {500000, 4500000});
+}
+
 void testMusicXmlMetadata()
 {
     QTemporaryFile xml;
@@ -265,6 +337,7 @@ void testMidiSequenceMetadata()
     const auto grid = MetronomeTimeline(parsed.document, std::make_shared<music::PlaybackTimeline>(parsed.document));
     expectTimes(grid, {0, 1500000, 3000000, 3500000, 4000000});
     require(grid.beats()[2].accent == MetronomeAccent::Measure, "format 2 resets meter phase");
+    expectSharedDownbeats(parsed.document, {0, 3000000});
 }
 
 void testFluidSynthAudio()
@@ -396,6 +469,7 @@ int main(int argc, char** argv)
         testClickUnitPhase();
         testWrittenPickupAndRepeats();
         testScheduler();
+        testSharedRhythmProjections();
         testMusicXmlMetadata();
         testMidiSequenceMetadata();
     }

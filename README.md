@@ -203,7 +203,7 @@ cmake --build --preset windows-msvc-debug
 
 节拍器默认关闭，开启后按钮高亮；仅在播放时发声，小节首拍使用较强、较高的点击音。播放中开启会从下一拍加入，暂停、停止、拖动进度和切换音源会取消旧点击音，卡顿后跳过错过的节拍，不连续补响。开关在本次运行中保留，重启后恢复关闭。使用程序内嵌的原创短点击音源，不依赖所选 SF2/SF3 的打击乐音色，也不占用歌曲的 16 个 MIDI 通道。
 
-节拍规则优先采用文件中的明确标记：MIDI 的 `FF 58` 点击间隔和每 MIDI 四分音符对应的记谱单位、MusicXML 的节拍单位及附点；无明确标记时，简单拍按分母单位点击，6/8 等复合拍按三个分母单位分组，`3+2/8` 等加法拍按指定分组。MusicXML 使用实际小节边界，首个标为 `implicit="yes"` 的不完整小节按弱起处理；MIDI 缺少弱起信息时从文件起点建立小节。节拍点击单位可能大于下落视图的网格细分单位。SMPTE 时间码、无效拍号或超过一百万个节拍的异常乐曲会禁用节拍器，悬停按钮可查看原因，普通音乐播放仍可使用。
+节拍规则优先采用文件中的明确标记：MIDI 的 `FF 58` 点击间隔和每 MIDI 四分音符对应的记谱单位、MusicXML 的节拍单位及附点；无明确标记时，简单拍按分母单位点击，6/8 等复合拍按三个分母单位分组，`3+2/8` 等加法拍按指定分组。MusicXML 使用实际小节边界，首个标为 `implicit="yes"` 的不完整小节按弱起处理；MIDI 缺少弱起信息时从文件起点建立小节。节拍器与传统/Vulkan 背景线共同使用领域层 `MusicRhythmGrid` 的小节边界和弱起相位，视觉保留按分母单位生成的细分拍线；重复速度标记不会重新起拍。SMPTE 时间码、无效拍号或超过一百万个网格点的异常乐曲不生成音乐网格并禁用节拍器，悬停按钮可查看原因，普通音乐播放仍可使用。
 
 设置窗口提供：
 
@@ -375,8 +375,8 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - soundfont_inspector：SoundFont 内容和格式检查；
 - visualization_domain：可视化投影、时间窗口、区间索引和场景数据；
 - playback_session_transport：播放、暂停、停止、seek、事件代际和 transport 状态。
-- metronome_timeline_and_readers：拍号、显式点击单位、附点速度、弱起、重复段落、MIDI format 2 和丢帧后的节拍调度。
-- metronome_fluidsynth_audio：使用真实 FluidSynth 离线合成，验证内置点击音的强弱、自然结束、通道隔离及音源切换；配置 Windows FluidSynth DLL 时启用，无需音频设备。
+- metronome_timeline_and_readers：拍号、显式点击单位、附点速度、弱起、重复段落、MIDI format 2、重复标记的相位稳定性、可视化小节线与点击重音的一致性，以及丢帧后的节拍调度。
+- metronome_fluidsynth_audio：使用真实 FluidSynth 和正式混音回调离线合成，验证点击音强弱、自然结束、音源切换，以及歌曲复音满载时连续点击和取消不抢占任何歌曲声部；配置 Windows FluidSynth DLL 时启用，无需音频设备。
 
 节拍器点击资源 `assets/metronome.sf2` 已提交到源码并通过 Qt Resource 嵌入可执行文件。`scripts/generate-metronome-soundfont.py` 使用 Python 标准库生成原创采样，仅用于重建该资源，普通构建和运行不需要 Python。内置资源需要写入系统临时目录供 FluidSynth 读取，退出时自动清理；提取或准备失败时仅禁用节拍器并显示原因。
 

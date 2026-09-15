@@ -1,4 +1,5 @@
 #include "playbackvisualizationprojector.h"
+#include "domain/music/musicrhythmgrid.h"
 
 #include <QHash>
 #include <QSet>
@@ -13,13 +14,6 @@ namespace {
 
 using music::PlaybackSegment;
 using music::Tick;
-
-struct SourceGridLine {
-    Tick tick = 0;
-    int measureNumber = 0;
-    int beatIndex = 0;
-    bool measureStart = false;
-};
 
 constexpr std::array<ColorRgba, 10> kTrackPalette {{
     {45, 201, 151, 255},
@@ -42,75 +36,6 @@ T valueAtTick(const QVector<T>& values, Tick tick, T fallback, TickGetter getter
         fallback = value;
     }
     return fallback;
-}
-
-QVector<music::TimeSignatureChange> collectTimeSignatures(const music::MusicDocument& document)
-{
-    QVector<music::TimeSignatureChange> result;
-    for (const auto& track : document.tracks()) result += track.timeSignatures;
-    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
-        return left.tick < right.tick;
-    });
-    QVector<music::TimeSignatureChange> deduplicated;
-    for (const auto& value : result) {
-        if (!deduplicated.isEmpty() && deduplicated.back().tick == value.tick) deduplicated.back() = value;
-        else deduplicated.push_back(value);
-    }
-    if (deduplicated.isEmpty() || deduplicated.front().tick > 0) {
-        deduplicated.push_front({0, 4, 4});
-    }
-    return deduplicated;
-}
-
-QVector<SourceGridLine> buildSourceGrid(const music::MusicDocument& document,
-                                        const QVector<music::TimeSignatureChange>& signatures)
-{
-    QVector<SourceGridLine> result;
-    const bool hasReaderMeasures = std::any_of(document.tracks().cbegin(), document.tracks().cend(),
-                                               [](const auto& track) { return !track.measures.isEmpty(); });
-    if (hasReaderMeasures && !document.measures().isEmpty()) {
-        for (int measureIndex = 0; measureIndex < document.measures().size(); ++measureIndex) {
-            const auto& measure = document.measures()[measureIndex];
-            if (measure.duration <= 0) continue;
-            const auto signature = valueAtTick(signatures, measure.start,
-                                               music::TimeSignatureChange {0, 4, 4},
-                                               [](const auto& value) { return value.tick; });
-            const Tick beatTicks = std::max<Tick>(1, music::MusicDocument::kPpq * 4 / std::max(1, signature.beatType));
-            int beat = 0;
-            for (Tick tick = measure.start; tick < measure.start + measure.duration; tick += beatTicks) {
-                result.push_back({tick, measure.number > 0 ? measure.number : measureIndex + 1,
-                                  beat, beat == 0});
-                ++beat;
-            }
-        }
-        return result;
-    }
-
-    Tick cursor = 0;
-    int measureNumber = 1;
-    int safety = 0;
-    while (cursor < document.duration() && safety++ < 1'000'000) {
-        const auto signature = valueAtTick(signatures, cursor,
-                                           music::TimeSignatureChange {0, 4, 4},
-                                           [](const auto& value) { return value.tick; });
-        const Tick beatTicks = std::max<Tick>(1, music::MusicDocument::kPpq * 4 / std::max(1, signature.beatType));
-        Tick measureEnd = std::min(document.duration(), cursor + beatTicks * std::max(1, signature.beats));
-        for (const auto& change : signatures) {
-            if (change.tick > cursor && change.tick < measureEnd) {
-                measureEnd = change.tick;
-                break;
-            }
-        }
-        int beat = 0;
-        for (Tick tick = cursor; tick < measureEnd; tick += beatTicks) {
-            result.push_back({tick, measureNumber, beat, beat == 0});
-            ++beat;
-        }
-        if (measureEnd <= cursor) break;
-        cursor = measureEnd;
-        ++measureNumber;
-    }
-    return result;
 }
 
 qint64 projectedTimeUs(const music::MusicDocument& document,
@@ -380,8 +305,9 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
         return chart->m_notes[left].startUs < chart->m_notes[right].startUs;
     });
 
-    const auto signatures = collectTimeSignatures(document);
-    const auto sourceGrid = buildSourceGrid(document, signatures);
+    const music::MusicRhythmGrid rhythm(document);
+    const auto& signatures = rhythm.signatures();
+    const auto& sourceGrid = rhythm.subdivisions();
     for (const auto& segment : segments) {
         for (const auto& line : sourceGrid) {
             if (line.tick < segment.sourceStart || line.tick >= segment.sourceEnd) continue;
@@ -389,8 +315,8 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
                 projectedTimeUs(document, segment, line.tick),
                 line.measureNumber,
                 line.beatIndex,
-                line.measureStart,
-                line.measureStart ? QStringLiteral("M%1").arg(line.measureNumber) : QString {}
+                line.downbeat,
+                line.downbeat ? QStringLiteral("M%1").arg(line.measureNumber) : QString {}
             });
         }
     }
