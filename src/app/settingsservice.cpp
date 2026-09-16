@@ -24,6 +24,7 @@ SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store,
 {
     qRegisterMetaType<midi_play::settings::TitleBarMode>();
     qRegisterMetaType<midi_play::settings::GraphicsMode>();
+    qRegisterMetaType<midi_play::settings::ThemeMode>();
 }
 
 QString SettingsService::soundFontPath() const
@@ -43,9 +44,11 @@ void SettingsService::load()
         settings::normalizeVisualizationRefreshRate(loadedSettings.visualizationRefreshRate);
     loadedSettings.titleBarMode = settings::normalizeTitleBarMode(loadedSettings.titleBarMode);
     loadedSettings.graphicsMode = settings::normalizeGraphicsMode(loadedSettings.graphicsMode);
+    loadedSettings.themeMode = settings::normalizeThemeMode(loadedSettings.themeMode);
     loadedSettings.soundFontPathOverride =
         normalizeSoundFontPathOverride(loadedSettings.soundFontPathOverride);
     m_settings = loadedSettings;
+    m_lastLoadWarning = warning;
     if (!warning.isEmpty()) {
         emit settingsLoadWarning(warning);
     }
@@ -84,6 +87,17 @@ void SettingsService::setShowNotationStrip(bool show)
 
     m_settings.showNotationStrip = show;
     emit showNotationStripChanged(show);
+    persistSettings();
+}
+
+void SettingsService::setThemeMode(settings::ThemeMode mode)
+{
+    const auto normalized = settings::normalizeThemeMode(mode);
+    if (m_settings.themeMode == normalized) {
+        return;
+    }
+    m_settings.themeMode = normalized;
+    emit themeModeChanged(normalized);
     persistSettings();
 }
 

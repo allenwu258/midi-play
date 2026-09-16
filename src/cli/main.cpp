@@ -30,7 +30,7 @@ void printUsage(FILE* stream)
         "Usage: midi_play_cli <musicxml|mxl|mid|midi|kar file>\n"
         "       midi_play_cli --audio-test <sf2|sf3 file> [replacement SoundFont]\n"
         "       midi_play_cli --midi-test <MIDI file>\n"
-        "       midi_play_cli --render-test <music file> <output.png> [position_us [width [height]]]\n"
+        "       midi_play_cli --render-test <music file> <output.png> [position_us [width [height]]] [--theme dark|light]\n"
         "       midi_play_cli --help\n",
         stream);
 }
@@ -83,8 +83,26 @@ int runMidiTest(const QString& inputPath)
     return 0;
 }
 
-int runRenderTest(const QStringList& arguments)
+int runRenderTest(QStringList arguments)
 {
+    auto mode = midi_play::settings::kDefaultThemeMode;
+    const int themeArgument = arguments.indexOf(QStringLiteral("--theme"));
+    if (themeArgument >= 0) {
+        const QString value = arguments.value(themeArgument + 1);
+        if (themeArgument < 4 || arguments.count(QStringLiteral("--theme")) != 1
+            || (value != QStringLiteral("dark") && value != QStringLiteral("light"))) {
+            qCritical() << "--theme requires exactly one value: dark or light";
+            return 2;
+        }
+        mode = value == QStringLiteral("light")
+            ? midi_play::settings::ThemeMode::Light : midi_play::settings::ThemeMode::Dark;
+        arguments.removeAt(themeArgument + 1);
+        arguments.removeAt(themeArgument);
+    }
+    if (arguments.size() < 4 || arguments.size() > 7) {
+        printUsage(stderr);
+        return 2;
+    }
     midi_play::readers::MusicReaderRegistry registry;
     registerReaders(registry);
     const QString inputPath = arguments.at(2);
@@ -110,6 +128,7 @@ int runRenderTest(const QStringList& arguments)
     const qint64 requestedPosition = arguments.size() > 4
         ? arguments.at(4).toLongLong() : chart->durationUs() / 10;
     midi_play::visualization::PlaybackSceneState state;
+    state.themeMode = mode;
     state.chart = chart;
     state.durationUs = chart->durationUs();
     state.transportPositionUs = std::clamp<qint64>(requestedPosition, 0, chart->durationUs());
@@ -192,7 +211,7 @@ int main(int argc, char* argv[])
     if (command == QStringLiteral("--midi-test") && arguments.size() == 3) {
         return runMidiTest(arguments.at(2));
     }
-    if (command == QStringLiteral("--render-test") && arguments.size() >= 4 && arguments.size() <= 7) {
+    if (command == QStringLiteral("--render-test")) {
         return runRenderTest(arguments);
     }
     if (!command.startsWith(QLatin1Char('-')) && arguments.size() == 2) {

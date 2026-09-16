@@ -2,6 +2,7 @@
 
 #include "domain/playback/playbacktypes.h"
 #include "domain/settings/titlebarmode.h"
+#include "domain/settings/thememode.h"
 #include "domain/visualization/visualchart.h"
 #include "playbackmetadatapresenter.h"
 
@@ -20,6 +21,7 @@ namespace midi_play::app { class SettingsService; }
 namespace midi_play::presentation::settings { class SettingsDialog; }
 namespace midi_play::presentation::windowchrome { class CustomTitleBar; }
 namespace midi_play::presentation::visualization { class FallingNotesView; }
+namespace midi_play::presentation::theme { class ThemeController; }
 
 namespace midi_play::presentation {
 class PlaybackRateControl;
@@ -29,7 +31,8 @@ class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(app::PlayerApplicationService* service,
                         app::SettingsService* settingsService,
-                        QWidget* parent = nullptr);
+                        QWidget* parent = nullptr,
+                        theme::ThemeController* themeController = nullptr);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -50,11 +53,14 @@ private:
     void updateTransportControls();
     void applyTitleBarMode(midi_play::settings::TitleBarMode mode);
     void updateWindowControlButtons();
+    void applyTheme(midi_play::settings::ThemeMode mode);
 
     static constexpr int kSliderResolution = 1'000'000;
 
     app::PlayerApplicationService* m_service = nullptr;
     app::SettingsService* m_settingsService = nullptr;
+    theme::ThemeController* m_themeController = nullptr;
+    midi_play::settings::ThemeMode m_themeMode = midi_play::settings::kDefaultThemeMode;
     QPointer<settings::SettingsDialog> m_settingsDialog;
     midi_play::settings::TitleBarMode m_titleBarMode = midi_play::settings::kDefaultTitleBarMode;
     windowchrome::CustomTitleBar* m_topBar = nullptr;
@@ -67,6 +73,8 @@ private:
     QLabel* m_timeLabel = nullptr;
     QLabel* m_statusLabel = nullptr;
     QToolButton* m_playButton = nullptr;
+    QToolButton* m_openButton = nullptr;
+    QToolButton* m_settingsButton = nullptr;
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_stopButton = nullptr;
     QToolButton* m_metronomeButton = nullptr;

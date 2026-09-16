@@ -28,6 +28,7 @@
 namespace {
 using namespace midi_play;
 using namespace midi_play::presentation::visualization;
+using midi_play::settings::ThemeMode;
 
 void require(bool condition, const char* message)
 {
@@ -204,9 +205,11 @@ visualization::VisualChartPtr denseChart()
 }
 
 QImage renderRaster(const visualization::VisualChartPtr& chart, qint64 time, QSize size, qreal dpr = 1,
-                    FallingNotesRenderer* reusedRenderer = nullptr, bool showNotationStrip = false)
+                    FallingNotesRenderer* reusedRenderer = nullptr, bool showNotationStrip = false,
+                    ThemeMode mode = ThemeMode::Dark)
 {
     visualization::PlaybackSceneState state;
+    state.themeMode = mode;
     state.chart = chart;
     state.transportPositionUs = time;
     state.transportState = playback::State::Playing;
@@ -248,6 +251,41 @@ void testNotationStripGeometry(const visualization::VisualChartPtr& chart)
             require(renderRaster(chart, 500'000, {1280, 720}, dpr, &renderer, show)
                         == renderRaster(chart, 500'000, {1280, 720}, dpr, nullptr, show),
                     "toggling notation at the same size must match a fresh raster renderer");
+    }
+}
+
+void testThemeMaterialsAndRaster(const visualization::VisualChartPtr& chart)
+{
+    const auto geometry = SceneLayoutEngine().layout({1280, 720}, chart.get(), 5'000'000);
+    NoteRenderCache cache;
+    cache.prepare(chart, geometry);
+    const auto darkBody = cache.styleForNote(0)->material.body;
+    const auto chartBuilds = cache.chartBuildCount();
+    const auto geometryBuilds = cache.geometryBuildCount();
+    const auto materialRevision = cache.materialRevision();
+    cache.prepare(chart, geometry, ThemeMode::Light);
+    require(cache.styleForNote(0)->material.body != darkBody && cache.materialRevision() > materialRevision,
+            "light theme must rebuild note materials");
+    require(cache.chartBuildCount() == chartBuilds && cache.geometryBuildCount() == geometryBuilds,
+            "theme changes must not rebuild chart data or note geometry");
+    const auto lightRevision = cache.materialRevision();
+    cache.prepare(chart, geometry, ThemeMode::Light);
+    require(cache.materialRevision() == lightRevision, "unchanged themes must preserve material caches");
+    cache.prepare(chart, geometry, ThemeMode::Dark);
+    require(cache.styleForNote(0)->material.body == darkBody, "returning to dark must restore original materials");
+
+    FallingNotesRenderer renderer;
+    for (qreal dpr : {1.0, 1.5, 2.0}) {
+        for (bool show : {false, true}) {
+            QImage previous;
+            for (auto mode : {ThemeMode::Dark, ThemeMode::Light, ThemeMode::Dark}) {
+                const auto cached = renderRaster(chart, 500'000, {1280, 720}, dpr, &renderer, show, mode);
+                require(cached == renderRaster(chart, 500'000, {1280, 720}, dpr, nullptr, show, mode),
+                        "theme toggles must invalidate colored raster caches at every DPI and notation layout");
+                require(previous.isNull() || cached != previous, "both palettes must produce distinct scenes");
+                previous = cached;
+            }
+        }
     }
 }
 
@@ -332,6 +370,52 @@ void testVulkanStaticKeyboard(const visualization::VisualChartPtr& chart)
     }
 }
 
+void testVulkanThemes(const visualization::VisualChartPtr& chart)
+{
+    VulkanScene scene;
+    visualization::PlaybackSceneState state;
+    state.chart = chart;
+    state.transportState = playback::State::Playing;
+    state.transportPositionUs = 500'000;
+    for (bool show : {false, true}) {
+        state.showNotationStrip = show;
+        state.themeMode = ThemeMode::Dark;
+        scene.prepare(state, {1280, 720}, 1.5, QFont());
+        const auto darkKeys = scene.staticUi().quads;
+        const auto darkNotes = scene.notes();
+        const auto darkDecorations = scene.dynamicUi().quads;
+        const auto atlasRevision = scene.atlasRevision();
+        const auto strikeY = scene.geometry().strikeLineY;
+        const auto staticRevision = scene.staticUiRevision();
+        const auto notesRevision = scene.notesRevision();
+        state.themeMode = ThemeMode::Light;
+        scene.prepare(state, {1280, 720}, 1.5, QFont());
+        require(scene.staticUi().quads != darkKeys && scene.notes() != darkNotes
+                    && scene.dynamicUi().quads != darkDecorations,
+                "Vulkan theme changes must recolor static, note and dynamic batches together");
+        require(scene.staticUiRevision() > staticRevision && scene.notesRevision() > notesRevision,
+                "all colored GPU buffers must be marked for upload");
+        require(scene.atlasRevision() == atlasRevision && scene.geometry().strikeLineY == strikeY,
+                "theme-only updates must retain glyph atlas and strike geometry");
+        const auto lightNotesRevision = scene.notesRevision();
+        const auto lightStaticRevision = scene.staticUiRevision();
+        scene.prepare(state, {1280, 720}, 1.5, QFont());
+        require(scene.notesRevision() == lightNotesRevision && scene.staticUiRevision() == lightStaticRevision,
+                "unchanged themes must not upload static GPU data again");
+        state.themeMode = ThemeMode::Dark;
+        scene.prepare(state, {1280, 720}, 1.5, QFont());
+        require(scene.staticUi().quads == darkKeys && scene.notes() == darkNotes
+                    && scene.dynamicUi().quads == darkDecorations,
+                "Vulkan must restore every batch deterministically after a theme round trip");
+        if (!show) {
+            const auto range = scene.dynamicUi().range(VulkanUiLayer::Strike);
+            for (uint32_t i = range.first; i < range.first + range.count; ++i)
+                require(scene.dynamicUi().quads[i].options[3] == 2,
+                        "hidden notation may retain local note effects, but no strike line or yellow glow");
+        }
+    }
+}
+
 void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const QString& directory)
 {
     qputenv("MIDI_PLAY_VULKAN_VALIDATE_RESOURCES", "1");
@@ -373,6 +457,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
     const auto advance = QObject::connect(&window, &FallingNotesVulkanWindow::frameRendered, &window, [&] {
         window.setTransportPosition((qint64(presentedFrames) * 250'000) % chart->durationUs(), chart->durationUs());
         window.setShowNotationStrip((presentedFrames / 60) % 2 != 0);
+        window.setThemeMode((presentedFrames / 90) % 2 ? ThemeMode::Light : ThemeMode::Dark);
     });
     while (presentedFrames < 900 && !failed && timer.elapsed() < 30'000) {
         QApplication::processEvents();
@@ -389,9 +474,12 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
     cache.prepare(chart, geometry);
     visualization::VisibleNoteIndex noteIndex(chart->notes());
     QVector<int> indices;
-    const VisualizationTheme theme;
     int frameCount = 0;
     for (qint64 time = 0; time < chart->durationUs(); time += 250'000) {
+        const auto mode = frameCount % 2 ? ThemeMode::Light : ThemeMode::Dark;
+        const auto& theme = presentation::theme::themeFor(mode).visualization;
+        cache.prepare(chart, geometry, mode);
+        window.setThemeMode(mode);
         window.setTransportPosition(time, chart->durationUs());
         const int targetFrame = presentedFrames + 3;
         QElapsedTimer frameTimer;
@@ -414,7 +502,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
             const auto& light = noteFrame.key(slot.pitch);
             const auto* style = cache.styleForNote(light.noteIndex);
             const auto base = slot.blackKey ? theme.blackKey : theme.whiteKey;
-            const QColor expected = style ? illuminatedKeyColor(base, style->material.body,
+            const QColor expected = style ? illuminatedKeyColor(base, style->material.keyFill,
                 light.strength * (slot.blackKey ? .70 : .60)) : base;
             const auto actual = image.pixelColor(qRound(sample.x() * window.devicePixelRatio()),
                                                  qRound(sample.y() * window.devicePixelRatio()));
@@ -439,7 +527,8 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
     require(validationErrors == 0, "Vulkan lifetime and synchronization validation must pass");
 }
 
-void captureVulkan(const visualization::VisualChartPtr& chart, const QString& directory, bool showNotationStrip)
+void captureVulkan(const visualization::VisualChartPtr& chart, const QString& directory, bool showNotationStrip,
+                   ThemeMode mode)
 {
     QVulkanInstance instance;
     require(instance.create(), "Vulkan instance must initialize");
@@ -448,6 +537,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     window.resize(1280, 720);
     window.setChart(chart);
     window.setShowNotationStrip(showNotationStrip);
+    window.setThemeMode(mode);
     window.setTransportPosition(500'000, chart->durationUs());
     window.setTransportState(playback::State::Playing);
     bool failed = false;
@@ -464,7 +554,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     const auto image = window.grab();
     require(!image.isNull(), "Vulkan must return a non-empty rendered frame");
     require(image.save(directory + QStringLiteral("/notes-vulkan.png")), "Vulkan snapshot must save");
-    const auto reference = renderRaster(chart, 500'000, window.size(), window.devicePixelRatio(), nullptr, showNotationStrip);
+    const auto reference = renderRaster(chart, 500'000, window.size(), window.devicePixelRatio(), nullptr, showNotationStrip, mode);
     require(reference.size() == image.size(), "backend comparison must use equal physical dimensions");
     require(reference.save(directory + QStringLiteral("/notes-qt-matched.png")), "matched raster snapshot must save");
     double difference = 0;
@@ -560,6 +650,7 @@ int main(int argc, char** argv)
     testVisualClock();
     const auto chart = denseChart();
     testNotationStripGeometry(chart);
+    testThemeMaterialsAndRaster(chart);
     testFrameEffects(chart);
     const auto first = renderRaster(chart, 500'000, {1280, 720});
     require(first == renderRaster(chart, 500'000, {1280, 720}), "raster snapshots must be deterministic");
@@ -574,6 +665,7 @@ int main(int argc, char** argv)
     const auto args = app.arguments();
 #if MIDI_PLAY_HAS_VULKAN
     testVulkanStaticKeyboard(chart);
+    testVulkanThemes(chart);
     if (args.contains(QStringLiteral("--vulkan-stress"))) {
         auto selectedChart = stressChart();
         const int midiArgument = args.indexOf(QStringLiteral("--midi"));
@@ -596,10 +688,13 @@ int main(int argc, char** argv)
         require(first.save(directory + QStringLiteral("/notes-qt.png")), "raster snapshot must save");
 #if MIDI_PLAY_HAS_VULKAN
         if (args.contains(QStringLiteral("--vulkan"))) {
-            for (bool show : {false, true}) {
-                const auto variant = directory + (show ? QStringLiteral("/notation-shown") : QStringLiteral("/notation-hidden"));
-                require(QDir().mkpath(variant), "notation snapshot directory must be writable");
-                captureVulkan(chart, variant, show);
+            for (auto mode : {ThemeMode::Dark, ThemeMode::Light}) {
+                for (bool show : {false, true}) {
+                    const auto variant = directory + (mode == ThemeMode::Dark ? QStringLiteral("/dark") : QStringLiteral("/light"))
+                        + (show ? QStringLiteral("/notation-shown") : QStringLiteral("/notation-hidden"));
+                    require(QDir().mkpath(variant), "theme snapshot directory must be writable");
+                    captureVulkan(chart, variant, show, mode);
+                }
             }
         }
 #endif

@@ -83,7 +83,7 @@ void NoteFrameState::prepare(const midi_play::visualization::PlaybackSceneState&
     const auto appendGlow = [&](const KeyIllumination& key, qreal x, qreal width) {
         if (key.noteIndex < 0 || m_glows.size() >= 96) return;
         const auto* style = cache.styleForNote(key.noteIndex);
-        QColor color = style->material.head;
+        QColor color = style->material.glow;
         color.setAlphaF(std::min<qreal>(0.38, key.strength * 0.24 + key.attack * 0.16));
         const qreal radius = std::clamp(width * 0.9 + key.attack * 8, 7.0, 28.0);
         m_glows.push_back({{x - radius, geometry.strikeLineY - radius * 0.6,

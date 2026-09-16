@@ -22,6 +22,7 @@ private:
     QCache<quint64, QImage> m_images {16 * 1024}; // KiB
     quint64 m_chartRevision = 0;
     quint64 m_geometryRevision = 0;
+    quint64 m_materialRevision = 0;
     qreal m_dpr = 0;
 };
 

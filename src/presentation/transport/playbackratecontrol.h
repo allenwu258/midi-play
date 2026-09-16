@@ -23,6 +23,7 @@ public:
 
 public slots:
     void setRatePercent(int percent);
+    void setThemeMode(midi_play::settings::ThemeMode mode);
 
 signals:
     void ratePercentEdited(int percent);

@@ -99,6 +99,18 @@ void FallingNotesView::setShowNotationStrip(bool show)
     update();
 }
 
+void FallingNotesView::setThemeMode(midi_play::settings::ThemeMode mode)
+{
+    const auto normalized = midi_play::settings::normalizeThemeMode(mode);
+    if (m_state.themeMode == normalized) return;
+    m_state.themeMode = normalized;
+    m_staticKeyboardDirty = true;
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setThemeMode(normalized);
+#endif
+    update();
+}
+
 void FallingNotesView::setPlaybackRate(int percent)
 {
     m_visualClock.setRate(percent);
@@ -199,6 +211,7 @@ bool FallingNotesView::createVulkanView()
             }, Qt::QueuedConnection);
     m_vulkanWindow->setSceneFont(font());
     m_vulkanWindow->setShowNotationStrip(m_state.showNotationStrip);
+    m_vulkanWindow->setThemeMode(m_state.themeMode);
     m_vulkanWindow->setChart(m_state.chart);
     m_vulkanWindow->setTransportPosition(m_state.transportPositionUs, m_state.durationUs);
     m_vulkanWindow->setTransportState(m_state.transportState);

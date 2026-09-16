@@ -4,6 +4,9 @@
 #include "app/playerapplicationservice.h"
 #include "domain/settings/playersettings.h"
 
+#include "presentation/theme/widgetstyles.h"
+#include "presentation/theme/themecontroller.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -22,7 +25,7 @@ namespace midi_play::presentation::settings {
 
 SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                                app::PlayerApplicationService* playerService,
-                               QWidget* parent)
+                               QWidget* parent, theme::ThemeController* themeController)
     : QDialog(parent), m_settingsService(settingsService), m_playerService(playerService)
 {
     setWindowTitle(QStringLiteral("设置"));
@@ -42,6 +45,13 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     form->setContentsMargins(0, 0, 0, 0);
     form->setHorizontalSpacing(14);
     form->setVerticalSpacing(10);
+
+    m_themeCombo = new QComboBox(this);
+    m_themeCombo->setObjectName(QStringLiteral("themeModeCombo"));
+    m_themeCombo->addItem(QStringLiteral("深色"), int(midi_play::settings::ThemeMode::Dark));
+    m_themeCombo->addItem(QStringLiteral("浅色"), int(midi_play::settings::ThemeMode::Light));
+    m_themeCombo->setToolTip(QStringLiteral("修改立即生效并自动保存。"));
+    form->addRow(QStringLiteral("界面主题"), m_themeCombo);
 
     m_refreshRateCombo = new QComboBox(this);
     m_refreshRateCombo->setObjectName(QStringLiteral("refreshRateCombo"));
@@ -133,25 +143,22 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::close);
     root->addWidget(buttons);
 
-    setStyleSheet(QStringLiteral(R"(
-        QDialog { background: #1b1d20; color: #f0f1ed; }
-        QLabel { color: #f0f1ed; }
-        QCheckBox { color: #f0f1ed; spacing: 8px; min-height: 28px; }
-        QLabel#settingsTitle { color: #f0f1ed; font-size: 16px; font-weight: 600; }
-        QLabel#settingsHint { color: #aeb4af; font-size: 12px; }
-        QLabel#settingsError { color: #ffb4a8; font-size: 12px; }
-        QComboBox { min-height: 28px; padding: 2px 8px; background: #25282b; color: #f0f1ed; border: 1px solid #3a3e41; }
-        QComboBox:hover { border-color: #555b5f; }
-        QSpinBox { min-height: 28px; padding: 2px 8px; background: #25282b; color: #f0f1ed; border: 1px solid #3a3e41; }
-        QSpinBox:hover { border-color: #555b5f; }
-        QLineEdit { min-height: 28px; padding: 2px 8px; background: #202326; color: #d8dbd7; border: 1px solid #3a3e41; }
-        QLineEdit:read-only { color: #bfc3bf; }
-        QPushButton { min-width: 72px; min-height: 28px; color: #dfe1dc; background: #25282b; border: 1px solid #3a3e41; }
-        QPushButton:hover { background: #2d3033; }
-        QPushButton:disabled { color: #676c68; background: #202326; border-color: #303337; }
-    )"));
+    applyTheme(themeController ? themeController->mode()
+        : m_settingsService ? m_settingsService->themeMode() : midi_play::settings::kDefaultThemeMode);
 
+    if (themeController)
+        connect(themeController, &theme::ThemeController::themeChanged, this, &SettingsDialog::applyTheme);
     if (m_settingsService) {
+        updateThemeSelection(m_settingsService->themeMode());
+        connect(m_themeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
+            m_errorLabel->hide();
+            m_settingsService->setThemeMode(midi_play::settings::themeModeFromPersistentValue(
+                m_themeCombo->currentData().toInt()));
+        });
+        connect(m_settingsService, &app::SettingsService::themeModeChanged,
+                this, &SettingsDialog::updateThemeSelection);
+        if (!themeController)
+            connect(m_settingsService, &app::SettingsService::themeModeChanged, this, &SettingsDialog::applyTheme);
         m_customRefreshRateSpinBox->setValue(m_settingsService->visualizationRefreshRate());
         updateRefreshRateSelection(m_settingsService->visualizationRefreshRate());
         connect(m_refreshRateCombo, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -187,6 +194,10 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::updateSoundFontPath);
         connect(m_settingsService, &app::SettingsService::settingsSaveFailed,
                 this, &SettingsDialog::showSaveError);
+        connect(m_settingsService, &app::SettingsService::settingsLoadWarning,
+                this, &SettingsDialog::showSaveError);
+        if (!m_settingsService->lastLoadWarning().isEmpty())
+            showSaveError(m_settingsService->lastLoadWarning());
         if (m_playerService) {
             connect(m_playerService, &app::PlayerApplicationService::soundFontLoadFailed,
                     this, &SettingsDialog::showSaveError);
@@ -194,6 +205,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                     this, &SettingsDialog::setSoundFontLoading);
         }
     } else {
+        m_themeCombo->setEnabled(false);
         m_refreshRateCombo->setEnabled(false);
         m_titleBarModeCombo->setEnabled(false);
         m_graphicsModeCombo->setEnabled(false);
@@ -332,6 +344,19 @@ void SettingsDialog::updateGraphicsModeSelection(midi_play::settings::GraphicsMo
     if (index < 0 || index == m_graphicsModeCombo->currentIndex()) return;
     const QSignalBlocker blocker(m_graphicsModeCombo);
     m_graphicsModeCombo->setCurrentIndex(index);
+}
+
+void SettingsDialog::applyTheme(midi_play::settings::ThemeMode mode)
+{
+    const auto& current = theme::themeFor(mode);
+    setPalette(theme::widgetPalette(current));
+    setStyleSheet(theme::settingsDialogStyle(current));
+}
+
+void SettingsDialog::updateThemeSelection(midi_play::settings::ThemeMode mode)
+{
+    const QSignalBlocker blocker(m_themeCombo);
+    m_themeCombo->setCurrentIndex(m_themeCombo->findData(midi_play::settings::themeModePersistentValue(mode)));
 }
 
 void SettingsDialog::updateNotationStripSelection(bool show)

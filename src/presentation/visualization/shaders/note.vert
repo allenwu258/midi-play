@@ -51,7 +51,7 @@ void main() {
             color=activeBorder;
         } else {
             r=vec4(r.x+3,top+h*.5-3,max(0,r.z-6),6);
-            color=vec4(1,1,1,110.0/255);
+            // Tremolo color is supplied by the shared CPU theme.
             if (h<=14) r.z=0;
         }
         color.a *= clamp(1-(frame.position-times.z)/.24,0,1);

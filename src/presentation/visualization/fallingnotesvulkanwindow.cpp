@@ -540,7 +540,8 @@ void FallingNotesVulkanRenderer::startNextFrame()
         } catch (const std::exception& error) { fail(QString::fromUtf8(error.what())); }
     }
     VkClearValue clear {};
-    clear.color = {{18.f/255, 20.f/255, 22.f/255, 1}};
+    const auto background = theme::themeFor(state.themeMode).visualization.background;
+    clear.color = {{float(background.redF()), float(background.greenF()), float(background.blueF()), 1}};
     const QSize physical = m_window->swapChainImageSize();
     VkRenderPassBeginInfo begin {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     begin.renderPass = m_renderPass; begin.framebuffer = frame.framebuffer;
@@ -614,6 +615,14 @@ void FallingNotesVulkanWindow::setShowNotationStrip(bool show)
     requestUpdate();
 }
 
+void FallingNotesVulkanWindow::setThemeMode(midi_play::settings::ThemeMode mode)
+{
+    const auto normalized = midi_play::settings::normalizeThemeMode(mode);
+    if (m_themeMode == normalized) return;
+    m_themeMode = normalized;
+    requestUpdate();
+}
+
 midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneState() const
 {
     midi_play::visualization::PlaybackSceneState result;
@@ -624,6 +633,7 @@ midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneStat
     result.transportState = m_state;
     result.loading = m_loading;
     result.showNotationStrip = m_showNotationStrip;
+    result.themeMode = m_themeMode;
     result.errorMessage = m_error;
     result.updateVisibleWindow();
     return result;

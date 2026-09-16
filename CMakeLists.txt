@@ -117,6 +117,7 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/domain/settings/playersettings.h
     src/domain/settings/playersettings.cpp
     src/domain/settings/graphicsmode.h
+    src/domain/settings/thememode.h
     src/domain/settings/titlebarmode.h
     src/infrastructure/musicxml/musicxmlreader.h
     src/infrastructure/musicxml/musicxmlreader.cpp
@@ -158,6 +159,14 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/playbackmetadatapresenter.cpp
     src/presentation/settings/settingsdialog.h
     src/presentation/settings/settingsdialog.cpp
+    src/presentation/theme/apptheme.h
+    src/presentation/theme/apptheme.cpp
+    src/presentation/theme/themecontroller.h
+    src/presentation/theme/themecontroller.cpp
+    src/presentation/theme/themeicons.h
+    src/presentation/theme/themeicons.cpp
+    src/presentation/theme/widgetstyles.h
+    src/presentation/theme/widgetstyles.cpp
     src/presentation/windowchrome/customtitlebar.h
     src/presentation/windowchrome/customtitlebar.cpp
     src/presentation/visualization/scenegeometry.h
@@ -279,6 +288,13 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_theme_tests tests/themetests.cpp)
+    target_link_libraries(midi_play_theme_tests PRIVATE midi_play_core)
+    add_test(NAME theme_persistence_and_runtime COMMAND midi_play_theme_tests -platform offscreen)
+    if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        set_tests_properties(theme_persistence_and_runtime PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+    endif()
     add_executable(midi_play_note_visual_tests tests/notevisualtests.cpp)
     target_link_libraries(midi_play_note_visual_tests PRIVATE midi_play_core)
     add_test(NAME note_visual_semantics_and_rendering COMMAND midi_play_note_visual_tests -platform offscreen)
@@ -317,6 +333,8 @@ if (BUILD_TESTING)
     add_test(NAME soundfont_inspector COMMAND midi_play_soundfont_tests)
 
     add_executable(midi_play_visualization_tests
+        src/presentation/theme/apptheme.h
+        src/presentation/theme/apptheme.cpp
         tests/visualizationtests.cpp
         src/domain/music/musicdocument.h
         src/domain/music/musicdocument.cpp

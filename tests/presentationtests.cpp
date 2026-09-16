@@ -5,6 +5,7 @@
 #include "presentation/settings/settingsdialog.h"
 #include "presentation/mainwindow.h"
 #include "presentation/transport/playbackratecontrol.h"
+#include "presentation/theme/themecontroller.h"
 #include "presentation/visualization/fallingnotesview.h"
 
 #if MIDI_PLAY_HAS_VULKAN
@@ -37,6 +38,7 @@
 namespace {
 
 using midi_play::settings::GraphicsMode;
+using midi_play::settings::ThemeMode;
 using midi_play::playback::State;
 using midi_play::presentation::visualization::FallingNotesView;
 
@@ -79,9 +81,10 @@ QImage capture(FallingNotesView& view)
     return image;
 }
 
-void testTraditionalViewUpdates()
+void testTraditionalViewUpdates(ThemeMode theme)
 {
     FallingNotesView view;
+    view.setThemeMode(theme);
     view.resize(960, 640);
     view.setGraphicsMode(GraphicsMode::Traditional);
     const auto empty = capture(view);
@@ -240,7 +243,8 @@ void typePercent(QSpinBox* editor, const QString& digits)
 void testPlaybackRateInteraction(GraphicsMode mode = GraphicsMode::Traditional)
 {
     midi_play::app::PlayerApplicationService service;
-    midi_play::presentation::MainWindow window(&service, nullptr);
+    midi_play::presentation::theme::ThemeController theme;
+    midi_play::presentation::MainWindow window(&service, nullptr, nullptr, &theme);
     auto* view = window.findChild<FallingNotesView*>();
     require(view != nullptr, "main window must expose the visualization");
     view->setGraphicsMode(mode);
@@ -285,6 +289,11 @@ void testPlaybackRateInteraction(GraphicsMode mode = GraphicsMode::Traditional)
     button->click();
     processEventsFor(30);
     typePercent(editor, QStringLiteral("125"));
+    const auto pendingInput = editor->text();
+    auto* focused = QApplication::focusWidget();
+    theme.setMode(ThemeMode::Light);
+    require(panel->isVisible() && editor->text() == pendingInput && QApplication::focusWidget() == focused,
+            "runtime theme switching must preserve the open rate panel and uncommitted input focus");
     require(service.playbackRatePercent() == 80 && changes == 3,
             "partial keyboard input must not change playback speed");
     QKeyEvent commit(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
@@ -357,6 +366,7 @@ void testVulkanSwitching()
     QApplication::processEvents();
     const auto traditional = capture(view);
     for (int cycle = 0; cycle < 2; ++cycle) {
+        view.setThemeMode(ThemeMode::Light);
         view.setShowNotationStrip(true);
         view.setGraphicsMode(GraphicsMode::VulkanExperimental);
         FallingNotesVulkanWindow* window = nullptr;
@@ -364,6 +374,8 @@ void testVulkanSwitching()
             if (auto* vulkan = qobject_cast<FallingNotesVulkanWindow*>(candidate)) window = vulkan;
         }
         require(window != nullptr, "Vulkan selection must create a Vulkan window");
+        require(window->sceneState().themeMode == ThemeMode::Light,
+                "a new backend must inherit the selected theme");
         require(window->sceneState().showNotationStrip, "backend creation must retain the notation preference");
         int frames = 0;
         bool failed = false;
@@ -380,6 +392,14 @@ void testVulkanSwitching()
         require(!failed && frames >= 3 && window->isValid(), "Vulkan must render successfully");
         require(window->supportsGrab(), "Vulkan smoke check requires swapchain readback");
         view.setTransportState(State::Paused);
+        const auto lightImage = window->grab();
+        const auto windowId = window->winId();
+        const auto device = window->device();
+        view.setThemeMode(ThemeMode::Dark);
+        const auto darkImage = window->grab();
+        require(lightImage != darkImage && window->sceneState().transportPositionUs == 600'000
+                    && window->winId() == windowId && window->device() == device,
+                "theme switches must recolor the existing Vulkan window without resetting transport or device");
         const auto notationShown = window->grab();
         view.setShowNotationStrip(false);
         const auto first = window->grab();
@@ -429,7 +449,8 @@ void testMetronomeControl(GraphicsMode mode = GraphicsMode::Traditional)
 int main(int argc, char* argv[])
 {
     QApplication application(argc, argv);
-    testTraditionalViewUpdates();
+    testTraditionalViewUpdates(ThemeMode::Dark);
+    testTraditionalViewUpdates(ThemeMode::Light);
     testGraphicsModePreference();
     testNotationStripPreference();
     testPlaybackRateInteraction();

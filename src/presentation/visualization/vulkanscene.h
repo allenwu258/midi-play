@@ -4,7 +4,9 @@
 #include "domain/visualization/playbackscenestate.h"
 #include "domain/visualization/visiblenoteindex.h"
 #include "domain/visualization/visiblenotewindowcache.h"
-#include "fallingnotesrenderer.h"
+#include "noteframestate.h"
+#include "playbackoverlaytimeline.h"
+#include "textlayoutcache.h"
 #include "scenelayoutengine.h"
 
 #include <QHash>
@@ -84,7 +86,8 @@ private:
     NoteFrameState m_noteFrame;
     PlaybackOverlayTimeline m_overlay;
     PlaybackSceneGeometry m_geometry;
-    VisualizationTheme m_theme;
+    theme::VisualizationColors m_theme = theme::themeFor(midi_play::settings::kDefaultThemeMode).visualization;
+    midi_play::settings::ThemeMode m_themeMode = midi_play::settings::kDefaultThemeMode;
     QSize m_size;
     qint64 m_lookAheadUs = 0;
     bool m_showNotationStrip = false;

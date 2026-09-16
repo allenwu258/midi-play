@@ -18,10 +18,11 @@ quint64 styleKey(const VisualNote& note)
     return noteMaterialKey(note);
 }
 
-NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note)
+NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note,
+                          const theme::NoteMaterialProfile& profile)
 {
     NoteRenderStyle style;
-    style.material = makeNoteMaterial(chart, note);
+    style.material = makeNoteMaterial(chart, note, profile);
     const QColor fill = style.material.body;
     const QColor tail = style.material.tail;
     QLinearGradient bodyGradient(0, 0, 1, 0);
@@ -46,11 +47,16 @@ NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note)
 } // namespace
 
 void NoteRenderCache::prepare(const midi_play::visualization::VisualChartPtr& chart,
-                              const PlaybackSceneGeometry& geometry)
+                              const PlaybackSceneGeometry& geometry, midi_play::settings::ThemeMode mode)
 {
+    const auto normalized = midi_play::settings::normalizeThemeMode(mode);
+    const bool themeChanged = m_themeMode != normalized;
+    m_themeMode = normalized;
     if (m_chart.get() != chart.get()) {
         rebuildChart(chart);
         m_geometrySize = {};
+    } else if (themeChanged) {
+        rebuildMaterials();
     }
     if (m_geometrySize != geometry.bounds.size()) {
         rebuildGeometry(geometry);
@@ -62,7 +68,9 @@ void NoteRenderCache::clear()
     m_chart = nullptr;
     m_geometrySize = {};
     m_styles.clear();
+    m_styleRepresentatives.clear();
     m_notes.clear();
+    ++m_materialRevision;
 }
 
 const PreparedNoteRenderData* NoteRenderCache::note(int noteIndex) const
@@ -82,8 +90,10 @@ void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPt
 {
     m_chart = chart;
     m_styles.clear();
+    m_styleRepresentatives.clear();
     m_notes.clear();
     ++m_chartBuildCount;
+    ++m_materialRevision;
     if (!m_chart) return;
 
     m_notes.resize(m_chart->notes().size());
@@ -97,7 +107,8 @@ void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPt
         if (styleIt == styleIndices.cend()) {
             styleIndex = m_styles.size();
             styleIndices.insert(key, styleIndex);
-            m_styles.push_back(makeStyle(*m_chart, source));
+            m_styles.push_back(makeStyle(*m_chart, source, theme::themeFor(m_themeMode).notes));
+            m_styleRepresentatives.push_back(noteIndex);
         } else {
             styleIndex = styleIt.value();
         }
@@ -112,6 +123,15 @@ void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPt
         prepared.instanceId = source.instanceId;
         prepared.flags = source.flags;
     }
+}
+
+void NoteRenderCache::rebuildMaterials()
+{
+    ++m_materialRevision;
+    if (!m_chart) return;
+    const auto& profile = theme::themeFor(m_themeMode).notes;
+    for (qsizetype i = 0; i < m_styles.size(); ++i)
+        m_styles[i] = makeStyle(*m_chart, m_chart->notes()[m_styleRepresentatives[i]], profile);
 }
 
 void NoteRenderCache::rebuildGeometry(const PlaybackSceneGeometry& geometry)

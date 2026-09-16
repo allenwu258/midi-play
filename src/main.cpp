@@ -3,6 +3,7 @@
 #include "infrastructure/settings/qsettingsstore.h"
 #include "infrastructure/resources/defaultsoundfontlocator.h"
 #include "presentation/mainwindow.h"
+#include "presentation/theme/themecontroller.h"
 
 #include <QApplication>
 #include <QDir>
@@ -28,6 +29,9 @@ int main(int argc, char* argv[])
     midi_play::app::SettingsService settingsService(
         std::move(settingsStore), defaultSoundFontPath);
     settingsService.load();
+    midi_play::presentation::theme::ThemeController themeController(settingsService.themeMode());
+    QObject::connect(&settingsService, &midi_play::app::SettingsService::themeModeChanged,
+                     &themeController, &midi_play::presentation::theme::ThemeController::setMode);
     service.setVisualizationRefreshRate(settingsService.visualizationRefreshRate());
     service.setGraphicsMode(settingsService.graphicsMode());
     QObject::connect(&settingsService, &midi_play::app::SettingsService::visualizationRefreshRateChanged,
@@ -37,7 +41,7 @@ int main(int argc, char* argv[])
     QObject::connect(&service, &midi_play::app::PlayerApplicationService::soundFontSelectionCommitted,
                      &settingsService, &midi_play::app::SettingsService::setSoundFontPath);
 
-    midi_play::presentation::MainWindow window(&service, &settingsService);
+    midi_play::presentation::MainWindow window(&service, &settingsService, nullptr, &themeController);
     window.show();
 
     if (!service.loadSoundFont(settingsService.soundFontPath())

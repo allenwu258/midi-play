@@ -110,7 +110,8 @@ void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
                                         const PlaybackSceneState& state)
 {
     m_overlayTimeline.setChart(state.chart);
-    m_noteRenderCache.prepare(state.chart, geometry);
+    m_theme = theme::themeFor(state.themeMode).visualization;
+    m_noteRenderCache.prepare(state.chart, geometry, state.themeMode);
     if (m_keyboardGeometryBuildCount != m_noteRenderCache.geometryBuildCount()) {
         m_keyboardGeometryBuildCount = m_noteRenderCache.geometryBuildCount();
         m_pitchBandRects.clear();
@@ -136,7 +137,7 @@ void FallingNotesRenderer::drawPitchBands(QPainter& painter,
     painter.save();
     painter.setClipRect(geometry.fallingRect);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(255, 255, 255, 7));
+    painter.setBrush(m_theme.pitchBand);
     painter.drawRects(m_pitchBandRects.constData(),
                       static_cast<int>(m_pitchBandRects.size()));
     painter.restore();
@@ -211,7 +212,7 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
                 painter.fillRect(shape.head, style->material.head);
             } else if (layer == 4 && note->tremolo && shape.body.height() > 14 && note->width > 6) {
                 const qreal y = shape.body.center().y();
-                painter.setPen(QPen(QColor(255, 255, 255, 110), 1.2));
+                painter.setPen(QPen(m_theme.tremolo, 1.2));
                 painter.drawLine(QPointF(shape.body.left() + 3, y + 3),
                                  QPointF(shape.body.right() - 3, y - 3));
             }
@@ -228,8 +229,7 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     painter.save();
     painter.setClipRect(geometry.fallingRect);
     if (!geometry.notationStripRect.isEmpty()) {
-        QColor glow = m_theme.strikeLine;
-        glow.setAlpha(18);
+        const QColor glow = m_theme.strikeGlow;
         painter.fillRect(QRectF(left, geometry.strikeLineY - 3.0, right - left, 6.0), glow);
         QColor line = m_theme.strikeLine;
         line.setAlpha(145);
@@ -308,7 +308,7 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
     QFont keyFont = painter.font();
     keyFont.setPointSizeF(7.5);
     painter.setFont(keyFont);
-    painter.setPen(QColor(44, 47, 46));
+    painter.setPen(m_theme.keyText);
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || slot.blackKey || slot.pitch % 12 != 0 || slot.keyRect.width() < 12.0) continue;
         const auto& text = m_textLayoutCache.layout(
@@ -319,8 +319,8 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
     }
 
     if (state.chart && !geometry.drumRect.isEmpty()) {
-        painter.setPen(QPen(QColor(255, 255, 255, 35), 1));
-        painter.setBrush(QColor("#292d30"));
+        painter.setPen(QPen(m_theme.drumKeyBorder, 1));
+        painter.setBrush(m_theme.drumKey);
         for (const auto& slot : geometry.drumSlots) {
             painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
         }
@@ -359,9 +359,9 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
         const auto& light = m_noteFrame.key(pitch);
         const auto* style = styleForNote(light.noteIndex);
         if (!slot || slot->blackKey || !style) continue;
-        painter.setBrush(illuminatedKeyColor(m_theme.whiteKey, style->material.body, light.strength * 0.60));
+        painter.setBrush(illuminatedKeyColor(m_theme.whiteKey, style->material.keyFill, light.strength * 0.60));
         painter.drawRect(slot->keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
-        QColor top = style->material.head;
+        QColor top = style->material.keyTop;
         top.setAlphaF(light.strength);
         painter.fillRect(QRectF(slot->keyRect.left(), slot->keyRect.top(), slot->keyRect.width() - 0.5, 5), top);
         paintedActiveWhiteKey = true;
@@ -381,9 +381,9 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
         const auto& light = m_noteFrame.key(pitch);
         const auto* style = styleForNote(light.noteIndex);
         if (!slot || !slot->blackKey || !style) continue;
-        painter.setBrush(illuminatedKeyColor(m_theme.blackKey, style->material.body, light.strength * 0.70));
+        painter.setBrush(illuminatedKeyColor(m_theme.blackKey, style->material.keyFill, light.strength * 0.70));
         painter.drawRect(slot->keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
-        QColor top = style->material.head;
+        QColor top = style->material.keyTop;
         top.setAlphaF(light.strength);
         painter.fillRect(QRectF(slot->keyRect.left() + 0.5, slot->keyRect.top(), slot->keyRect.width() - 1, 4), top);
     }
@@ -391,7 +391,7 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
     QFont keyFont = painter.font();
     keyFont.setPointSizeF(7.5);
     painter.setFont(keyFont);
-    painter.setPen(QColor(44, 47, 46));
+    painter.setPen(m_theme.keyText);
     for (const int pitch : activePitches) {
         const auto* slot = geometry.pitchSlot(pitch);
         if (!slot || slot->blackKey || pitch % 12 != 0 || slot->keyRect.width() < 12.0) continue;
@@ -408,8 +408,8 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
         const auto& light = m_noteFrame.drum(lane);
         const auto* style = styleForNote(light.noteIndex);
         if (!slot || !style) continue;
-        painter.setPen(QPen(QColor(255, 255, 255, 35), 1));
-        painter.setBrush(illuminatedKeyColor(QColor("#292d30"), style->material.body, light.strength * 0.70));
+        painter.setPen(QPen(m_theme.drumKeyBorder, 1));
+        painter.setBrush(illuminatedKeyColor(m_theme.drumKey, style->material.keyFill, light.strength * 0.70));
         painter.drawRect(slot->keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
         if (lane < state.chart->drumLanes().size() && slot->keyRect.width() >= 18.0) {
             painter.setPen(m_theme.primaryText);
@@ -458,7 +458,7 @@ void FallingNotesRenderer::drawOverlay(QPainter& painter, const PlaybackSceneGeo
     }
 
     if (!state.loading && state.errorMessage.isEmpty() && state.chart) return;
-    QColor veil(10, 11, 12, state.loading ? 118 : 148);
+    const QColor veil = state.loading ? m_theme.loadingVeil : m_theme.emptyVeil;
     painter.fillRect(geometry.fallingRect, veil);
     QFont statusFont = painter.font();
     statusFont.setPointSizeF(11.0);

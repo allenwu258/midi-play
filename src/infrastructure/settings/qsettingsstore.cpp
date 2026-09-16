@@ -58,6 +58,11 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         graphicsModeValue.toInt());
     result.showNotationStrip = file.value(QStringLiteral("General/showNotationStrip"),
         midi_play::settings::kDefaultShowNotationStrip).toBool();
+    bool themeConversionOk = false;
+    const int themeValue = file.value(QStringLiteral("General/themeMode"),
+        midi_play::settings::themeModePersistentValue(midi_play::settings::kDefaultThemeMode))
+        .toInt(&themeConversionOk);
+    result.themeMode = midi_play::settings::themeModeFromPersistentValue(themeValue);
 
     const bool hasTitleBarMode = file.contains(QStringLiteral("General/titleBarMode"));
     const QVariant titleBarModeValue = file.value(QStringLiteral("General/titleBarMode"),
@@ -93,6 +98,10 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
             ? QStringLiteral("设置文件中的标题栏模式当前平台不可用，已回退到原生标题栏")
             : *warning + QStringLiteral("；标题栏模式当前平台不可用，已回退到原生标题栏");
     }
+    if ((!themeConversionOk || !midi_play::settings::isValidThemeMode(themeValue)) && warning) {
+        const auto message = QStringLiteral("设置文件中的主题无效，已回退到深色主题");
+        *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
+    }
     return result;
 }
 
@@ -119,6 +128,8 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
     file.setValue(QStringLiteral("General/graphicsMode"),
                   midi_play::settings::graphicsModePersistentValue(settings.graphicsMode));
     file.setValue(QStringLiteral("General/showNotationStrip"), settings.showNotationStrip);
+    file.setValue(QStringLiteral("General/themeMode"),
+                  midi_play::settings::themeModePersistentValue(settings.themeMode));
     file.setValue(QStringLiteral("General/titleBarMode"),
                   midi_play::settings::titleBarModePersistentValue(settings.titleBarMode));
     if (settings.soundFontPathOverride.isEmpty()) {

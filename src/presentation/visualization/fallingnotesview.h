@@ -32,6 +32,7 @@ public:
 
     QSize minimumSizeHint() const override { return {640, 440}; }
     bool showNotationStrip() const noexcept { return m_state.showNotationStrip; }
+    midi_play::settings::ThemeMode themeMode() const noexcept { return m_state.themeMode; }
 
 public slots:
     void setChart(midi_play::visualization::VisualChartPtr chart);
@@ -42,6 +43,7 @@ public slots:
     void setTransportState(midi_play::playback::State state);
     void setGraphicsMode(midi_play::settings::GraphicsMode mode);
     void setShowNotationStrip(bool show);
+    void setThemeMode(midi_play::settings::ThemeMode mode);
     void setLoading(bool loading);
     void setErrorMessage(const QString& message);
 

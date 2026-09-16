@@ -47,6 +47,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：原生标题栏为默认值；Windows 提供“自定义标题栏（实验）”，macOS/Linux 当前仅使用原生标题栏。
+- **深色 / 浅色主题**：设置中切换并自动保存；两套主题同时覆盖控件、下落音符和琴键，兼容传统 Qt 与 Vulkan 绘制。
 - **异步导入**：MusicXML/MIDI 解析和可视化投影在 QtConcurrent 工作线程中执行，避免阻塞界面线程。
 - **可诊断性**：提供音频、MIDI reader、离屏渲染和普通文件解析 smoke test 入口。
 
@@ -207,6 +208,7 @@ cmake --build --preset windows-msvc-debug
 
 设置窗口提供：
 
+- **界面主题**：深色（默认）或浅色。选择立即生效并自动保存，重启后恢复；切换不改变播放位置、速度或音源；
 - **视觉刷新率**：30 FPS、60 FPS、120 FPS 或“自定义”；
 - **图形模式**：传统 Qt 绘制或 Vulkan（实验）；未包含 Vulkan 的构建只提供传统模式；
 - **显示简谱条**：默认关闭。关闭时移除琴键上方的简谱条及黄色判定线，音符在琴键顶部判定；开启后恢复简谱条和黄线。修改立即生效并自动保存，两种图形模式行为一致；
@@ -239,7 +241,8 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 
 | 配置键 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| General/schemaVersion | int | 5 | 设置结构版本 |
+| General/schemaVersion | int | 6 | 设置结构版本 |
+| General/themeMode | int | 0 | 0 为深色；1 为浅色；旧配置缺失或无效时回退深色 |
 | General/visualizationRefreshRate | int | 60 | 有效范围 1..1000，界面提供常用预设和自定义输入 |
 | General/graphicsMode | int | 0 | 0 为传统 Qt 绘制；1 为 Vulkan（实验） |
 | General/showNotationStrip | bool | false | 是否显示简谱条；缺少此配置键的旧版配置也默认隐藏 |
@@ -299,6 +302,8 @@ $midiPlayCliExe = 'dist/midi-play-windows-x64/midi_play_cli.exe'
 ~~~
 
 参数依次为：输入文件、输出 PNG、播放位置（微秒）、输出宽度和输出高度。播放位置、宽度和高度可以省略；默认播放位置为歌曲时长的十分之一，默认尺寸为 1280x720。
+
+可在末尾添加 `--theme dark` 或 `--theme light` 指定截图主题；省略时固定使用深色，不读取桌面应用的用户设置，便于重复比较。主题架构和验收范围见 [主题开发方案](docs/theme-development-plan.md)。
 
 ## 架构概览
 
@@ -376,6 +381,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 当前测试目标包括：
 
 - presentation_backend_configuration：真实呈现层的后端编译边界、状态更新、传统渲染及模式设置；
+- theme_persistence_and_runtime：主题默认值与旧配置兼容、保存失败、运行时窗口状态保持及高 DPI 图标；
 - soundfont_inspector：SoundFont 内容和格式检查；
 - visualization_domain：可视化投影、时间窗口、区间索引和场景数据；
 - playback_session_transport：播放、暂停、停止、seek、事件代际和 transport 状态。
@@ -397,7 +403,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | SoundFont | 默认 SF2 可加载，自定义 SF2/SF3 可切换，失败时显示错误并保留可恢复状态 |
 | 节拍器 | 小节首拍重音、变速同步，暂停和停止无声，关闭不截断钢琴音，切换音源后仍能发声 |
 | 简谱条显隐 | 默认隐藏简谱条和黄线，音符在琴键顶部判定；播放和暂停时切换立即生效，切换图形模式后保持选择 |
-| 设置持久化 | 重启后刷新率、图形模式、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
+| 设置持久化 | 重启后主题、刷新率、图形模式、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
 | Release 部署 | exe、Qt 平台插件、FluidSynth DLL 和 assets/midisound.sf2 均可找到 |
 
 自动测试不替代人工听音验收；音频设备、系统音量和 FluidSynth 驱动初始化仍需在目标机器上确认。

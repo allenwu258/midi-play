@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/playback/playbacktypes.h"
+#include "domain/settings/thememode.h"
 #include "visualchart.h"
 
 #include <span>
@@ -27,6 +28,7 @@ struct PlaybackSceneState {
     std::span<const int> candidateNoteIndices;
     bool loading = false;
     bool showNotationStrip = false;
+    settings::ThemeMode themeMode = settings::kDefaultThemeMode;
     QString errorMessage;
 };
 

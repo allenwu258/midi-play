@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/visualization/visualchart.h"
+#include "presentation/theme/apptheme.h"
 
 #include <QColor>
 
@@ -12,12 +13,17 @@ struct NoteMaterial {
     QColor body;
     QColor head;
     QColor tail;
+    QColor keyFill;
+    QColor keyTop;
+    QColor glow;
     float energy = 0.0f;
 };
 
 quint64 noteMaterialKey(const midi_play::visualization::VisualNote& note);
 NoteMaterial makeNoteMaterial(const midi_play::visualization::VisualChart& chart,
-                              const midi_play::visualization::VisualNote& note);
+                              const midi_play::visualization::VisualNote& note,
+                              const theme::NoteMaterialProfile& profile =
+                                  theme::themeFor(midi_play::settings::kDefaultThemeMode).notes);
 
 // Shared geometry/material constants; matching GLSL formulas live in note.*.
 inline constexpr qreal kNoteMinimumHeight = 4.0;

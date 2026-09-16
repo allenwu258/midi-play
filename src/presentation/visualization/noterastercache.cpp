@@ -11,9 +11,11 @@ void NoteRasterCache::prepare(const NoteRenderCache& notes, qreal devicePixelRat
 {
     const qreal dpr = std::max<qreal>(1, devicePixelRatio);
     if (m_chartRevision == notes.chartBuildCount()
-        && m_geometryRevision == notes.geometryBuildCount() && m_dpr == dpr) return;
+        && m_geometryRevision == notes.geometryBuildCount()
+        && m_materialRevision == notes.materialRevision() && m_dpr == dpr) return;
     m_chartRevision = notes.chartBuildCount();
     m_geometryRevision = notes.geometryBuildCount();
+    m_materialRevision = notes.materialRevision();
     m_dpr = dpr;
     m_images.clear();
 }

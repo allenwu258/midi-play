@@ -78,7 +78,7 @@ quint64 noteMaterialKey(const VisualNote& note)
 }
 
 NoteMaterial makeNoteMaterial(const midi_play::visualization::VisualChart& chart,
-                              const VisualNote& note)
+                              const VisualNote& note, const theme::NoteMaterialProfile& profile)
 {
     const auto base = note.trackIndex >= 0 && note.trackIndex < chart.tracks().size()
         ? chart.tracks()[note.trackIndex].color
@@ -88,12 +88,18 @@ NoteMaterial makeNoteMaterial(const midi_play::visualization::VisualChart& chart
     const double angle = hue(base) + (registerOffset + voiceTint(note) * 2.0)
         * std::numbers::pi / 180.0;
     const double ghost = note.isGhost() ? 0.48 : 1.0;
+    const auto layer = [&](const theme::MaterialLayer& values) {
+        return perceptualColor(values.lightness + velocity * values.velocityLightness,
+                               values.chroma, angle,
+                               (values.alpha + velocity * values.velocityAlpha) * ghost);
+    };
     NoteMaterial result;
-    result.body = perceptualColor(0.69 + velocity * 0.055, 0.115, angle,
-                                 (0.43 + velocity * 0.12) * ghost);
-    result.head = perceptualColor(0.82 + velocity * 0.055, 0.09, angle,
-                                 (0.82 + velocity * 0.12) * ghost);
-    result.tail = perceptualColor(0.70, 0.08, angle, (0.15 + velocity * 0.06) * ghost);
+    result.body = layer(profile.body);
+    result.head = layer(profile.head);
+    result.tail = layer(profile.tail);
+    result.keyFill = profile.separateKeyColors ? layer(profile.keyFill) : result.body;
+    result.keyTop = profile.separateKeyColors ? layer(profile.keyTop) : result.head;
+    result.glow = profile.separateKeyColors ? result.body : result.head;
     result.energy = float(std::pow(velocity, 0.7) * ghost);
     return result;
 }

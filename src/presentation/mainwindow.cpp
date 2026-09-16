@@ -8,6 +8,10 @@
 #include "presentation/windowchrome/customtitlebar.h"
 #include "presentation/visualization/fallingnotesview.h"
 
+#include "presentation/theme/widgetstyles.h"
+#include "presentation/theme/themeicons.h"
+#include "presentation/theme/themecontroller.h"
+
 #include <QFileDialog>
 #include <QEvent>
 #include <QFrame>
@@ -57,94 +61,13 @@ QToolButton* toolButton(QWidget* parent, const QIcon& icon, const QString& text,
     return button;
 }
 
-enum class WindowControlGlyph {
-    Minimize,
-    Maximize,
-    Restore,
-    Close,
-};
-
-QIcon windowControlIcon(WindowControlGlyph glyph)
-{
-    constexpr int kIconSize = 18;
-    QPixmap pixmap(kIconSize, kIconSize);
-    pixmap.fill(Qt::transparent);
-
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing, false);
-    QPen pen(QColor(QStringLiteral("#dfe1dc")));
-    pen.setWidth(2);
-    pen.setCapStyle(Qt::SquareCap);
-    pen.setJoinStyle(Qt::MiterJoin);
-    painter.setPen(pen);
-
-    switch (glyph) {
-    case WindowControlGlyph::Minimize:
-        painter.drawLine(QPoint(3, 11), QPoint(14, 11));
-        break;
-    case WindowControlGlyph::Maximize:
-        painter.drawRect(QRect(3, 3, 11, 11));
-        break;
-    case WindowControlGlyph::Restore:
-        painter.drawRect(QRect(5, 2, 10, 10));
-        painter.drawLine(QPoint(3, 6), QPoint(3, 15));
-        painter.drawLine(QPoint(3, 15), QPoint(12, 15));
-        painter.drawLine(QPoint(3, 6), QPoint(5, 6));
-        break;
-    case WindowControlGlyph::Close:
-        painter.drawLine(QPoint(4, 4), QPoint(13, 13));
-        painter.drawLine(QPoint(13, 4), QPoint(4, 13));
-        break;
-    }
-    return QIcon(pixmap);
-}
-
-enum class TransportGlyph {
-    Play,
-    Pause,
-    Stop,
-};
-
-QIcon transportIcon(TransportGlyph glyph)
-{
-    constexpr int kIconSize = 26;
-    QIcon icon;
-    const auto makePixmap = [glyph, kIconSize](const QColor& color) {
-        QPixmap pixmap(kIconSize, kIconSize);
-        pixmap.fill(Qt::transparent);
-        QPainter painter(&pixmap);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(color);
-        switch (glyph) {
-        case TransportGlyph::Play: {
-            QPolygonF triangle;
-            triangle << QPointF(6.0, 3.0) << QPointF(22.0, 13.0) << QPointF(6.0, 23.0);
-            painter.drawPolygon(triangle);
-            break;
-        }
-        case TransportGlyph::Pause:
-            painter.drawRoundedRect(QRectF(5.0, 3.0, 6.0, 20.0), 1.5, 1.5);
-            painter.drawRoundedRect(QRectF(15.0, 3.0, 6.0, 20.0), 1.5, 1.5);
-            break;
-        case TransportGlyph::Stop:
-            painter.drawRoundedRect(QRectF(4.0, 4.0, 18.0, 18.0), 1.5, 1.5);
-            break;
-        }
-        return pixmap;
-    };
-    icon.addPixmap(makePixmap(QColor(QStringLiteral("#f7faf8"))), QIcon::Normal);
-    icon.addPixmap(makePixmap(QColor(QStringLiteral("#65706b"))), QIcon::Disabled);
-    icon.addPixmap(makePixmap(QColor(QStringLiteral("#ffffff"))), QIcon::Active);
-    return icon;
-}
-
 } // namespace
 
 MainWindow::MainWindow(app::PlayerApplicationService* service,
                        app::SettingsService* settingsService,
-                       QWidget* parent)
+                       QWidget* parent, theme::ThemeController* themeController)
     : QMainWindow(parent), m_service(service), m_settingsService(settingsService)
+    , m_themeController(themeController)
 {
     setWindowTitle(QStringLiteral("MIDI Play"));
     resize(1180, 760);
@@ -191,20 +114,20 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     topLayout->addWidget(m_tempoLabel);
     topLayout->addWidget(verticalSeparator(topBar));
 
-    auto* openMusic = toolButton(topBar, style()->standardIcon(QStyle::SP_DialogOpenButton),
+    m_openButton = toolButton(topBar, QIcon(),
                                  QStringLiteral("打开乐曲"), QStringLiteral("打开 MusicXML 或 MIDI 文件"));
-    auto* settingsButton = toolButton(topBar, style()->standardIcon(QStyle::SP_FileDialogDetailedView),
+    m_settingsButton = toolButton(topBar, QIcon(),
                                       QStringLiteral("设置"), QStringLiteral("打开播放器设置"));
-    topLayout->addWidget(openMusic);
-    topLayout->addWidget(settingsButton);
+    topLayout->addWidget(m_openButton);
+    topLayout->addWidget(m_settingsButton);
 
     m_windowControlsSeparator = verticalSeparator(topBar);
     topLayout->addWidget(m_windowControlsSeparator);
-    m_minimizeButton = toolButton(topBar, windowControlIcon(WindowControlGlyph::Minimize), {},
+    m_minimizeButton = toolButton(topBar, QIcon(), {},
                                   QStringLiteral("最小化窗口"), true);
-    m_maximizeButton = toolButton(topBar, windowControlIcon(WindowControlGlyph::Maximize), {},
+    m_maximizeButton = toolButton(topBar, QIcon(), {},
                                   QStringLiteral("最大化窗口"), true);
-    m_closeButton = toolButton(topBar, windowControlIcon(WindowControlGlyph::Close), {},
+    m_closeButton = toolButton(topBar, QIcon(), {},
                                QStringLiteral("关闭窗口"), true);
     m_minimizeButton->setObjectName(QStringLiteral("windowMinimizeButton"));
     m_maximizeButton->setObjectName(QStringLiteral("windowMaximizeButton"));
@@ -259,11 +182,11 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     auto* controlRow = new QHBoxLayout();
     controlRow->setContentsMargins(0, 0, 0, 0);
     controlRow->setSpacing(6);
-    m_playButton = toolButton(transport, transportIcon(TransportGlyph::Play), QStringLiteral("播放"),
+    m_playButton = toolButton(transport, QIcon(), QStringLiteral("播放"),
                               QStringLiteral("播放"), true);
-    m_pauseButton = toolButton(transport, transportIcon(TransportGlyph::Pause), QStringLiteral("暂停"),
+    m_pauseButton = toolButton(transport, QIcon(), QStringLiteral("暂停"),
                                QStringLiteral("暂停"), true);
-    m_stopButton = toolButton(transport, transportIcon(TransportGlyph::Stop), QStringLiteral("停止"),
+    m_stopButton = toolButton(transport, QIcon(), QStringLiteral("停止"),
                               QStringLiteral("停止并回到开头"), true);
     m_playButton->setObjectName(QStringLiteral("playButton"));
     m_pauseButton->setObjectName(QStringLiteral("pauseButton"));
@@ -303,50 +226,16 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     root->addWidget(transport);
     setCentralWidget(central);
 
-    setStyleSheet(QStringLiteral(R"(
-        QWidget#applicationRoot { background: #121416; color: #f0f1ed; }
-        QWidget#topBar, QWidget#transportBar { background: #1b1d20; }
-        QWidget#topBar { border-bottom: 1px solid #303337; }
-        QWidget#transportBar { border-top: 1px solid #303337; }
-        QLabel#brandLabel { color: #f0f1ed; font-size: 17px; font-weight: 600; }
-        QLabel#fileLabel { color: #c8cbc7; font-size: 12px; }
-        QLabel#statusLabel { color: #8f9691; font-size: 11px; }
-        QLabel#metricLabel { color: #bfc3bf; font-size: 11px; }
-        QLabel#timeLabel { color: #e6e7e2; font-family: Consolas, monospace; font-size: 11px; }
-        QFrame#toolbarSeparator { color: #3a3d40; max-height: 26px; }
-        QToolButton { color: #dfe1dc; border: 1px solid transparent; padding: 6px 8px; }
-        QToolButton:hover { background: #292c2f; border-color: #3a3e41; }
-        QToolButton:pressed { background: #34383b; }
-        QToolButton:disabled { color: #676c68; }
-        QToolButton#playButton, QToolButton#pauseButton, QToolButton#stopButton {
-            border: 1px solid #4b5350; border-radius: 0px; padding: 5px;
-        }
-        QToolButton#playButton { background: #176b56; }
-        QToolButton#playButton:hover { background: #21866b; border-color: #48c9a2; }
-        QToolButton#playButton:pressed { background: #0f5141; }
-        QToolButton#pauseButton { background: #76581d; }
-        QToolButton#pauseButton:hover { background: #967126; border-color: #f2c45c; }
-        QToolButton#pauseButton:pressed { background: #5d4517; }
-        QToolButton#stopButton { background: #71323a; }
-        QToolButton#stopButton:hover { background: #91434c; border-color: #f07b86; }
-        QToolButton#stopButton:pressed { background: #56252c; }
-        QToolButton#playButton:disabled, QToolButton#pauseButton:disabled,
-        QToolButton#stopButton:disabled { background: #24282a; border-color: #363b3b; }
-        QToolButton#metronomeButton { color: #eaf2ff; background: #314259; border: 1px solid #5a7395; border-radius: 0px; font-weight: 600; }
-        QToolButton#metronomeButton:hover { background: #405878; border-color: #8ab8ef; }
-        QToolButton#metronomeButton:checked { color: #fff8d5; background: #725e22; border-color: #e7c75d; }
-        QToolButton#metronomeButton:checked:hover { background: #927b2d; }
-        QToolButton#metronomeButton:disabled { color: #676c68; background: #24282a; border-color: #363b3b; }
-        QToolButton#windowCloseButton:hover { background: #c42b2b; border-color: #c42b2b; }
-        QToolButton#windowCloseButton:pressed { background: #a51f1f; border-color: #a51f1f; }
-        QSlider::groove:horizontal { height: 4px; background: #393d3f; }
-        QSlider::sub-page:horizontal { background: #f4d35e; }
-        QSlider::handle:horizontal { width: 14px; margin: -5px 0; border-radius: 7px; background: #f0f1ed; }
-        QSlider::handle:horizontal:hover { background: #f4d35e; }
-    )"));
+    applyTheme(m_themeController ? m_themeController->mode()
+        : m_settingsService ? m_settingsService->themeMode() : midi_play::settings::kDefaultThemeMode);
+    if (m_themeController) {
+        connect(m_themeController, &theme::ThemeController::themeChanged, this, &MainWindow::applyTheme);
+    } else if (m_settingsService) {
+        connect(m_settingsService, &app::SettingsService::themeModeChanged, this, &MainWindow::applyTheme);
+    }
 
-    connect(openMusic, &QToolButton::clicked, this, &MainWindow::openMusicFile);
-    connect(settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
+    connect(m_openButton, &QToolButton::clicked, this, &MainWindow::openMusicFile);
+    connect(m_settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
     connect(m_minimizeButton, &QToolButton::clicked, this, &MainWindow::showMinimized);
     connect(m_maximizeButton, &QToolButton::clicked, this, [this] {
         if (isMaximized()) showNormal(); else showMaximized();
@@ -446,6 +335,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         QMessageBox::warning(this, QStringLiteral("播放器错误"), message);
     });
     if (m_settingsService) {
+        if (!m_settingsService->lastLoadWarning().isEmpty())
+            m_statusLabel->setText(m_settingsService->lastLoadWarning());
         connect(m_settingsService, &app::SettingsService::settingsLoadWarning, this,
                 [this](const QString& message) {
                     m_statusLabel->setText(message);
@@ -601,11 +492,29 @@ void MainWindow::updateWindowControlButtons()
 {
     if (!m_maximizeButton) return;
     const bool maximized = isMaximized();
-    m_maximizeButton->setIcon(windowControlIcon(
-        maximized ? WindowControlGlyph::Restore : WindowControlGlyph::Maximize));
+    m_maximizeButton->setIcon(theme::themedIcon(
+        maximized ? theme::IconGlyph::Restore : theme::IconGlyph::Maximize, theme::themeFor(m_themeMode)));
     m_maximizeButton->setToolTip(maximized ? QStringLiteral("还原窗口") : QStringLiteral("最大化窗口"));
     m_maximizeButton->setAccessibleName(maximized ? QStringLiteral("还原窗口")
                                                   : QStringLiteral("最大化窗口"));
+}
+
+void MainWindow::applyTheme(midi_play::settings::ThemeMode mode)
+{
+    m_themeMode = midi_play::settings::normalizeThemeMode(mode);
+    const auto& current = theme::themeFor(m_themeMode);
+    setPalette(theme::widgetPalette(current));
+    setStyleSheet(theme::mainWindowStyle(current));
+    m_visualization->setThemeMode(m_themeMode);
+    m_playbackRateControl->setThemeMode(m_themeMode);
+    m_openButton->setIcon(theme::themedIcon(theme::IconGlyph::Open, current));
+    m_settingsButton->setIcon(theme::themedIcon(theme::IconGlyph::Settings, current));
+    m_playButton->setIcon(theme::themedIcon(theme::IconGlyph::Play, current));
+    m_pauseButton->setIcon(theme::themedIcon(theme::IconGlyph::Pause, current));
+    m_stopButton->setIcon(theme::themedIcon(theme::IconGlyph::Stop, current));
+    m_minimizeButton->setIcon(theme::themedIcon(theme::IconGlyph::Minimize, current));
+    m_closeButton->setIcon(theme::themedIcon(theme::IconGlyph::Close, current));
+    updateWindowControlButtons();
 }
 
 void MainWindow::openMusicFile()
@@ -619,7 +528,7 @@ void MainWindow::openMusicFile()
 void MainWindow::showSettings()
 {
     if (!m_settingsDialog) {
-        m_settingsDialog = new settings::SettingsDialog(m_settingsService, m_service, this);
+        m_settingsDialog = new settings::SettingsDialog(m_settingsService, m_service, this, m_themeController);
     }
 
     m_settingsDialog->show();
