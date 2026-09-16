@@ -4,12 +4,14 @@
 #include "domain/visualization/visiblenoteindex.h"
 #include "infrastructure/midi/mididocumentbuilder.h"
 #include "infrastructure/midi/midinormalizer.h"
+#include "infrastructure/midi/midireader.h"
 #include "presentation/visualization/fallingnotesrenderer.h"
 #include "presentation/visualization/noteframestate.h"
 #include "presentation/visualization/scenelayoutengine.h"
 #include "presentation/visualization/visualplaybackclock.h"
 #if MIDI_PLAY_HAS_VULKAN
 #include "presentation/visualization/fallingnotesvulkanwindow.h"
+#include "presentation/visualization/vulkanscene.h"
 #include <QVulkanInstance>
 #endif
 
@@ -19,6 +21,7 @@
 #include <QPainter>
 #include <QThread>
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 
@@ -247,6 +250,152 @@ void testFrameEffects(const visualization::VisualChartPtr& chart)
 }
 
 #if MIDI_PLAY_HAS_VULKAN
+visualization::VisualChartPtr stressChart()
+{
+    auto document = basicDocument();
+    for (int i = 0; i < 4096; ++i) {
+        music::NoteEvent note;
+        note.noteId = quint64(i + 1);
+        note.pitch = 24 + i % 84;
+        note.start = (i / 84) * 40;
+        note.duration = 960 + i % 480;
+        note.sustainEnd = note.start + 2400;
+        note.velocity = 48 + i % 80;
+        document.tracks()[0].notes.push_back(note);
+    }
+    document.rebuildMeasureGrid();
+    return visualization::PlaybackVisualizationProjector().project(document, 3);
+}
+
+void testVulkanStaticKeyboard(const visualization::VisualChartPtr& chart)
+{
+    VulkanScene scene;
+    visualization::PlaybackSceneState state;
+    state.chart = chart;
+    state.transportState = playback::State::Playing;
+    scene.prepare(state, {1280, 720}, 1, QFont());
+    const auto revision = scene.staticUiRevision();
+    const auto keyboard = scene.staticUi().quads;
+    for (qint64 time : {10'000, 500'000, 2'000'000, 500'000}) {
+        state.transportPositionUs = time;
+        scene.prepare(state, {1280, 720}, 1, QFont());
+        require(scene.staticUiRevision() == revision && scene.staticUi().quads == keyboard,
+                "animation and seeking must not rebuild the static keyboard");
+    }
+    // Static vertices use logical coordinates and contain no atlas UVs.
+    scene.prepare(state, {1280, 720}, 2, QFont(QStringLiteral("Arial"), 12));
+    require(scene.staticUiRevision() == revision && scene.staticUi().quads == keyboard,
+            "DPI and font changes must not invalidate atlas-independent geometry");
+    scene.prepare(state, {960, 640}, 2, QFont());
+    require(scene.staticUiRevision() != revision && scene.staticUi().quads != keyboard,
+            "resizing must rebuild the static keyboard");
+}
+
+void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const QString& directory)
+{
+    qputenv("MIDI_PLAY_VULKAN_VALIDATE_RESOURCES", "1");
+    QVulkanInstance instance;
+    std::atomic<int> validationErrors = 0;
+    if (instance.supportedLayers().contains("VK_LAYER_KHRONOS_validation"))
+        instance.setLayers({"VK_LAYER_KHRONOS_validation"});
+    require(instance.create(), "Vulkan instance must initialize");
+    instance.installDebugOutputFilter([&](QVulkanInstance::DebugMessageSeverityFlags severity,
+        QVulkanInstance::DebugMessageTypeFlags, const void* message) {
+        if (severity & QVulkanInstance::ErrorSeverity) {
+            ++validationErrors;
+            const auto* data = static_cast<const VkDebugUtilsMessengerCallbackDataEXT*>(message);
+            std::fprintf(stderr, "Vulkan validation: %s\n", data->pMessage);
+        }
+        return false;
+    });
+    FallingNotesVulkanWindow window;
+    window.setVulkanInstance(&instance);
+    window.resize(1280, 720);
+    window.setChart(chart);
+    window.setTransportState(playback::State::Playing);
+    bool failed = false;
+    QObject::connect(&window, &FallingNotesVulkanWindow::initializationFailed, &window,
+        [&](const QString& error) { std::fprintf(stderr, "%s\n", qPrintable(error)); failed = true; });
+    window.show();
+    QElapsedTimer timer;
+    timer.start();
+    while (!window.isValid() && !failed && timer.elapsed() < 5000) {
+        QApplication::processEvents();
+        QThread::msleep(2);
+    }
+    require(!failed && window.isValid() && window.supportsGrab(), "Vulkan must support keyboard readback");
+    std::fprintf(stderr, "GPU: %s; frames=%d; images=%d\n", window.physicalDeviceProperties()->deviceName,
+        window.concurrentFrameCount(), window.swapChainImageCount());
+    int presentedFrames = 0;
+    QObject::connect(&window, &FallingNotesVulkanWindow::frameRendered, &window, [&] { ++presentedFrames; });
+    window.resize(2560, 1440);
+    const auto advance = QObject::connect(&window, &FallingNotesVulkanWindow::frameRendered, &window, [&] {
+        window.setTransportPosition((qint64(presentedFrames) * 250'000) % chart->durationUs(), chart->durationUs());
+    });
+    while (presentedFrames < 900 && !failed && timer.elapsed() < 30'000) {
+        QApplication::processEvents();
+        QThread::msleep(1);
+    }
+    require(!failed && presentedFrames >= 900, "continuous playback must not reuse in-flight GPU resources");
+    std::fprintf(stderr, "Continuous playback complete: validation errors=%d\n", int(validationErrors));
+    QObject::disconnect(advance);
+    window.resize(1280, 720);
+    NoteRenderCache cache;
+    NoteFrameState noteFrame;
+    const auto geometry = SceneLayoutEngine().layout(window.size(), chart.get(), 5'000'000);
+    cache.prepare(chart, geometry);
+    visualization::VisibleNoteIndex noteIndex(chart->notes());
+    QVector<int> indices;
+    const VisualizationTheme theme;
+    int frameCount = 0;
+    for (qint64 time = 0; time < chart->durationUs(); time += 250'000) {
+        window.setTransportPosition(time, chart->durationUs());
+        const int targetFrame = presentedFrames + 3;
+        QElapsedTimer frameTimer;
+        frameTimer.start();
+        while (presentedFrames < targetFrame && !failed && frameTimer.elapsed() < 3000) {
+            QApplication::processEvents();
+            QThread::msleep(1);
+        }
+        require(!failed && presentedFrames >= targetFrame, "continuous Vulkan frames must advance");
+        const auto image = window.grab();
+        require(!image.isNull(), "keyboard frame must render");
+        auto state = window.sceneState();
+        noteIndex.query(state.visibleWindowStartUs, state.visibleWindowEndUs, indices);
+        state.candidateNoteIndices = {indices.constData(), size_t(indices.size())};
+        noteFrame.prepare(state, geometry, cache);
+        // Interior samples avoid borders, labels and black/white key overlap.
+        for (const auto& slot : geometry.pitches) {
+            if (!slot.valid) continue;
+            const QPointF sample(slot.keyRect.center().x(), slot.keyRect.top() + slot.keyRect.height() * .8);
+            const auto& light = noteFrame.key(slot.pitch);
+            const auto* style = cache.styleForNote(light.noteIndex);
+            const auto base = slot.blackKey ? theme.blackKey : theme.whiteKey;
+            const QColor expected = style ? illuminatedKeyColor(base, style->material.body,
+                light.strength * (slot.blackKey ? .70 : .60)) : base;
+            const auto actual = image.pixelColor(qRound(sample.x() * window.devicePixelRatio()),
+                                                 qRound(sample.y() * window.devicePixelRatio()));
+            const int error = std::max({std::abs(expected.red() - actual.red()),
+                std::abs(expected.green() - actual.green()), std::abs(expected.blue() - actual.blue())});
+            if (error > 4) {
+                QDir().mkpath(directory);
+                image.save(directory + QStringLiteral("/keyboard-failure.png"));
+                std::fprintf(stderr, "Keyboard mismatch: time=%lld pitch=%d expected=%s actual=%s error=%d\n",
+                    time, slot.pitch, qPrintable(expected.name()), qPrintable(actual.name()), error);
+                require(false, "Vulkan keyboard must match the opaque scene fill in every frame");
+            }
+        }
+        ++frameCount;
+    }
+    std::printf("Vulkan keyboard stability: %d sampled frames, %d submitted frames, %lld notes, %.2f seconds\n",
+                frameCount, presentedFrames, qlonglong(chart->notes().size()), timer.elapsed() / 1000.0);
+    window.setTransportState(playback::State::Paused);
+    window.hide();
+    window.destroy();
+    instance.destroy();
+    require(validationErrors == 0, "Vulkan lifetime and synchronization validation must pass");
+}
+
 void captureVulkan(const visualization::VisualChartPtr& chart, const QString& directory)
 {
     QVulkanInstance instance;
@@ -284,8 +433,33 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     difference /= height * image.width() * 3.0;
     std::printf("Qt/Vulkan falling-area mean channel difference: %.3f / 255\n", difference);
     require(difference < 4.0, "Qt and Vulkan must agree on note colors, geometry and layering");
+    const auto geometry = SceneLayoutEngine().layout(window.size(), chart.get(), 5'000'000);
+    double keyboardDifference = 0;
+    int keyboardPixels = 0;
+    for (const auto& slot : geometry.pitches) {
+        if (!slot.valid) continue;
+        // QPainter centers its pen; Vulkan uses an inset analytic border.
+        // Compare filled interiors, excluding that known rasterization and
+        // font difference. Black-key samples still verify white-key occlusion.
+        QRectF interior = slot.keyRect.adjusted(3, 8, -3, -20);
+        if (!slot.blackKey)
+            interior.setTop(geometry.keyboardRect.top() + geometry.keyboardRect.height() * .62 + 3);
+        const qreal dpr = window.devicePixelRatio();
+        for (int y = qCeil(interior.top() * dpr); y < qFloor(interior.bottom() * dpr); ++y)
+            for (int x = qCeil(interior.left() * dpr); x < qFloor(interior.right() * dpr); ++x) {
+                const auto a = image.pixelColor(x, y);
+                const auto b = reference.pixelColor(x, y);
+                keyboardDifference += std::abs(a.red() - b.red()) + std::abs(a.green() - b.green()) + std::abs(a.blue() - b.blue());
+                ++keyboardPixels;
+            }
+    }
+    require(keyboardPixels > 0, "keyboard comparison must sample visible key interiors");
+    keyboardDifference /= keyboardPixels * 3.0;
+    std::printf("Qt/Vulkan key-interior mean channel difference: %.3f / 255\n", keyboardDifference);
+    require(keyboardDifference < 2.0, "split keyboard batches must preserve key colors and black-key occlusion");
     window.setTransportState(playback::State::Paused);
     window.hide();
+    window.destroy();
 }
 #endif
 
@@ -352,6 +526,19 @@ int main(int argc, char** argv)
                 "cached renders must remain stable after resizing and DPI changes");
     }
     const auto args = app.arguments();
+#if MIDI_PLAY_HAS_VULKAN
+    testVulkanStaticKeyboard(chart);
+    if (args.contains(QStringLiteral("--vulkan-stress"))) {
+        auto selectedChart = stressChart();
+        const int midiArgument = args.indexOf(QStringLiteral("--midi"));
+        if (midiArgument >= 0 && midiArgument + 1 < args.size()) {
+            const auto result = midi::MidiReader().read(args[midiArgument + 1]);
+            require(result.ok(), "stress MIDI must load");
+            selectedChart = visualization::PlaybackVisualizationProjector().project(*result.document, 2);
+        }
+        testVulkanKeyboardFrames(selectedChart, QStringLiteral("build/vulkan-diagnostics"));
+    }
+#endif
     if (args.contains(QStringLiteral("--benchmark"))) {
         for (int count : {160, 600, 1600}) benchmarkRaster(count, false);
         benchmarkRaster(600, true);

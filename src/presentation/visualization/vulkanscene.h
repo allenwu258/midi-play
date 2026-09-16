@@ -22,16 +22,40 @@ struct VulkanQuad {
     std::array<float, 4> activeBorder {};
     std::array<float, 4> uv {};
     std::array<float, 4> options {}; // width, dashed, texture, ellipse
+    bool operator==(const VulkanQuad&) const = default;
 };
 static_assert(sizeof(VulkanQuad) == 112);
+
+// White-key illumination must precede black keys, including inactive ones.
+enum class VulkanUiLayer : size_t { Background, Strike, WhiteKeys, BlackKeys, Labels, Overlay, Count };
+
+struct VulkanInstanceRange {
+    uint32_t first = 0;
+    uint32_t count = 0;
+};
+
+struct VulkanUiBatch {
+    QVector<VulkanQuad> quads;
+    std::array<uint32_t, size_t(VulkanUiLayer::Count) + 1> offsets {};
+
+    void clear() { quads.clear(); offsets.fill(0); }
+    void beginLayer(VulkanUiLayer layer) { offsets[size_t(layer)] = uint32_t(quads.size()); }
+    void finish() { offsets.back() = uint32_t(quads.size()); }
+    VulkanInstanceRange range(VulkanUiLayer layer) const
+    {
+        const auto i = size_t(layer);
+        return {offsets[i], offsets[i + 1] - offsets[i]};
+    }
+};
 
 class VulkanScene final {
 public:
     void prepare(const midi_play::visualization::PlaybackSceneState& state,
                  QSize logicalSize, qreal dpr, const QFont& font);
     const QVector<VulkanQuad>& notes() const { return m_notes; }
-    const QVector<VulkanQuad>& background() const { return m_background; }
-    const QVector<VulkanQuad>& foreground() const { return m_foreground; }
+    const VulkanUiBatch& staticUi() const { return m_staticUi; }
+    const VulkanUiBatch& dynamicUi() const { return m_dynamicUi; }
+    quint64 staticUiRevision() const { return m_staticUiRevision; }
     const QImage& atlas() const { return m_atlas; }
     quint64 atlasRevision() const { return m_atlasRevision; }
     quint64 notesRevision() const { return m_notesRevision; }
@@ -50,6 +74,7 @@ private:
               const QColor& border = Qt::transparent, float width = 0, bool ellipse = false);
     void rebuildNotes(const midi_play::visualization::PlaybackSceneState& state);
     void buildDecorations(const midi_play::visualization::PlaybackSceneState& state, const QFont& font);
+    void rebuildStaticUi();
 
     midi_play::visualization::VisualChartPtr m_chart;
     midi_play::visualization::VisibleNoteIndex m_index;
@@ -72,11 +97,12 @@ private:
     bool m_atlasFull = false;
     quint64 m_atlasRevision = 0;
     quint64 m_notesRevision = 0;
+    quint64 m_staticUiRevision = 0;
     qint64 m_timeOriginUs = 0;
     qsizetype m_visibleNoteCount = 0;
     QVector<VulkanQuad> m_notes;
-    QVector<VulkanQuad> m_background;
-    QVector<VulkanQuad> m_foreground;
+    VulkanUiBatch m_staticUi;
+    VulkanUiBatch m_dynamicUi;
 };
 
 } // namespace midi_play::presentation::visualization

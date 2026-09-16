@@ -30,6 +30,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         m_size = size;
         m_lookAheadUs = state.lookAheadUs;
         m_geometry = SceneLayoutEngine().layout(size, m_chart.get(), state.lookAheadUs);
+        rebuildStaticUi();
     }
     if (m_atlas.isNull() || m_dpr != dpr || m_atlasFull || m_atlasY > 1536 || chartChanged) {
         m_dpr = dpr;
@@ -144,15 +145,42 @@ void VulkanScene::text(QVector<VulkanQuad>& output, const QString& value, const 
                float(item.pixels.width()) / 2048, float(item.pixels.height()) / 2048};
 }
 
-void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackSceneState& state, const QFont& font)
+void VulkanScene::rebuildStaticUi()
 {
-    m_background.clear();
-    m_foreground.clear();
+    ++m_staticUiRevision;
+    m_staticUi.clear();
+    auto& output = m_staticUi.quads;
     const auto& g = m_geometry;
+    m_staticUi.beginLayer(VulkanUiLayer::Background);
     for (const auto& pitch : g.pitches) {
         if (pitch.valid && pitch.blackKey)
-            rect(m_background, {pitch.keyRect.x(), g.fallingRect.y(), pitch.keyRect.width(), g.fallingRect.height()}, QColor(255,255,255,7));
+            rect(output, {pitch.keyRect.x(), g.fallingRect.y(), pitch.keyRect.width(), g.fallingRect.height()}, QColor(255,255,255,7));
     }
+    m_staticUi.beginLayer(VulkanUiLayer::Strike);
+    m_staticUi.beginLayer(VulkanUiLayer::WhiteKeys);
+    rect(output, g.keyboardRect, m_theme.keyboardBackground);
+    for (bool black : {false, true}) {
+        if (black) m_staticUi.beginLayer(VulkanUiLayer::BlackKeys);
+        for (const auto& slot : g.pitches) {
+            if (!slot.valid || slot.blackKey != black) continue;
+            rect(output, slot.keyRect.adjusted(black ? .5 : 0, 0, -.5, black ? -1 : -.5),
+                 black ? m_theme.blackKey : m_theme.whiteKey,
+                 black ? m_theme.blackKeyBorder : m_theme.whiteKeyBorder, 1);
+        }
+        if (!black) for (const auto& slot : g.drumSlots)
+            rect(output, slot.keyRect.adjusted(0, 0, -.5, -.5), QColor("#292d30"), QColor(255,255,255,35), 1);
+    }
+    m_staticUi.beginLayer(VulkanUiLayer::Labels);
+    m_staticUi.beginLayer(VulkanUiLayer::Overlay);
+    m_staticUi.finish();
+}
+
+void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackSceneState& state, const QFont& font)
+{
+    m_dynamicUi.clear();
+    auto& output = m_dynamicUi.quads;
+    const auto& g = m_geometry;
+    m_dynamicUi.beginLayer(VulkanUiLayer::Background);
     const qreal left = g.pianoRect.left();
     const qreal right = g.drumRect.isEmpty() ? g.pianoRect.right() : g.drumRect.right();
     if (m_chart) {
@@ -163,21 +191,22 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
         for (; it != lines.cend() && it->timeUs <= state.transportPositionUs + state.lookAheadUs; ++it) {
             const qreal y = g.strikeLineY - (it->timeUs - state.transportPositionUs) * g.pixelsPerMicrosecond;
             if (y < g.fallingRect.top() || y >= g.fallingRect.bottom()) continue;
-            rect(m_background, {left,y,right-left,it->measureStart ? 2.0 : 1.0}, it->measureStart ? m_theme.measureLine : m_theme.beatLine);
+            rect(output, {left,y,right-left,it->measureStart ? 2.0 : 1.0}, it->measureStart ? m_theme.measureLine : m_theme.beatLine);
             // Use a dedicated primitive kind for moving horizontal lines.
             // The negative kind is independent from the ellipse/texture flags
             // in options and is rasterized with analytic edge coverage.
-            m_background.back().times[3] = -1.0f;
-            if (it->measureStart) text(m_background, it->measureLabel, gridFont, {4,y-10,left-9,20}, m_theme.subtleText, Qt::AlignRight|Qt::AlignVCenter);
+            output.back().times[3] = -1.0f;
+            if (it->measureStart) text(output, it->measureLabel, gridFont, {4,y-10,left-9,20}, m_theme.subtleText, Qt::AlignRight|Qt::AlignVCenter);
         }
     }
-    rect(m_foreground, {left,g.strikeLineY-3,right-left,6}, QColor(244,211,94,18));
+    m_dynamicUi.beginLayer(VulkanUiLayer::Strike);
+    rect(output, {left,g.strikeLineY-3,right-left,6}, QColor(244,211,94,18));
     QColor strike = m_theme.strikeLine;
     strike.setAlpha(145);
-    rect(m_foreground, {left,g.strikeLineY-0.5,right-left,1}, strike);
+    rect(output, {left,g.strikeLineY-0.5,right-left,1}, strike);
     for (const auto& glow : m_noteFrame.glows()) {
-        rect(m_foreground, glow.rect, glow.color);
-        m_foreground.back().options[3] = 2;
+        rect(output, glow.rect, glow.color);
+        output.back().options[3] = 2;
     }
     if (m_chart) {
         QFont labelFont(font); labelFont.setPointSizeF(10); labelFont.setWeight(QFont::DemiBold);
@@ -188,62 +217,70 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
             const qreal width = layout.advance;
             if (x + width > right - 8) break;
             const QRectF area(x, g.strikeLineY + 5, width + 1, 19);
-            text(m_foreground, note.simplifiedLabel, labelFont, area, m_theme.primaryText, Qt::AlignCenter);
+            text(output, note.simplifiedLabel, labelFont, area, m_theme.primaryText, Qt::AlignCenter);
             const int dots = std::min(3, std::abs(note.octaveOffset));
             for (int dot = 0; dot < dots; ++dot)
-                rect(m_foreground, {area.center().x()-(dots*3.5-1.5)/2+dot*3.5,
+                rect(output, {area.center().x()-(dots*3.5-1.5)/2+dot*3.5,
                      note.octaveOffset>0 ? area.top()-1.5 : area.bottom()+0.5,2,2},m_theme.primaryText,Qt::transparent,0,true);
             x += width + 13;
         }
     }
-    rect(m_foreground, g.keyboardRect, m_theme.keyboardBackground);
     for (bool black : {false, true}) {
+        m_dynamicUi.beginLayer(black ? VulkanUiLayer::BlackKeys : VulkanUiLayer::WhiteKeys);
         for (const auto& slot : g.pitches) {
             if (!slot.valid || slot.blackKey != black) continue;
             const auto& light = m_noteFrame.key(slot.pitch);
             const auto* style = m_cache.styleForNote(light.noteIndex);
+            if (!style) continue;
             const QColor base = black ? m_theme.blackKey : m_theme.whiteKey;
-            const QColor color = style ? illuminatedKeyColor(base, style->material.body,
-                light.strength * (black ? 0.70 : 0.60)) : base;
-            rect(m_foreground, slot.keyRect.adjusted(black ? .5 : 0,0,-.5,black ? -1 : -.5),
+            const QColor color = illuminatedKeyColor(base, style->material.body,
+                light.strength * (black ? 0.70 : 0.60));
+            rect(output, slot.keyRect.adjusted(black ? .5 : 0,0,-.5,black ? -1 : -.5),
                   color, black ? m_theme.blackKeyBorder : m_theme.whiteKeyBorder, 1);
-            if (style) {
-                QColor top = style->material.head;
-                top.setAlphaF(light.strength);
-                rect(m_foreground, {slot.keyRect.left() + (black ? 0.5 : 0), slot.keyRect.top(),
-                    slot.keyRect.width() - (black ? 1 : 0.5), black ? 4.0 : 5.0}, top);
-            }
+            QColor top = style->material.head;
+            top.setAlphaF(light.strength);
+            rect(output, {slot.keyRect.left() + (black ? 0.5 : 0), slot.keyRect.top(),
+                slot.keyRect.width() - (black ? 1 : 0.5), black ? 4.0 : 5.0}, top);
+        }
+        if (!black) for (const auto& slot : g.drumSlots) {
+            const auto& light = m_noteFrame.drum(slot.lane);
+            const auto* style = m_cache.styleForNote(light.noteIndex);
+            if (style) rect(output, slot.keyRect.adjusted(0,0,-.5,-.5),
+                illuminatedKeyColor(QColor("#292d30"), style->material.body, light.strength * 0.70),
+                QColor(255,255,255,35), 1);
         }
     }
+    // Text stays with the atlas-dependent batch. Atlas recycling does not
+    // invalidate the static keyboard's geometry or trigger another upload.
+    m_dynamicUi.beginLayer(VulkanUiLayer::Labels);
     QFont keyFont(font); keyFont.setPointSizeF(7.5);
     for (const auto& slot : g.pitches) {
         if (slot.valid && !slot.blackKey && slot.pitch % 12 == 0 && slot.keyRect.width() >= 12)
-            text(m_foreground, QStringLiteral("C%1").arg(slot.pitch/12-1), keyFont,
+            text(output, QStringLiteral("C%1").arg(slot.pitch/12-1), keyFont,
                  slot.keyRect.adjusted(1,0,-1,-5), QColor(44,47,46), Qt::AlignHCenter|Qt::AlignBottom);
     }
     if (m_chart) {
         for (const auto& slot : g.drumSlots) {
-            const auto& light = m_noteFrame.drum(slot.lane);
-            const auto* style = m_cache.styleForNote(light.noteIndex);
-            rect(m_foreground,slot.keyRect.adjusted(0,0,-.5,-.5),style
-                ? illuminatedKeyColor(QColor("#292d30"), style->material.body, light.strength * 0.70)
-                : QColor("#292d30"),QColor(255,255,255,35),1);
             if (slot.lane < m_chart->drumLanes().size() && slot.keyRect.width() >= 18)
-                text(m_foreground,m_chart->drumLanes()[slot.lane].name,keyFont,slot.keyRect.adjusted(3,4,-3,-4),m_theme.primaryText,Qt::AlignHCenter|Qt::AlignBottom,slot.keyRect.width()-5);
+                text(output,m_chart->drumLanes()[slot.lane].name,keyFont,slot.keyRect.adjusted(3,4,-3,-4),m_theme.primaryText,Qt::AlignHCenter|Qt::AlignBottom,slot.keyRect.width()-5);
         }
+    }
+    m_dynamicUi.beginLayer(VulkanUiLayer::Overlay);
+    if (m_chart) {
         const auto& overlay = m_overlay.at(state.transportPositionUs);
         QFont overlayFont(font); overlayFont.setPointSizeF(9.5);
-        text(m_foreground,overlay.marker,overlayFont,{left,g.fallingRect.top()+8,g.pianoRect.width(),24},m_theme.secondaryText,Qt::AlignCenter,g.pianoRect.width());
-        text(m_foreground,overlay.lyric,overlayFont,{left,g.strikeLineY-34,g.pianoRect.width(),24},m_theme.primaryText,Qt::AlignCenter,g.pianoRect.width()*.8);
+        text(output,overlay.marker,overlayFont,{left,g.fallingRect.top()+8,g.pianoRect.width(),24},m_theme.secondaryText,Qt::AlignCenter,g.pianoRect.width());
+        text(output,overlay.lyric,overlayFont,{left,g.strikeLineY-34,g.pianoRect.width(),24},m_theme.primaryText,Qt::AlignCenter,g.pianoRect.width()*.8);
     }
     if (!m_chart || state.loading || !state.errorMessage.isEmpty()) {
-        rect(m_foreground,g.fallingRect,QColor(10,11,12,state.loading ? 118 : 148));
+        rect(output,g.fallingRect,QColor(10,11,12,state.loading ? 118 : 148));
         QFont statusFont(font); statusFont.setPointSizeF(11); statusFont.setWeight(QFont::DemiBold);
         const QString message = !state.errorMessage.isEmpty() ? state.errorMessage : state.loading
             ? QStringLiteral("正在分析音乐文件...") : QStringLiteral("打开 MusicXML 或 MIDI 文件开始播放");
-        text(m_foreground,message,statusFont,g.fallingRect.adjusted(24,24,-24,-24),
+        text(output,message,statusFont,g.fallingRect.adjusted(24,24,-24,-24),
              state.errorMessage.isEmpty() ? m_theme.primaryText : m_theme.error,Qt::AlignCenter,g.fallingRect.width()-48);
     }
+    m_dynamicUi.finish();
 }
 
 } // namespace midi_play::presentation::visualization

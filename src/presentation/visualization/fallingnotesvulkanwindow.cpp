@@ -9,6 +9,7 @@
 #include <array>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 namespace midi_play::presentation::visualization {
 namespace {
@@ -28,16 +29,23 @@ struct Buffer {
     bool coherent = false;
 };
 
-struct FrameResources {
+struct ImageResources {
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
     Buffer notes;
-    Buffer ui;
+    Buffer staticUi;
+    Buffer dynamicUi;
+    QVector<VulkanQuad> uploadedDynamicUi;
     Buffer staging;
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory imageMemory = VK_NULL_HANDLE;
     VkImageView imageView = VK_NULL_HANDLE;
     VkDescriptorSet descriptor = VK_NULL_HANDLE;
     quint64 notesRevision = 0;
+    quint64 staticUiRevision = 0;
     quint64 atlasRevision = 0;
+    // Optional host/GPU lifetime audit, enabled by the Vulkan stress test.
+    VkEvent completionEvent = VK_NULL_HANDLE;
+    bool submitted = false;
 };
 
 struct FrameConstants {
@@ -69,11 +77,14 @@ private:
     uint32_t memoryType(uint32_t bits, VkMemoryPropertyFlags required, VkMemoryPropertyFlags preferred = 0);
     void destroy(Buffer& buffer);
     void reserve(Buffer& buffer, VkDeviceSize bytes, VkBufferUsageFlags usage);
-    void upload(Buffer& buffer, const void* source, VkDeviceSize bytes);
+    void upload(Buffer& buffer, const void* source, VkDeviceSize bytes, VkDeviceSize offset = 0);
+    void uploadDynamicUi(ImageResources& frame);
     VkShaderModule shader(const char* path);
     void createPipeline();
-    void createAtlas(FrameResources& frame);
-    void uploadAtlas(FrameResources& frame, VkCommandBuffer command);
+    void createRenderPass();
+    void createAtlas(ImageResources& frame);
+    void uploadAtlas(ImageResources& frame, VkCommandBuffer command);
+    void completePresentation();
     void fail(const QString& message);
     void draw(VkCommandBuffer command, Buffer& buffer, uint32_t count, uint32_t first = 0);
 
@@ -86,10 +97,12 @@ private:
     VkSampler m_sampler = VK_NULL_HANDLE;
     VkPipelineLayout m_layout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
-    std::array<FrameResources, QVulkanWindow::MAX_CONCURRENT_FRAME_COUNT> m_frames {};
+    VkRenderPass m_renderPass = VK_NULL_HANDLE;
+    std::vector<ImageResources> m_images;
     VulkanScene m_scene;
-    QVector<VulkanQuad> m_ui;
     bool m_failed = false;
+    bool m_auditResources = false;
+    bool m_separatePresentQueue = false;
 };
 
 uint32_t FallingNotesVulkanRenderer::memoryType(uint32_t bits, VkMemoryPropertyFlags required,
@@ -117,7 +130,8 @@ void FallingNotesVulkanRenderer::destroy(Buffer& buffer)
 void FallingNotesVulkanRenderer::reserve(Buffer& buffer, VkDeviceSize bytes, VkBufferUsageFlags usage)
 {
     if (buffer.capacity >= bytes && buffer.handle) return;
-    // Only the current, fence-completed Qt frame slot is modified here.
+    // Only resources owned by the acquired, fence-completed swapchain image
+    // may be updated or replaced. currentFrame() is a different rotation.
     destroy(buffer);
     VkBufferCreateInfo info {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     info.size = std::max<VkDeviceSize>(4096, bytes + bytes / 2);
@@ -136,18 +150,44 @@ void FallingNotesVulkanRenderer::reserve(Buffer& buffer, VkDeviceSize bytes, VkB
     checked(m_df->vkMapMemory(m_device, buffer.memory, 0, VK_WHOLE_SIZE, 0, &buffer.mapped), "map buffer");
     buffer.capacity = info.size;
     buffer.coherent = (m_memoryProperties.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+    qCDebug(lcVulkan) << "Buffer capacity:" << quint64(buffer.capacity);
 }
 
-void FallingNotesVulkanRenderer::upload(Buffer& buffer, const void* source, VkDeviceSize bytes)
+void FallingNotesVulkanRenderer::upload(Buffer& buffer, const void* source, VkDeviceSize bytes, VkDeviceSize offset)
 {
     if (!bytes) return;
-    std::memcpy(buffer.mapped, source, static_cast<size_t>(bytes));
+    if (offset > buffer.capacity || bytes > buffer.capacity - offset)
+        throw std::runtime_error("Vulkan upload exceeds buffer capacity");
+    std::memcpy(static_cast<char*>(buffer.mapped) + offset, source, static_cast<size_t>(bytes));
     if (!buffer.coherent) {
         VkMappedMemoryRange range {VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
         range.memory = buffer.memory;
         range.size = VK_WHOLE_SIZE;
         checked(m_df->vkFlushMappedMemoryRanges(m_device, 1, &range), "flush buffer");
     }
+}
+
+void FallingNotesVulkanRenderer::uploadDynamicUi(ImageResources& frame)
+{
+    const auto& quads = m_scene.dynamicUi().quads;
+    const auto bytes = VkDeviceSize(quads.size()) * sizeof(VulkanQuad);
+    reserve(frame.dynamicUi, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    auto& previous = frame.uploadedDynamicUi;
+    if (previous.size() != quads.size()) {
+        upload(frame.dynamicUi, quads.constData(), bytes);
+    } else {
+        // Preserve unchanged labels and inactive effects in this image's copy.
+        // Host-coherent memory still requires the image's completion fence.
+        for (qsizetype first = 0; first < quads.size();) {
+            if (previous[first] == quads[first]) { ++first; continue; }
+            qsizetype end = first + 1;
+            while (end < quads.size() && previous[end] != quads[end]) ++end;
+            upload(frame.dynamicUi, quads.constData() + first,
+                   VkDeviceSize(end - first) * sizeof(VulkanQuad), VkDeviceSize(first) * sizeof(VulkanQuad));
+            first = end;
+        }
+    }
+    previous = quads;
 }
 
 void FallingNotesVulkanRenderer::fail(const QString& message)
@@ -161,8 +201,11 @@ void FallingNotesVulkanRenderer::fail(const QString& message)
 void FallingNotesVulkanRenderer::initResources()
 {
     m_failed = false;
+    m_auditResources = qEnvironmentVariableIntValue("MIDI_PLAY_VULKAN_VALIDATE_RESOURCES") != 0;
     m_device = m_window->device();
     m_df = m_window->vulkanInstance()->deviceFunctions(m_device);
+    m_separatePresentQueue = !m_window->vulkanInstance()->supportsPresent(
+        m_window->physicalDevice(), m_window->graphicsQueueFamilyIndex(), m_window);
     m_window->vulkanInstance()->functions()->vkGetPhysicalDeviceMemoryProperties(m_window->physicalDevice(), &m_memoryProperties);
     try {
         VkDescriptorSetLayoutBinding binding {};
@@ -174,20 +217,6 @@ void FallingNotesVulkanRenderer::initResources()
         descriptor.bindingCount = 1;
         descriptor.pBindings = &binding;
         checked(m_df->vkCreateDescriptorSetLayout(m_device, &descriptor, nullptr, &m_descriptorLayout), "descriptor layout");
-        const uint32_t count = uint32_t(m_window->concurrentFrameCount());
-        VkDescriptorPoolSize poolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count};
-        VkDescriptorPoolCreateInfo pool {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        pool.maxSets = count;
-        pool.poolSizeCount = 1;
-        pool.pPoolSizes = &poolSize;
-        checked(m_df->vkCreateDescriptorPool(m_device, &pool, nullptr, &m_descriptorPool), "descriptor pool");
-        for (uint32_t i = 0; i < count; ++i) {
-            VkDescriptorSetAllocateInfo allocation {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-            allocation.descriptorPool = m_descriptorPool;
-            allocation.descriptorSetCount = 1;
-            allocation.pSetLayouts = &m_descriptorLayout;
-            checked(m_df->vkAllocateDescriptorSets(m_device, &allocation, &m_frames[i].descriptor), "descriptor set");
-        }
         VkSamplerCreateInfo sampler {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
         sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -201,7 +230,7 @@ void FallingNotesVulkanRenderer::initResources()
         layout.pPushConstantRanges = &constants;
         checked(m_df->vkCreatePipelineLayout(m_device, &layout, nullptr, &m_layout), "pipeline layout");
         qCInfo(lcVulkan) << "GPU:" << m_window->physicalDeviceProperties()->deviceName
-                        << "frame slots:" << count;
+                        << "frame slots:" << m_window->concurrentFrameCount();
     } catch (const std::exception& error) { fail(QString::fromUtf8(error.what())); }
 }
 
@@ -264,7 +293,7 @@ void FallingNotesVulkanRenderer::createPipeline()
         pipeline.pViewportState = &viewport; pipeline.pRasterizationState = &raster;
         pipeline.pMultisampleState = &samples; pipeline.pDepthStencilState = &depth;
         pipeline.pColorBlendState = &blending; pipeline.pDynamicState = &dynamic;
-        pipeline.layout = m_layout; pipeline.renderPass = m_window->defaultRenderPass();
+        pipeline.layout = m_layout; pipeline.renderPass = m_renderPass;
         checked(m_df->vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &m_pipeline), "graphics pipeline");
     } catch (...) {
         if (vertex) m_df->vkDestroyShaderModule(m_device, vertex, nullptr);
@@ -275,17 +304,97 @@ void FallingNotesVulkanRenderer::createPipeline()
     m_df->vkDestroyShaderModule(m_device, fragment, nullptr);
 }
 
+void FallingNotesVulkanRenderer::createRenderPass()
+{
+    // This 2D renderer has no depth attachment. Explicitly chain the initial
+    // layout transition to Qt's COLOR_ATTACHMENT_OUTPUT acquire-semaphore wait.
+    VkAttachmentDescription color {};
+    color.format = m_window->colorFormat();
+    color.samples = VK_SAMPLE_COUNT_1_BIT;
+    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference colorReference {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorReference;
+    VkSubpassDependency dependency {};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    VkRenderPassCreateInfo info {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    info.attachmentCount = 1;
+    info.pAttachments = &color;
+    info.subpassCount = 1;
+    info.pSubpasses = &subpass;
+    info.dependencyCount = 1;
+    info.pDependencies = &dependency;
+    checked(m_df->vkCreateRenderPass(m_device, &info, nullptr, &m_renderPass), "render pass");
+}
+
 void FallingNotesVulkanRenderer::initSwapChainResources()
 {
     if (m_failed) return;
-    try { createPipeline(); }
+    try {
+        const uint32_t count = uint32_t(m_window->swapChainImageCount());
+        m_images.resize(count);
+        createRenderPass();
+        VkDescriptorPoolSize poolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count};
+        VkDescriptorPoolCreateInfo pool {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool.maxSets = count;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &poolSize;
+        checked(m_df->vkCreateDescriptorPool(m_device, &pool, nullptr, &m_descriptorPool), "descriptor pool");
+        for (uint32_t i = 0; i < count; ++i) {
+            auto& frame = m_images[i];
+            const auto view = m_window->swapChainImageView(int(i));
+            VkFramebufferCreateInfo framebuffer {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            framebuffer.renderPass = m_renderPass;
+            framebuffer.attachmentCount = 1;
+            framebuffer.pAttachments = &view;
+            framebuffer.width = uint32_t(m_window->swapChainImageSize().width());
+            framebuffer.height = uint32_t(m_window->swapChainImageSize().height());
+            framebuffer.layers = 1;
+            checked(m_df->vkCreateFramebuffer(m_device, &framebuffer, nullptr, &frame.framebuffer), "framebuffer");
+            VkDescriptorSetAllocateInfo allocation {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            allocation.descriptorPool = m_descriptorPool;
+            allocation.descriptorSetCount = 1;
+            allocation.pSetLayouts = &m_descriptorLayout;
+            checked(m_df->vkAllocateDescriptorSets(m_device, &allocation, &frame.descriptor), "descriptor set");
+            if (m_auditResources) {
+                VkEventCreateInfo event {VK_STRUCTURE_TYPE_EVENT_CREATE_INFO};
+                checked(m_df->vkCreateEvent(m_device, &event, nullptr, &frame.completionEvent), "completion event");
+            }
+        }
+        qCInfo(lcVulkan) << "Swapchain resource copies:" << count;
+        createPipeline();
+    }
     catch (const std::exception& error) { fail(QString::fromUtf8(error.what())); }
 }
 
 void FallingNotesVulkanRenderer::releaseSwapChainResources()
 {
+    // Qt waits for device work before releasing or recreating the swapchain.
     if (m_pipeline) m_df->vkDestroyPipeline(m_device, m_pipeline, nullptr);
     m_pipeline = VK_NULL_HANDLE;
+    for (auto& frame : m_images) {
+        if (frame.framebuffer) m_df->vkDestroyFramebuffer(m_device, frame.framebuffer, nullptr);
+        destroy(frame.notes); destroy(frame.staticUi); destroy(frame.dynamicUi); destroy(frame.staging);
+        if (frame.imageView) m_df->vkDestroyImageView(m_device, frame.imageView, nullptr);
+        if (frame.image) m_df->vkDestroyImage(m_device, frame.image, nullptr);
+        if (frame.imageMemory) m_df->vkFreeMemory(m_device, frame.imageMemory, nullptr);
+        if (frame.completionEvent) m_df->vkDestroyEvent(m_device, frame.completionEvent, nullptr);
+    }
+    m_images.clear();
+    if (m_renderPass) m_df->vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+    m_renderPass = VK_NULL_HANDLE;
+    if (m_descriptorPool) m_df->vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+    m_descriptorPool = VK_NULL_HANDLE;
 }
 
 void FallingNotesVulkanRenderer::releaseResources()
@@ -293,23 +402,15 @@ void FallingNotesVulkanRenderer::releaseResources()
     if (!m_device) return;
     // Qt waits for its device work before entering resource release callbacks.
     releaseSwapChainResources();
-    for (auto& frame : m_frames) {
-        destroy(frame.notes); destroy(frame.ui); destroy(frame.staging);
-        if (frame.imageView) m_df->vkDestroyImageView(m_device, frame.imageView, nullptr);
-        if (frame.image) m_df->vkDestroyImage(m_device, frame.image, nullptr);
-        if (frame.imageMemory) m_df->vkFreeMemory(m_device, frame.imageMemory, nullptr);
-        frame = {};
-    }
     if (m_sampler) m_df->vkDestroySampler(m_device, m_sampler, nullptr);
     if (m_layout) m_df->vkDestroyPipelineLayout(m_device, m_layout, nullptr);
-    if (m_descriptorPool) m_df->vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     if (m_descriptorLayout) m_df->vkDestroyDescriptorSetLayout(m_device, m_descriptorLayout, nullptr);
     m_sampler = VK_NULL_HANDLE; m_layout = VK_NULL_HANDLE;
     m_descriptorPool = VK_NULL_HANDLE; m_descriptorLayout = VK_NULL_HANDLE;
     m_device = VK_NULL_HANDLE; m_df = nullptr;
 }
 
-void FallingNotesVulkanRenderer::createAtlas(FrameResources& frame)
+void FallingNotesVulkanRenderer::createAtlas(ImageResources& frame)
 {
     VkImageCreateInfo info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     info.imageType = VK_IMAGE_TYPE_2D; info.format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -336,7 +437,7 @@ void FallingNotesVulkanRenderer::createAtlas(FrameResources& frame)
     m_df->vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 }
 
-void FallingNotesVulkanRenderer::uploadAtlas(FrameResources& frame, VkCommandBuffer command)
+void FallingNotesVulkanRenderer::uploadAtlas(ImageResources& frame, VkCommandBuffer command)
 {
     if (frame.atlasRevision == m_scene.atlasRevision()) return;
     if (!frame.image) createAtlas(frame);
@@ -367,46 +468,84 @@ void FallingNotesVulkanRenderer::uploadAtlas(FrameResources& frame, VkCommandBuf
 void FallingNotesVulkanRenderer::draw(VkCommandBuffer command, Buffer& buffer, uint32_t count, uint32_t first)
 {
     if (!count) return;
+    if ((VkDeviceSize(first) + count) * sizeof(VulkanQuad) > buffer.capacity) {
+        fail(QStringLiteral("Vulkan instance range exceeds buffer capacity"));
+        return;
+    }
     const VkDeviceSize offset = 0;
     m_df->vkCmdBindVertexBuffers(command, 0, 1, &buffer.handle, &offset);
     m_df->vkCmdDraw(command, 6, count, 0, first);
 }
 
+void FallingNotesVulkanRenderer::completePresentation()
+{
+    // frameReady() can synchronously report device loss and release resources.
+    if (m_failed || !m_device || !m_df) return;
+    // QVulkanWindow in Qt 6.8 rotates its WSI semaphores by currentFrame(),
+    // independently of acquired image order. Complete the submission/present
+    // queue before another acquire can reuse them (VUID 01779 / 00067).
+    // Qt does not expose a separate present queue, so that uncommon case must
+    // wait for the device. This compatibility boundary intentionally limits
+    // frames in flight; remove only with a validated Qt WSI implementation.
+    const VkResult result = m_separatePresentQueue
+        ? m_df->vkDeviceWaitIdle(m_device)
+        : m_df->vkQueueWaitIdle(m_window->graphicsQueue());
+    if (result != VK_SUCCESS)
+        fail(QStringLiteral("Vulkan queue completion failed: %1").arg(result));
+}
+
 void FallingNotesVulkanRenderer::startNextFrame()
 {
     VkCommandBuffer command = m_window->currentCommandBuffer();
-    auto& frame = m_frames[size_t(m_window->currentFrame())];
     const auto state = m_window->sceneState();
     // A failed or lost device must not receive further render-pass commands.
     // QVulkanWindow still requires frameReady() to release the frame slot.
-    if (m_failed || !m_device || !m_df) {
+    if (m_failed || !m_device || !m_df || m_images.empty()) {
         m_window->frameReady();
         m_window->frameCompleted(false);
         return;
     }
+    // Qt 6.8 waits for this image's draw fence before startNextFrame(). Its
+    // currentFrame() fence belongs to image acquisition, not the last draw
+    // using our buffers. With three images and two frame slots those lifetimes
+    // diverge; per-image ownership prevents host writes racing vertex fetches.
+    const auto imageIndex = size_t(m_window->currentSwapChainImageIndex());
+    auto& frame = m_images.at(imageIndex);
     if (!m_failed) {
         try {
+            if (frame.completionEvent) {
+                if (frame.submitted && m_df->vkGetEventStatus(m_device, frame.completionEvent) != VK_EVENT_SET)
+                    throw std::runtime_error("Vulkan resources reused before previous GPU draw completed");
+                checked(m_df->vkResetEvent(m_device, frame.completionEvent), "reset completion event");
+            }
             m_scene.prepare(state, m_window->size(), m_window->devicePixelRatio(), m_window->sceneFont());
             if (frame.notesRevision != m_scene.notesRevision()) {
                 reserve(frame.notes, VkDeviceSize(m_scene.notes().size()) * sizeof(VulkanQuad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
                 upload(frame.notes, m_scene.notes().constData(), VkDeviceSize(m_scene.notes().size()) * sizeof(VulkanQuad));
                 frame.notesRevision = m_scene.notesRevision();
             }
-            m_ui = m_scene.background();
-            m_ui.append(m_scene.foreground());
-            reserve(frame.ui, VkDeviceSize(m_ui.size()) * sizeof(VulkanQuad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-            upload(frame.ui, m_ui.constData(), VkDeviceSize(m_ui.size()) * sizeof(VulkanQuad));
+            if (frame.staticUiRevision != m_scene.staticUiRevision()) {
+                const auto& quads = m_scene.staticUi().quads;
+                const auto bytes = VkDeviceSize(quads.size()) * sizeof(VulkanQuad);
+                reserve(frame.staticUi, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                upload(frame.staticUi, quads.constData(), bytes);
+                frame.staticUiRevision = m_scene.staticUiRevision();
+            }
+            uploadDynamicUi(frame);
             uploadAtlas(frame, command);
+            qCDebug(lcVulkan) << "Image:" << imageIndex << "frame:" << m_window->currentFrame()
+                << "static revision:" << frame.staticUiRevision << "notes revision:" << frame.notesRevision
+                << "instances (static/dynamic/notes):" << m_scene.staticUi().quads.size()
+                << m_scene.dynamicUi().quads.size() << m_scene.notes().size();
         } catch (const std::exception& error) { fail(QString::fromUtf8(error.what())); }
     }
-    VkClearValue clear[2] {};
-    clear[0].color = {{18.f/255, 20.f/255, 22.f/255, 1}};
-    clear[1].depthStencil = {1, 0};
+    VkClearValue clear {};
+    clear.color = {{18.f/255, 20.f/255, 22.f/255, 1}};
     const QSize physical = m_window->swapChainImageSize();
     VkRenderPassBeginInfo begin {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    begin.renderPass = m_window->defaultRenderPass(); begin.framebuffer = m_window->currentFramebuffer();
+    begin.renderPass = m_renderPass; begin.framebuffer = frame.framebuffer;
     begin.renderArea.extent = {uint32_t(physical.width()), uint32_t(physical.height())};
-    begin.clearValueCount = 2; begin.pClearValues = clear;
+    begin.clearValueCount = 1; begin.pClearValues = &clear;
     m_df->vkCmdBeginRenderPass(command, &begin, VK_SUBPASS_CONTENTS_INLINE);
     if (!m_failed && m_pipeline) {
         const auto& g = m_scene.geometry();
@@ -422,12 +561,23 @@ void FallingNotesVulkanRenderer::startNextFrame()
         m_df->vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
         m_df->vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_layout, 0, 1, &frame.descriptor, 0, nullptr);
         m_df->vkCmdPushConstants(command, m_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(constants), &constants);
-        draw(command, frame.ui, uint32_t(m_scene.background().size()));
+        const auto drawLayer = [&](VulkanUiLayer layer) {
+            const auto base = m_scene.staticUi().range(layer);
+            const auto animated = m_scene.dynamicUi().range(layer);
+            draw(command, frame.staticUi, base.count, base.first);
+            draw(command, frame.dynamicUi, animated.count, animated.first);
+        };
+        drawLayer(VulkanUiLayer::Background);
         draw(command, frame.notes, uint32_t(m_scene.notes().size()));
-        draw(command, frame.ui, uint32_t(m_scene.foreground().size()), uint32_t(m_scene.background().size()));
+        for (size_t layer = size_t(VulkanUiLayer::Strike); layer < size_t(VulkanUiLayer::Count); ++layer)
+            drawLayer(VulkanUiLayer(layer));
     }
     m_df->vkCmdEndRenderPass(command);
+    if (frame.completionEvent)
+        m_df->vkCmdSetEvent(command, frame.completionEvent, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    frame.submitted = true;
     m_window->frameReady();
+    completePresentation();
     m_window->frameCompleted(!m_failed);
 }
 
