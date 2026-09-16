@@ -25,6 +25,7 @@ SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store,
     qRegisterMetaType<midi_play::settings::TitleBarMode>();
     qRegisterMetaType<midi_play::settings::GraphicsMode>();
     qRegisterMetaType<midi_play::settings::ThemeMode>();
+    qRegisterMetaType<midi_play::settings::NoteColorMode>();
 }
 
 QString SettingsService::soundFontPath() const
@@ -45,6 +46,7 @@ void SettingsService::load()
     loadedSettings.titleBarMode = settings::normalizeTitleBarMode(loadedSettings.titleBarMode);
     loadedSettings.graphicsMode = settings::normalizeGraphicsMode(loadedSettings.graphicsMode);
     loadedSettings.themeMode = settings::normalizeThemeMode(loadedSettings.themeMode);
+    loadedSettings.noteColorMode = settings::normalizeNoteColorMode(loadedSettings.noteColorMode);
     loadedSettings.soundFontPathOverride =
         normalizeSoundFontPathOverride(loadedSettings.soundFontPathOverride);
     m_settings = loadedSettings;
@@ -98,6 +100,15 @@ void SettingsService::setThemeMode(settings::ThemeMode mode)
     }
     m_settings.themeMode = normalized;
     emit themeModeChanged(normalized);
+    persistSettings();
+}
+
+void SettingsService::setNoteColorMode(settings::NoteColorMode mode)
+{
+    const auto normalized = settings::normalizeNoteColorMode(mode);
+    if (m_settings.noteColorMode == normalized) return;
+    m_settings.noteColorMode = normalized;
+    emit noteColorModeChanged(normalized);
     persistSettings();
 }
 
@@ -167,9 +178,13 @@ void SettingsService::persistSettings()
     }
 
     QString error;
-    if (!m_store->save(m_settings, &error) && !error.isEmpty()) {
-        emit settingsSaveFailed(error);
+    if (!m_store->save(m_settings, &error)) {
+        emit settingsSaveFailed(error.isEmpty() ? QStringLiteral("无法保存设置") : error);
+        return;
     }
+    // Once a repaired configuration is safely stored, a future settings
+    // dialog must not present the load-time warning as a current error.
+    m_lastLoadWarning.clear();
 }
 
 } // namespace midi_play::app

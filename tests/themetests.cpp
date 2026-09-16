@@ -9,12 +9,14 @@
 #include "presentation/transport/playbackratecontrol.h"
 #include "presentation/visualization/fallingnotesview.h"
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QFrame>
 #include <QLabel>
 #include <QSettings>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <cstdio>
 #include <cstdlib>
@@ -63,7 +65,8 @@ void testPersistence()
     require(restarted.themeMode() == ThemeMode::Light && restarted.showNotationStrip()
                 && restarted.visualizationRefreshRate() == 60,
             "theme selection must survive restart and unrelated preference changes");
-    require(QSettings(path, QSettings::IniFormat).value(QStringLiteral("General/schemaVersion")).toInt() == 6,
+    require(QSettings(path, QSettings::IniFormat).value(QStringLiteral("General/schemaVersion")).toInt()
+                == midi_play::settings::kSettingsSchemaVersion,
             "new settings must persist the current schema");
     {
         ThemeController startup(restarted.themeMode());
@@ -201,6 +204,24 @@ void testRuntimeTheme(const QString& snapshotDirectory)
             require(window.grab().save(path + QStringLiteral("/main-minimum.png")), "minimum size snapshot must save");
             window.resize(normalSize);
             require(dialog.grab().save(path + QStringLiteral("/settings.png")), "settings snapshot must save");
+            settings.setVisualizationRefreshRate(75);
+            auto* errorLabel = dialog.findChild<QLabel*>(QStringLiteral("settingsError"));
+            errorLabel->setText(QStringLiteral("无法保存设置：当前配置目录不可写，请检查目录权限后重试。"));
+            errorLabel->show();
+            dialog.show();
+            QApplication::processEvents();
+            for (auto* control : dialog.findChildren<QWidget*>()) {
+                if (control->isVisibleTo(&dialog) && (qobject_cast<QComboBox*>(control)
+                        || qobject_cast<QAbstractButton*>(control) || qobject_cast<QSpinBox*>(control))) {
+                    require(dialog.rect().contains(QRect(control->mapTo(&dialog, QPoint()), control->size())),
+                            "expanded settings must keep interactive controls inside the dialog");
+                }
+            }
+            require(dialog.grab().save(path + QStringLiteral("/settings-expanded.png")),
+                    "settings with custom refresh rate and an error must save");
+            errorLabel->hide();
+            settings.setVisualizationRefreshRate(60);
+            dialog.hide();
             auto* rate = window.findChild<midi_play::presentation::PlaybackRateControl*>();
             auto* panel = window.findChild<QFrame*>(QStringLiteral("playbackRatePopup"));
             rate->click();

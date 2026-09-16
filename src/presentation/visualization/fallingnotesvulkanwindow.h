@@ -20,6 +20,7 @@ public:
     void setTransportState(midi_play::playback::State state);
     void setShowNotationStrip(bool show);
     void setThemeMode(midi_play::settings::ThemeMode mode);
+    void setNoteColorMode(midi_play::settings::NoteColorMode mode);
     midi_play::visualization::VisualChartPtr chart() const { return m_chart; }
     qint64 positionUs() const noexcept { return m_positionUs; }
     qint64 durationUs() const noexcept { return m_durationUs; }
@@ -48,6 +49,7 @@ private:
     bool m_loading = false;
     bool m_showNotationStrip = false;
     midi_play::settings::ThemeMode m_themeMode = midi_play::settings::kDefaultThemeMode;
+    midi_play::settings::NoteColorMode m_noteColorMode = midi_play::settings::kDefaultNoteColorMode;
     QString m_error;
     QFont m_font;
     const VisualPlaybackClock* m_visualClock = nullptr;

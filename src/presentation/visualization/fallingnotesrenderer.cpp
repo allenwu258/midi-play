@@ -111,7 +111,7 @@ void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
 {
     m_overlayTimeline.setChart(state.chart);
     m_theme = theme::themeFor(state.themeMode).visualization;
-    m_noteRenderCache.prepare(state.chart, geometry, state.themeMode);
+    m_noteRenderCache.prepare(state.chart, geometry, state.themeMode, state.noteColorMode);
     if (m_keyboardGeometryBuildCount != m_noteRenderCache.geometryBuildCount()) {
         m_keyboardGeometryBuildCount = m_noteRenderCache.geometryBuildCount();
         m_pitchBandRects.clear();

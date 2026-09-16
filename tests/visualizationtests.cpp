@@ -234,24 +234,24 @@ void testNoteRenderCache()
     const auto geometry = SceneLayoutEngine().layout(QSizeF(960.0, 640.0), chart.get(), 5'000'000);
 
     NoteRenderCache cache;
-    cache.prepare(chart, geometry);
+    cache.prepare(chart, geometry, midi_play::settings::ThemeMode::Dark, midi_play::settings::NoteColorMode::Normal);
     require(cache.chartBuildCount() == 1 && cache.geometryBuildCount() == 1,
             "initial render preparation must build chart and geometry caches once");
     require(cache.notes().size() == chart->notes().size(),
             "render cache must keep one direct record per projected note");
-    require(cache.styles().size() == 1,
-            "identical repeated notes must share one immutable render style");
+    require(cache.styles().size() == 2 && cache.note(0)->styleIndex != cache.note(1)->styleIndex,
+            "distinct pitches need distinct styles, even when they shared the old register bucket");
     require(cache.note(0) && cache.note(0)->validGeometry && cache.note(0)->width > 0.0,
             "render cache must precompute valid horizontal note geometry");
     require(cache.note(0)->styleIndex == cache.note(2)->styleIndex,
             "repeat instances with equal style inputs must reuse the same style");
 
-    cache.prepare(chart, geometry);
+    cache.prepare(chart, geometry, midi_play::settings::ThemeMode::Dark, midi_play::settings::NoteColorMode::Normal);
     require(cache.chartBuildCount() == 1 && cache.geometryBuildCount() == 1,
             "stable chart and layout must not rebuild render caches per frame");
     const auto resizedGeometry = SceneLayoutEngine().layout(
         QSizeF(1'080.0, 640.0), chart.get(), 5'000'000);
-    cache.prepare(chart, resizedGeometry);
+    cache.prepare(chart, resizedGeometry, midi_play::settings::ThemeMode::Dark, midi_play::settings::NoteColorMode::Normal);
     require(cache.chartBuildCount() == 1 && cache.geometryBuildCount() == 2,
             "resize must rebuild only horizontal geometry, not immutable styles");
 }
@@ -281,7 +281,7 @@ void testNoteRenderCacheStaticFlags()
     const auto chart = PlaybackVisualizationProjector().project(document, 1);
     const auto geometry = SceneLayoutEngine().layout(QSizeF(800.0, 600.0), chart.get(), 5'000'000);
     NoteRenderCache cache;
-    cache.prepare(chart, geometry);
+    cache.prepare(chart, geometry, midi_play::settings::ThemeMode::Dark, midi_play::settings::NoteColorMode::Normal);
 
     const auto* prepared = cache.note(0);
     const auto* style = cache.styleForNote(0);

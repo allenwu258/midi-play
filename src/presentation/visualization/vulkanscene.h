@@ -4,6 +4,7 @@
 #include "domain/visualization/playbackscenestate.h"
 #include "domain/visualization/visiblenoteindex.h"
 #include "domain/visualization/visiblenotewindowcache.h"
+#include "presentation/theme/apptheme.h"
 #include "noteframestate.h"
 #include "playbackoverlaytimeline.h"
 #include "textlayoutcache.h"
@@ -101,6 +102,7 @@ private:
     bool m_atlasFull = false;
     quint64 m_atlasRevision = 0;
     quint64 m_notesRevision = 0;
+    quint64 m_consumedMaterialRevision = 0;
     quint64 m_staticUiRevision = 0;
     qint64 m_timeOriginUs = 0;
     qsizetype m_visibleNoteCount = 0;

@@ -29,6 +29,7 @@ namespace {
 using namespace midi_play;
 using namespace midi_play::presentation::visualization;
 using midi_play::settings::ThemeMode;
+using midi_play::settings::NoteColorMode;
 
 void require(bool condition, const char* message)
 {
@@ -206,10 +207,11 @@ visualization::VisualChartPtr denseChart()
 
 QImage renderRaster(const visualization::VisualChartPtr& chart, qint64 time, QSize size, qreal dpr = 1,
                     FallingNotesRenderer* reusedRenderer = nullptr, bool showNotationStrip = false,
-                    ThemeMode mode = ThemeMode::Dark)
+                    ThemeMode mode = ThemeMode::Dark, NoteColorMode colors = NoteColorMode::Normal)
 {
     visualization::PlaybackSceneState state;
     state.themeMode = mode;
+    state.noteColorMode = colors;
     state.chart = chart;
     state.transportPositionUs = time;
     state.transportState = playback::State::Playing;
@@ -458,6 +460,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
         window.setTransportPosition((qint64(presentedFrames) * 250'000) % chart->durationUs(), chart->durationUs());
         window.setShowNotationStrip((presentedFrames / 60) % 2 != 0);
         window.setThemeMode((presentedFrames / 90) % 2 ? ThemeMode::Light : ThemeMode::Dark);
+        window.setNoteColorMode((presentedFrames / 45) % 2 ? NoteColorMode::Vivid : NoteColorMode::Normal);
     });
     while (presentedFrames < 900 && !failed && timer.elapsed() < 30'000) {
         QApplication::processEvents();
@@ -477,9 +480,11 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
     int frameCount = 0;
     for (qint64 time = 0; time < chart->durationUs(); time += 250'000) {
         const auto mode = frameCount % 2 ? ThemeMode::Light : ThemeMode::Dark;
+        const auto colors = (frameCount / 2) % 2 ? NoteColorMode::Vivid : NoteColorMode::Normal;
         const auto& theme = presentation::theme::themeFor(mode).visualization;
-        cache.prepare(chart, geometry, mode);
+        cache.prepare(chart, geometry, mode, colors);
         window.setThemeMode(mode);
+        window.setNoteColorMode(colors);
         window.setTransportPosition(time, chart->durationUs());
         const int targetFrame = presentedFrames + 3;
         QElapsedTimer frameTimer;
@@ -528,7 +533,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
 }
 
 void captureVulkan(const visualization::VisualChartPtr& chart, const QString& directory, bool showNotationStrip,
-                   ThemeMode mode)
+                   ThemeMode mode, NoteColorMode colors)
 {
     QVulkanInstance instance;
     require(instance.create(), "Vulkan instance must initialize");
@@ -538,6 +543,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     window.setChart(chart);
     window.setShowNotationStrip(showNotationStrip);
     window.setThemeMode(mode);
+    window.setNoteColorMode(colors);
     window.setTransportPosition(500'000, chart->durationUs());
     window.setTransportState(playback::State::Playing);
     bool failed = false;
@@ -554,7 +560,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     const auto image = window.grab();
     require(!image.isNull(), "Vulkan must return a non-empty rendered frame");
     require(image.save(directory + QStringLiteral("/notes-vulkan.png")), "Vulkan snapshot must save");
-    const auto reference = renderRaster(chart, 500'000, window.size(), window.devicePixelRatio(), nullptr, showNotationStrip, mode);
+    const auto reference = renderRaster(chart, 500'000, window.size(), window.devicePixelRatio(), nullptr, showNotationStrip, mode, colors);
     require(reference.size() == image.size(), "backend comparison must use equal physical dimensions");
     require(reference.save(directory + QStringLiteral("/notes-qt-matched.png")), "matched raster snapshot must save");
     double difference = 0;
@@ -598,7 +604,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
 }
 #endif
 
-void benchmarkRaster(int noteCount, bool pedalTails)
+void benchmarkRaster(int noteCount, bool pedalTails, NoteColorMode colors)
 {
     auto document = basicDocument();
     for (int i = 0; i < noteCount; ++i) {
@@ -613,6 +619,7 @@ void benchmarkRaster(int noteCount, bool pedalTails)
     document.rebuildMeasureGrid();
     const auto chart = visualization::PlaybackVisualizationProjector().project(document, 1);
     visualization::PlaybackSceneState state;
+    state.noteColorMode = colors;
     state.chart = chart;
     state.transportPositionUs = 500'000;
     state.transportState = playback::State::Playing;
@@ -634,8 +641,9 @@ void benchmarkRaster(int noteCount, bool pedalTails)
         if (frame >= 5) samples.push_back(timer.nsecsElapsed() / 1'000'000.0);
     }
     std::sort(samples.begin(), samples.end());
-    std::printf("Qt 1920x1080, %lld candidates%s: p50 %.2f ms, p95 %.2f ms\n",
-                qlonglong(candidates.size()), pedalTails ? " with pedal tails" : "", samples[30], samples[57]);
+    std::printf("Qt 1920x1080 %s, %lld candidates%s: p50 %.2f ms, p95 %.2f ms, p99 %.2f ms\n",
+                colors == NoteColorMode::Vivid ? "vivid" : "normal", qlonglong(candidates.size()),
+                pedalTails ? " with pedal tails" : "", samples[30], samples[57], samples.back());
 }
 
 } // namespace
@@ -678,8 +686,10 @@ int main(int argc, char** argv)
     }
 #endif
     if (args.contains(QStringLiteral("--benchmark"))) {
-        for (int count : {160, 600, 1600}) benchmarkRaster(count, false);
-        benchmarkRaster(600, true);
+        for (auto colors : {NoteColorMode::Normal, NoteColorMode::Vivid}) {
+            for (int count : {160, 600, 1600}) benchmarkRaster(count, false, colors);
+            benchmarkRaster(600, true, colors);
+        }
     }
     const int output = args.indexOf(QStringLiteral("--snapshots"));
     if (output >= 0 && output + 1 < args.size()) {
@@ -689,11 +699,12 @@ int main(int argc, char** argv)
 #if MIDI_PLAY_HAS_VULKAN
         if (args.contains(QStringLiteral("--vulkan"))) {
             for (auto mode : {ThemeMode::Dark, ThemeMode::Light}) {
-                for (bool show : {false, true}) {
+                for (auto colors : {NoteColorMode::Normal, NoteColorMode::Vivid}) for (bool show : {false, true}) {
                     const auto variant = directory + (mode == ThemeMode::Dark ? QStringLiteral("/dark") : QStringLiteral("/light"))
+                        + (colors == NoteColorMode::Normal ? QStringLiteral("/normal") : QStringLiteral("/vivid"))
                         + (show ? QStringLiteral("/notation-shown") : QStringLiteral("/notation-hidden"));
                     require(QDir().mkpath(variant), "theme snapshot directory must be writable");
-                    captureVulkan(chart, variant, show, mode);
+                    captureVulkan(chart, variant, show, mode, colors);
                 }
             }
         }

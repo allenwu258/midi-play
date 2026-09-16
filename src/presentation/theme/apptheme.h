@@ -85,23 +85,10 @@ struct VisualizationColors {
     QColor drumKey, drumKeyBorder, tremolo, loadingVeil, emptyVeil;
 };
 
-struct MaterialLayer {
-    double lightness, velocityLightness, chroma, alpha, velocityAlpha;
-};
-
-struct NoteMaterialProfile {
-    MaterialLayer body, head, tail;
-    // Dark uses the note body/head for keys and the head for glows. Light
-    // separates key highlights from its darker attack edge and uses body glows.
-    bool separateKeyColors = false;
-    MaterialLayer keyFill {}, keyTop {};
-};
-
 struct AppTheme {
     midi_play::settings::ThemeMode mode = midi_play::settings::kDefaultThemeMode;
     WidgetColors widgets;
     VisualizationColors visualization;
-    NoteMaterialProfile notes;
 };
 
 const AppTheme& themeFor(midi_play::settings::ThemeMode mode);

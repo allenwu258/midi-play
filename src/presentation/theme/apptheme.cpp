@@ -101,14 +101,6 @@ AppTheme makeTheme(midi_play::settings::ThemeMode mode)
     v.tremolo = light ? QColor(26, 49, 34, 160) : QColor(255, 255, 255, 110);
     v.loadingVeil = light ? QColor(243, 245, 242, 175) : QColor(10, 11, 12, 118);
     v.emptyVeil = light ? QColor(243, 245, 242, 200) : QColor(10, 11, 12, 148);
-    theme.notes = light
-        ? NoteMaterialProfile {{0.53, 0.045, 0.125, 0.66, 0.12},
-                               {0.40, 0.045, 0.11, 0.88, 0.10},
-                               {0.56, 0, 0.085, 0.22, 0.06}, true,
-                               {0.64, 0, 0.12, 1, 0}, {0.73, 0, 0.12, 1, 0}}
-        : NoteMaterialProfile {{0.69, 0.055, 0.115, 0.43, 0.12},
-                               {0.82, 0.055, 0.09, 0.82, 0.12},
-                               {0.70, 0, 0.08, 0.15, 0.06}, false};
     return theme;
 }
 

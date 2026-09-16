@@ -30,7 +30,9 @@ UI 实例内容与本帧绘制 offset 可能来自不同帧，从而影响整排
 
 层顺序为背景、音符、击键效果、白键、黑键、文字、覆盖层。每层先静态后动态，确保动态白键不会盖住静态黑键。文字留在动态批次，图集回收或字体变化不会使静态琴键的 UV 失效。
 
-主题由共享 `AppTheme` 提供。切换主题会推进静态 UI、音符实例和 CPU 材质版本，动态批次使用同一主题重新生成；清屏颜色也来自当前场景。每张交换链图像在原有 fence 保护下更新自己的缓冲，主题切换不重建窗口、设备或交换链，不清空主题无关的文字 alpha 图集。
+控件、背景及静态琴键主题由共享 `AppTheme` 提供，音符材质由 `NoteAppearance` 根据主题与音符色彩模式共同选择。切换主题会推进静态 UI、音符实例和 CPU 材质版本，动态批次使用同一外观重新生成；清屏颜色来自当前主题。每张交换链图像在原有 fence 保护下更新自己的缓冲，主题切换不重建窗口、设备或交换链，不清空主题无关的文字 alpha 图集。
+
+仅切换普通/鲜明时，`NoteRenderCache` 保留 chart、音符样式索引、时间和几何，只重算去重材质并推进 `materialRevision`。`VulkanScene` 对比已消费的材质版本，重新打包音符实例；动态琴键及光晕同步使用新材质，静态 UI 和文字图集保持原版本。两种模式共用包含精确音高、轨道、声部、有效力度、ghost 与 percussion 的样式键，避免不同音级错误共用颜色。OKLCH 转换仅在材质创建/失效时执行，GLSL 与既有 GPU 同步机制保持不变。
 
 ## 验证
 
@@ -44,6 +46,6 @@ $env:VK_LAYER_VALIDATE_SYNC = '1'
 .\build\visual-polish-release\Release\midi_play_presentation_tests.exe --vulkan-smoke
 ```
 
-`--vulkan-stress` 默认生成 4,096 个音符，先在 2560×1440 逻辑尺寸下连续呈现至少 900 帧，期间交替切换主题和简谱显隐；再缩放并按时间采样每个琴键的内部像素，与共享音符状态计算出的颜色比较，采样也交替使用深浅主题。提供 `--midi` 时使用指定乐曲的完整时间范围。测试启用 GPU completion event 审计，有验证层时启用该层，任何收到的 validation error 都会使测试失败。`--snapshots ... --vulkan` 输出两套主题和简谱显隐的组合截图，并比较 Qt/Vulkan 的音符与琴键颜色。
+`--vulkan-stress` 默认生成 4,096 个音符，先在 2560×1440 逻辑尺寸下连续呈现至少 900 帧，期间交替切换主题、普通/鲜明和简谱显隐；再缩放并按时间采样每个琴键的内部像素，与共享音符状态计算出的颜色比较，采样也交替使用两套主题与两种配色。提供 `--midi` 时使用指定乐曲的完整时间范围。测试启用 GPU completion event 审计，有验证层时启用该层，任何收到的 validation error 都会使测试失败。设置 `VK_LAYER_VALIDATE_SYNC=1` 可同时启用同步验证。`--snapshots ... --vulkan` 输出两套主题 × 两种配色 × 简谱显隐 × 两种后端的 16 张对照截图，并比较 Qt/Vulkan 的音符与琴键颜色。
 
 `MIDI_PLAY_VULKAN_VALIDATE_RESOURCES=1` 可单独启用资源复用审计；`QT_LOGGING_RULES=midi_play.vulkan.debug=true` 可查看图像/帧编号、缓存 revision、实例数量和缓冲容量。发行版默认不启用逐帧诊断。

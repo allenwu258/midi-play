@@ -63,6 +63,14 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         midi_play::settings::themeModePersistentValue(midi_play::settings::kDefaultThemeMode))
         .toInt(&themeConversionOk);
     result.themeMode = midi_play::settings::themeModeFromPersistentValue(themeValue);
+    const bool hasNoteColorMode = file.contains(QStringLiteral("General/noteColorMode"));
+    bool noteColorConversionOk = false;
+    const int noteColorValue = file.value(QStringLiteral("General/noteColorMode"),
+        midi_play::settings::noteColorModePersistentValue(midi_play::settings::kDefaultNoteColorMode))
+        .toInt(&noteColorConversionOk);
+    result.noteColorMode = noteColorConversionOk
+        ? midi_play::settings::noteColorModeFromPersistentValue(noteColorValue)
+        : midi_play::settings::kDefaultNoteColorMode;
 
     const bool hasTitleBarMode = file.contains(QStringLiteral("General/titleBarMode"));
     const QVariant titleBarModeValue = file.value(QStringLiteral("General/titleBarMode"),
@@ -102,6 +110,12 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         const auto message = QStringLiteral("设置文件中的主题无效，已回退到深色主题");
         *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
     }
+    if (hasNoteColorMode
+        && (!noteColorConversionOk || !midi_play::settings::isValidNoteColorMode(noteColorValue))
+        && warning) {
+        const auto message = QStringLiteral("设置文件中的音符色彩模式无效，已回退到鲜明模式");
+        *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
+    }
     return result;
 }
 
@@ -130,6 +144,8 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
     file.setValue(QStringLiteral("General/showNotationStrip"), settings.showNotationStrip);
     file.setValue(QStringLiteral("General/themeMode"),
                   midi_play::settings::themeModePersistentValue(settings.themeMode));
+    file.setValue(QStringLiteral("General/noteColorMode"),
+                  midi_play::settings::noteColorModePersistentValue(settings.noteColorMode));
     file.setValue(QStringLiteral("General/titleBarMode"),
                   midi_play::settings::titleBarModePersistentValue(settings.titleBarMode));
     if (settings.soundFontPathOverride.isEmpty()) {

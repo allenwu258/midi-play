@@ -3,6 +3,7 @@
 #include "titlebarmode.h"
 #include "graphicsmode.h"
 #include "thememode.h"
+#include "notecolormode.h"
 
 #include <QString>
 #include <QtGlobal>
@@ -18,7 +19,7 @@ inline constexpr int kMaximumPlaybackRatePercent = 200;
 inline constexpr int kMinimumVisualizationRefreshRate = 1;
 inline constexpr int kMaximumVisualizationRefreshRate = 1000;
 inline constexpr bool kDefaultShowNotationStrip = false;
-inline constexpr int kSettingsSchemaVersion = 6;
+inline constexpr int kSettingsSchemaVersion = 7;
 
 struct PlayerSettings {
     int schemaVersion = kSettingsSchemaVersion;
@@ -26,6 +27,7 @@ struct PlayerSettings {
     GraphicsMode graphicsMode = kDefaultGraphicsMode;
     bool showNotationStrip = kDefaultShowNotationStrip;
     ThemeMode themeMode = kDefaultThemeMode;
+    NoteColorMode noteColorMode = kDefaultNoteColorMode;
     TitleBarMode titleBarMode = kDefaultTitleBarMode;
     // Empty means that the bundled default SoundFont follows the application.
     QString soundFontPathOverride;

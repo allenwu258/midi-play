@@ -48,6 +48,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：原生标题栏为默认值；Windows 提供“自定义标题栏（实验）”，macOS/Linux 当前仅使用原生标题栏。
 - **深色 / 浅色主题**：设置中切换并自动保存；两套主题同时覆盖控件、下落音符和琴键，兼容传统 Qt 与 Vulkan 绘制。
+- **普通 / 鲜明音符色彩**：默认鲜明，使用协调色系呈现同轨音符的色彩层次；普通保留原有柔和配色。设置立即生效并持久化，两种渲染模式共享材质。
 - **异步导入**：MusicXML/MIDI 解析和可视化投影在 QtConcurrent 工作线程中执行，避免阻塞界面线程。
 - **可诊断性**：提供音频、MIDI reader、离屏渲染和普通文件解析 smoke test 入口。
 
@@ -209,6 +210,7 @@ cmake --build --preset windows-msvc-debug
 设置窗口提供：
 
 - **界面主题**：深色（默认）或浅色。选择立即生效并自动保存，重启后恢复；切换不改变播放位置、速度或音源；
+- **音符色彩**：鲜明（默认）或普通，与界面主题独立。鲜明按轨道色系、音高及打击乐类别提供稳定的协调配色，普通保留 v0.3.3 的视觉效果；修改立即生效并自动保存；
 - **视觉刷新率**：30 FPS、60 FPS、120 FPS 或“自定义”；
 - **图形模式**：传统 Qt 绘制或 Vulkan（实验）；未包含 Vulkan 的构建只提供传统模式；
 - **显示简谱条**：默认关闭。关闭时移除琴键上方的简谱条及黄色判定线，音符在琴键顶部判定；开启后恢复简谱条和黄线。修改立即生效并自动保存，两种图形模式行为一致；
@@ -241,8 +243,9 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 
 | 配置键 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| General/schemaVersion | int | 6 | 设置结构版本 |
+| General/schemaVersion | int | 7 | 设置结构版本 |
 | General/themeMode | int | 0 | 0 为深色；1 为浅色；旧配置缺失或无效时回退深色 |
+| General/noteColorMode | int | 1 | 0 为普通；1 为鲜明；缺失或无效时回退鲜明，不重置其他偏好 |
 | General/visualizationRefreshRate | int | 60 | 有效范围 1..1000，界面提供常用预设和自定义输入 |
 | General/graphicsMode | int | 0 | 0 为传统 Qt 绘制；1 为 Vulkan（实验） |
 | General/showNotationStrip | bool | false | 是否显示简谱条；缺少此配置键的旧版配置也默认隐藏 |
@@ -250,6 +253,8 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 | Audio/soundFontPath | string | 空 | 空值表示使用随程序提供的默认音源 |
 
 刷新率使用整数保存，便于高级用户直接编辑配置文件。无效值会回退到默认值，并通过设置加载警告提示。
+
+升级后，旧配置缺少音符色彩项时默认使用鲜明；希望沿用原有外观可在设置中选择普通。读取默认值不会主动写入配置。保存失败会在设置窗口提示，当前会话保留所选外观，重启时仍以实际保存的配置为准。
 
 自定义音源的行为：
 
@@ -304,6 +309,14 @@ $midiPlayCliExe = 'dist/midi-play-windows-x64/midi_play_cli.exe'
 参数依次为：输入文件、输出 PNG、播放位置（微秒）、输出宽度和输出高度。播放位置、宽度和高度可以省略；默认播放位置为歌曲时长的十分之一，默认尺寸为 1280x720。
 
 可在末尾添加 `--theme dark` 或 `--theme light` 指定截图主题；省略时固定使用深色，不读取桌面应用的用户设置，便于重复比较。主题架构和验收范围见 [主题开发方案](docs/theme-development-plan.md)。
+
+音符色彩使用 `--note-colors normal` 或 `--note-colors vivid`，省略时固定为鲜明，可与主题参数组合。对比 v0.3.3 时须显式传入 `normal`；参数缺值、非法或重复时返回错误码 2，截图命令不改写用户偏好。
+
+```powershell
+& $midiPlayCliExe --render-test 'path/to/example.mid' 'build/vivid.png' 10000000 1280 720 --theme light --note-colors vivid
+```
+
+共享材质、音高配色和缓存设计见 [音符色彩模式方案及实施记录](docs/note-color-modes-development-plan.md)。
 
 ## 架构概览
 
@@ -382,6 +395,8 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 
 - presentation_backend_configuration：真实呈现层的后端编译边界、状态更新、传统渲染及模式设置；
 - theme_persistence_and_runtime：主题默认值与旧配置兼容、保存失败、运行时窗口状态保持及高 DPI 图标；
+- note_color_modes：默认鲜明、旧配置迁移、损坏值与保存失败、设置联动、音级/打击乐映射、材质缓存失效及双后端版本传播；
+- note_visual_semantics_and_rendering：音符语义、方角几何、踏板尾迹、动画及共享渲染；提供双后端截图、连续 Vulkan 压力和光栅性能诊断入口；
 - soundfont_inspector：SoundFont 内容和格式检查；
 - visualization_domain：可视化投影、时间窗口、区间索引和场景数据；
 - playback_session_transport：播放、暂停、停止、seek、事件代际和 transport 状态。
@@ -403,7 +418,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | SoundFont | 默认 SF2 可加载，自定义 SF2/SF3 可切换，失败时显示错误并保留可恢复状态 |
 | 节拍器 | 小节首拍重音、变速同步，暂停和停止无声，关闭不截断钢琴音，切换音源后仍能发声 |
 | 简谱条显隐 | 默认隐藏简谱条和黄线，音符在琴键顶部判定；播放和暂停时切换立即生效，切换图形模式后保持选择 |
-| 设置持久化 | 重启后主题、刷新率、图形模式、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
+| 设置持久化 | 重启后主题、音符色彩、刷新率、图形模式、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
 | Release 部署 | exe、Qt 平台插件、FluidSynth DLL 和 assets/midisound.sf2 均可找到 |
 
 自动测试不替代人工听音验收；音频设备、系统音量和 FluidSynth 驱动初始化仍需在目标机器上确认。

@@ -1,9 +1,10 @@
 #pragma once
 
 #include "domain/visualization/visualchart.h"
-#include "presentation/theme/apptheme.h"
+#include "noteappearance.h"
 
 #include <QColor>
+#include <QHashFunctions>
 
 namespace midi_play::presentation::visualization {
 
@@ -19,11 +20,28 @@ struct NoteMaterial {
     float energy = 0.0f;
 };
 
-quint64 noteMaterialKey(const midi_play::visualization::VisualNote& note);
+// Both color modes use this full identity, so recoloring never changes the
+// mapping from notes to styles. Every input affecting material must be covered.
+struct NoteStyleKey {
+    int trackIndex;
+    int pitch;
+    int voiceTint;
+    int velocityBucket;
+    bool ghost;
+    bool percussion;
+    bool operator==(const NoteStyleKey&) const = default;
+};
+
+inline size_t qHash(const NoteStyleKey& key, size_t seed = 0) noexcept
+{
+    return qHashMulti(seed, key.trackIndex, key.pitch, key.voiceTint,
+                      key.velocityBucket, key.ghost, key.percussion);
+}
+
+NoteStyleKey noteMaterialKey(const midi_play::visualization::VisualNote& note);
 NoteMaterial makeNoteMaterial(const midi_play::visualization::VisualChart& chart,
                               const midi_play::visualization::VisualNote& note,
-                              const theme::NoteMaterialProfile& profile =
-                                  theme::themeFor(midi_play::settings::kDefaultThemeMode).notes);
+                              const NoteAppearance& appearance = noteAppearanceFor());
 
 // Shared geometry/material constants; matching GLSL formulas live in note.*.
 inline constexpr qreal kNoteMinimumHeight = 4.0;

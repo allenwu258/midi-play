@@ -2,6 +2,7 @@
 
 #include "domain/playback/playbacktypes.h"
 #include "domain/settings/thememode.h"
+#include "domain/settings/notecolormode.h"
 #include "visualchart.h"
 
 #include <span>
@@ -29,6 +30,7 @@ struct PlaybackSceneState {
     bool loading = false;
     bool showNotationStrip = false;
     settings::ThemeMode themeMode = settings::kDefaultThemeMode;
+    settings::NoteColorMode noteColorMode = settings::kDefaultNoteColorMode;
     QString errorMessage;
 };
 

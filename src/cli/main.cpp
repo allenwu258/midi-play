@@ -30,7 +30,7 @@ void printUsage(FILE* stream)
         "Usage: midi_play_cli <musicxml|mxl|mid|midi|kar file>\n"
         "       midi_play_cli --audio-test <sf2|sf3 file> [replacement SoundFont]\n"
         "       midi_play_cli --midi-test <MIDI file>\n"
-        "       midi_play_cli --render-test <music file> <output.png> [position_us [width [height]]] [--theme dark|light]\n"
+        "       midi_play_cli --render-test <music file> <output.png> [position_us [width [height]]] [--theme dark|light] [--note-colors normal|vivid]\n"
         "       midi_play_cli --help\n",
         stream);
 }
@@ -86,6 +86,7 @@ int runMidiTest(const QString& inputPath)
 int runRenderTest(QStringList arguments)
 {
     auto mode = midi_play::settings::kDefaultThemeMode;
+    auto colorMode = midi_play::settings::kDefaultNoteColorMode;
     const int themeArgument = arguments.indexOf(QStringLiteral("--theme"));
     if (themeArgument >= 0) {
         const QString value = arguments.value(themeArgument + 1);
@@ -98,6 +99,19 @@ int runRenderTest(QStringList arguments)
             ? midi_play::settings::ThemeMode::Light : midi_play::settings::ThemeMode::Dark;
         arguments.removeAt(themeArgument + 1);
         arguments.removeAt(themeArgument);
+    }
+    const int colorArgument = arguments.indexOf(QStringLiteral("--note-colors"));
+    if (colorArgument >= 0) {
+        const QString value = arguments.value(colorArgument + 1);
+        if (colorArgument < 4 || arguments.count(QStringLiteral("--note-colors")) != 1
+            || (value != QStringLiteral("normal") && value != QStringLiteral("vivid"))) {
+            qCritical() << "--note-colors requires exactly one value: normal or vivid";
+            return 2;
+        }
+        colorMode = value == QStringLiteral("normal")
+            ? midi_play::settings::NoteColorMode::Normal : midi_play::settings::NoteColorMode::Vivid;
+        arguments.removeAt(colorArgument + 1);
+        arguments.removeAt(colorArgument);
     }
     if (arguments.size() < 4 || arguments.size() > 7) {
         printUsage(stderr);
@@ -129,6 +143,7 @@ int runRenderTest(QStringList arguments)
         ? arguments.at(4).toLongLong() : chart->durationUs() / 10;
     midi_play::visualization::PlaybackSceneState state;
     state.themeMode = mode;
+    state.noteColorMode = colorMode;
     state.chart = chart;
     state.durationUs = chart->durationUs();
     state.transportPositionUs = std::clamp<qint64>(requestedPosition, 0, chart->durationUs());

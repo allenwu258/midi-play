@@ -118,6 +118,7 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/domain/settings/playersettings.cpp
     src/domain/settings/graphicsmode.h
     src/domain/settings/thememode.h
+    src/domain/settings/notecolormode.h
     src/domain/settings/titlebarmode.h
     src/infrastructure/musicxml/musicxmlreader.h
     src/infrastructure/musicxml/musicxmlreader.cpp
@@ -178,6 +179,10 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/visualization/noterendercache.cpp
     src/presentation/visualization/notematerial.h
     src/presentation/visualization/notematerial.cpp
+    src/presentation/visualization/noteappearance.h
+    src/presentation/visualization/noteappearance.cpp
+    src/presentation/visualization/notecolorpalette.h
+    src/presentation/visualization/notecolorpalette.cpp
     src/presentation/visualization/noteframestate.h
     src/presentation/visualization/noteframestate.cpp
     src/presentation/visualization/noterastercache.h
@@ -288,6 +293,13 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_note_color_tests tests/notecolortests.cpp)
+    target_link_libraries(midi_play_note_color_tests PRIVATE midi_play_core)
+    add_test(NAME note_color_modes COMMAND midi_play_note_color_tests -platform offscreen)
+    if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        set_tests_properties(note_color_modes PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+    endif()
     add_executable(midi_play_theme_tests tests/themetests.cpp)
     target_link_libraries(midi_play_theme_tests PRIVATE midi_play_core)
     add_test(NAME theme_persistence_and_runtime COMMAND midi_play_theme_tests -platform offscreen)
@@ -363,6 +375,10 @@ if (BUILD_TESTING)
         src/presentation/visualization/noterendercache.cpp
         src/presentation/visualization/notematerial.h
         src/presentation/visualization/notematerial.cpp
+        src/presentation/visualization/noteappearance.h
+        src/presentation/visualization/noteappearance.cpp
+        src/presentation/visualization/notecolorpalette.h
+        src/presentation/visualization/notecolorpalette.cpp
         src/presentation/visualization/noteframestate.h
         src/presentation/visualization/noteframestate.cpp
         src/presentation/visualization/noterastercache.h

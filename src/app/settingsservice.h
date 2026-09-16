@@ -23,6 +23,7 @@ public:
     settings::GraphicsMode graphicsMode() const noexcept { return m_settings.graphicsMode; }
     bool showNotationStrip() const noexcept { return m_settings.showNotationStrip; }
     settings::ThemeMode themeMode() const noexcept { return m_settings.themeMode; }
+    settings::NoteColorMode noteColorMode() const noexcept { return m_settings.noteColorMode; }
     const QString& lastLoadWarning() const noexcept { return m_lastLoadWarning; }
     settings::TitleBarMode titleBarMode() const noexcept { return m_settings.titleBarMode; }
     const QString& defaultSoundFontPath() const noexcept { return m_defaultSoundFontPath; }
@@ -36,6 +37,7 @@ public slots:
     void setGraphicsMode(settings::GraphicsMode mode);
     void setShowNotationStrip(bool show);
     void setThemeMode(settings::ThemeMode mode);
+    void setNoteColorMode(settings::NoteColorMode mode);
     void setTitleBarMode(settings::TitleBarMode mode);
     void setSoundFontPath(const QString& path);
     void resetSoundFontPath();
@@ -45,6 +47,7 @@ signals:
     void graphicsModeChanged(midi_play::settings::GraphicsMode mode);
     void showNotationStripChanged(bool show);
     void themeModeChanged(midi_play::settings::ThemeMode mode);
+    void noteColorModeChanged(midi_play::settings::NoteColorMode mode);
     void titleBarModeChanged(midi_play::settings::TitleBarMode mode);
     void soundFontPathChanged(const QString& path, bool usesDefault);
     void settingsLoadWarning(const QString& message);

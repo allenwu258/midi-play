@@ -39,6 +39,7 @@ namespace {
 
 using midi_play::settings::GraphicsMode;
 using midi_play::settings::ThemeMode;
+using midi_play::settings::NoteColorMode;
 using midi_play::playback::State;
 using midi_play::presentation::visualization::FallingNotesView;
 
@@ -367,6 +368,7 @@ void testVulkanSwitching()
     const auto traditional = capture(view);
     for (int cycle = 0; cycle < 2; ++cycle) {
         view.setThemeMode(ThemeMode::Light);
+        view.setNoteColorMode(NoteColorMode::Normal);
         view.setShowNotationStrip(true);
         view.setGraphicsMode(GraphicsMode::VulkanExperimental);
         FallingNotesVulkanWindow* window = nullptr;
@@ -376,6 +378,8 @@ void testVulkanSwitching()
         require(window != nullptr, "Vulkan selection must create a Vulkan window");
         require(window->sceneState().themeMode == ThemeMode::Light,
                 "a new backend must inherit the selected theme");
+        require(window->sceneState().noteColorMode == NoteColorMode::Normal,
+                "a new backend must inherit a non-default note color mode");
         require(window->sceneState().showNotationStrip, "backend creation must retain the notation preference");
         int frames = 0;
         bool failed = false;
@@ -395,6 +399,10 @@ void testVulkanSwitching()
         const auto lightImage = window->grab();
         const auto windowId = window->winId();
         const auto device = window->device();
+        view.setNoteColorMode(NoteColorMode::Vivid);
+        const auto vividImage = window->grab();
+        require(vividImage != lightImage && window->device() == device && window->winId() == windowId,
+                "color mode changes must recolor the existing GPU window without replacing its device");
         view.setThemeMode(ThemeMode::Dark);
         const auto darkImage = window->grab();
         require(lightImage != darkImage && window->sceneState().transportPositionUs == 600'000

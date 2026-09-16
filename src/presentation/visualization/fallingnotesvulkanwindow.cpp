@@ -623,6 +623,14 @@ void FallingNotesVulkanWindow::setThemeMode(midi_play::settings::ThemeMode mode)
     requestUpdate();
 }
 
+void FallingNotesVulkanWindow::setNoteColorMode(midi_play::settings::NoteColorMode mode)
+{
+    const auto normalized = midi_play::settings::normalizeNoteColorMode(mode);
+    if (m_noteColorMode == normalized) return;
+    m_noteColorMode = normalized;
+    requestUpdate();
+}
+
 midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneState() const
 {
     midi_play::visualization::PlaybackSceneState result;
@@ -634,6 +642,7 @@ midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneStat
     result.loading = m_loading;
     result.showNotationStrip = m_showNotationStrip;
     result.themeMode = m_themeMode;
+    result.noteColorMode = m_noteColorMode;
     result.errorMessage = m_error;
     result.updateVisibleWindow();
     return result;

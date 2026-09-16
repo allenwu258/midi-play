@@ -32,13 +32,14 @@ struct PreparedNoteRenderData {
 };
 
 // Presentation data derived from a VisualChart. Styles are deduplicated by
-// identity/register/velocity/ghost state and recolored independently of note
+// identity/pitch/voice/velocity/ghost/percussion state and recolored independently of note
 // timing and X geometry. Geometry is rebuilt only when the scene layout changes.
 class NoteRenderCache final {
 public:
     void prepare(const midi_play::visualization::VisualChartPtr& chart,
                  const PlaybackSceneGeometry& geometry,
-                 midi_play::settings::ThemeMode mode = midi_play::settings::kDefaultThemeMode);
+                 midi_play::settings::ThemeMode mode = midi_play::settings::kDefaultThemeMode,
+                 midi_play::settings::NoteColorMode colors = midi_play::settings::kDefaultNoteColorMode);
     void clear();
 
     const QVector<NoteRenderStyle>& styles() const { return m_styles; }
@@ -50,6 +51,7 @@ public:
     quint64 chartBuildCount() const { return m_chartBuildCount; }
     quint64 geometryBuildCount() const { return m_geometryBuildCount; }
     quint64 materialRevision() const { return m_materialRevision; }
+    const NoteAppearance& appearance() const { return *m_appearance; }
 
 private:
     void rebuildChart(const midi_play::visualization::VisualChartPtr& chart);
@@ -64,7 +66,7 @@ private:
     quint64 m_chartBuildCount = 0;
     quint64 m_geometryBuildCount = 0;
     quint64 m_materialRevision = 0;
-    midi_play::settings::ThemeMode m_themeMode = midi_play::settings::kDefaultThemeMode;
+    const NoteAppearance* m_appearance = &noteAppearanceFor();
 };
 
 } // namespace midi_play::presentation::visualization

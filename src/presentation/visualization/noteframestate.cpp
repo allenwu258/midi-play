@@ -78,7 +78,9 @@ void NoteFrameState::prepare(const midi_play::visualization::PlaybackSceneState&
         if (key && strength >= key->strength) *key = {index, strength, attack};
     }
     const qreal sceneArea = std::max<qreal>(1, geometry.pianoRect.width() * geometry.fallingRect.height());
-    m_bodyOpacity = std::clamp(1.0 / (1 + area / sceneArea * 0.42), 0.52, 1.0);
+    const auto& appearance = cache.appearance();
+    m_bodyOpacity = std::clamp(1.0 / (1 + area / sceneArea * appearance.densityFalloff),
+                               appearance.minimumBodyOpacity, 1.0);
     if (!playing) return;
     const auto appendGlow = [&](const KeyIllumination& key, qreal x, qreal width) {
         if (key.noteIndex < 0 || m_glows.size() >= 96) return;

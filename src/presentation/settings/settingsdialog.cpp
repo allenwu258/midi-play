@@ -31,7 +31,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     setWindowTitle(QStringLiteral("设置"));
     setWindowFlag(Qt::Window, true);
     setModal(false);
-    resize(520, 340);
+    resize(520, 380);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(18, 16, 18, 14);
@@ -52,6 +52,16 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     m_themeCombo->addItem(QStringLiteral("浅色"), int(midi_play::settings::ThemeMode::Light));
     m_themeCombo->setToolTip(QStringLiteral("修改立即生效并自动保存。"));
     form->addRow(QStringLiteral("界面主题"), m_themeCombo);
+
+    m_noteColorCombo = new QComboBox(this);
+    m_noteColorCombo->setObjectName(QStringLiteral("noteColorModeCombo"));
+    m_noteColorCombo->setAccessibleName(QStringLiteral("音符色彩"));
+    m_noteColorCombo->addItem(QStringLiteral("鲜明"),
+        midi_play::settings::noteColorModePersistentValue(midi_play::settings::NoteColorMode::Vivid));
+    m_noteColorCombo->addItem(QStringLiteral("普通"),
+        midi_play::settings::noteColorModePersistentValue(midi_play::settings::NoteColorMode::Normal));
+    m_noteColorCombo->setToolTip(QStringLiteral("鲜明模式使用协调的多层次配色；普通模式保持柔和、统一的轨道配色。修改立即生效并自动保存。"));
+    form->addRow(QStringLiteral("音符色彩"), m_noteColorCombo);
 
     m_refreshRateCombo = new QComboBox(this);
     m_refreshRateCombo->setObjectName(QStringLiteral("refreshRateCombo"));
@@ -157,6 +167,14 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         });
         connect(m_settingsService, &app::SettingsService::themeModeChanged,
                 this, &SettingsDialog::updateThemeSelection);
+        updateNoteColorSelection(m_settingsService->noteColorMode());
+        connect(m_noteColorCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
+            m_errorLabel->hide();
+            m_settingsService->setNoteColorMode(
+                midi_play::settings::noteColorModeFromPersistentValue(m_noteColorCombo->currentData().toInt()));
+        });
+        connect(m_settingsService, &app::SettingsService::noteColorModeChanged,
+                this, &SettingsDialog::updateNoteColorSelection);
         if (!themeController)
             connect(m_settingsService, &app::SettingsService::themeModeChanged, this, &SettingsDialog::applyTheme);
         m_customRefreshRateSpinBox->setValue(m_settingsService->visualizationRefreshRate());
@@ -206,6 +224,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         }
     } else {
         m_themeCombo->setEnabled(false);
+        m_noteColorCombo->setEnabled(false);
         m_refreshRateCombo->setEnabled(false);
         m_titleBarModeCombo->setEnabled(false);
         m_graphicsModeCombo->setEnabled(false);
@@ -216,6 +235,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         m_loadSoundFontButton->setEnabled(false);
         m_resetSoundFontButton->setEnabled(false);
     }
+    resize(size().expandedTo(sizeHint()));
 }
 
 void SettingsDialog::applyRefreshRateFromUi()
@@ -357,6 +377,13 @@ void SettingsDialog::updateThemeSelection(midi_play::settings::ThemeMode mode)
 {
     const QSignalBlocker blocker(m_themeCombo);
     m_themeCombo->setCurrentIndex(m_themeCombo->findData(midi_play::settings::themeModePersistentValue(mode)));
+}
+
+void SettingsDialog::updateNoteColorSelection(midi_play::settings::NoteColorMode mode)
+{
+    const QSignalBlocker blocker(m_noteColorCombo);
+    m_noteColorCombo->setCurrentIndex(m_noteColorCombo->findData(
+        midi_play::settings::noteColorModePersistentValue(mode)));
 }
 
 void SettingsDialog::updateNotationStripSelection(bool show)

@@ -4,6 +4,7 @@
 #include "domain/settings/titlebarmode.h"
 #include "domain/settings/graphicsmode.h"
 #include "domain/settings/thememode.h"
+#include "domain/settings/notecolormode.h"
 
 class QCheckBox;
 class QComboBox;
@@ -38,6 +39,7 @@ private slots:
     void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
     void updateNotationStripSelection(bool show);
     void updateThemeSelection(midi_play::settings::ThemeMode mode);
+    void updateNoteColorSelection(midi_play::settings::NoteColorMode mode);
     void applyTheme(midi_play::settings::ThemeMode mode);
     void updateSoundFontPath(const QString& path, bool usesDefault);
     void setSoundFontLoading(bool loading);
@@ -52,6 +54,7 @@ private:
     QComboBox* m_titleBarModeCombo = nullptr;
     QComboBox* m_graphicsModeCombo = nullptr;
     QComboBox* m_themeCombo = nullptr;
+    QComboBox* m_noteColorCombo = nullptr;
     QCheckBox* m_showNotationStripCheckBox = nullptr;
     QLabel* m_customRefreshRateLabel = nullptr;
     QSpinBox* m_customRefreshRateSpinBox = nullptr;

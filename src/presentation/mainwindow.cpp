@@ -154,8 +154,11 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     if (m_settingsService) {
         m_visualization->setGraphicsMode(m_settingsService->graphicsMode());
         m_visualization->setShowNotationStrip(m_settingsService->showNotationStrip());
+        m_visualization->setNoteColorMode(m_settingsService->noteColorMode());
         connect(m_settingsService, &app::SettingsService::showNotationStripChanged,
                 m_visualization, &visualization::FallingNotesView::setShowNotationStrip);
+        connect(m_settingsService, &app::SettingsService::noteColorModeChanged,
+                m_visualization, &visualization::FallingNotesView::setNoteColorMode);
         connect(m_settingsService, &app::SettingsService::graphicsModeChanged,
                 m_visualization, &visualization::FallingNotesView::setGraphicsMode);
     }

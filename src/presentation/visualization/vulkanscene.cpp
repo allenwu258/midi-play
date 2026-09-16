@@ -49,11 +49,15 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         m_atlasFull = false;
         ++m_atlasRevision;
     }
-    m_cache.prepare(m_chart, m_geometry, mode);
+    m_cache.prepare(m_chart, m_geometry, mode, state.noteColorMode);
+    const bool materialsChanged = m_consumedMaterialRevision != m_cache.materialRevision();
     const bool candidatesChanged = m_window.ensure(m_index,
         state.transportPositionUs - state.afterglowUs,
         state.transportPositionUs + state.lookAheadUs, state.visibilityGuardUs);
-    if (candidatesChanged || layoutChanged || themeChanged) rebuildNotes(state);
+    if (candidatesChanged || layoutChanged || materialsChanged) {
+        rebuildNotes(state);
+        m_consumedMaterialRevision = m_cache.materialRevision();
+    }
     auto frameState = state;
     const auto& indices = m_window.candidateNoteIndices();
     frameState.candidateNoteIndices = {indices.constData(), size_t(indices.size())};

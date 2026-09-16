@@ -2,6 +2,7 @@
 
 #include "domain/visualization/activenotelookup.h"
 #include "domain/visualization/playbackscenestate.h"
+#include "presentation/theme/apptheme.h"
 #include "noterendercache.h"
 #include "noteframestate.h"
 #include "noterastercache.h"
