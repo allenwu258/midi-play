@@ -76,6 +76,17 @@ void SettingsService::setGraphicsMode(settings::GraphicsMode mode)
     persistSettings();
 }
 
+void SettingsService::setShowNotationStrip(bool show)
+{
+    if (m_settings.showNotationStrip == show) {
+        return;
+    }
+
+    m_settings.showNotationStrip = show;
+    emit showNotationStripChanged(show);
+    persistSettings();
+}
+
 void SettingsService::setTitleBarMode(settings::TitleBarMode mode)
 {
     const auto normalizedMode = settings::normalizeTitleBarMode(mode);

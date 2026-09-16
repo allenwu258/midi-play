@@ -18,6 +18,7 @@ public:
     void setChart(midi_play::visualization::VisualChartPtr chart);
     void setTransportPosition(qint64 positionUs, qint64 durationUs);
     void setTransportState(midi_play::playback::State state);
+    void setShowNotationStrip(bool show);
     midi_play::visualization::VisualChartPtr chart() const { return m_chart; }
     qint64 positionUs() const noexcept { return m_positionUs; }
     qint64 durationUs() const noexcept { return m_durationUs; }
@@ -44,6 +45,7 @@ private:
     qint64 m_durationUs = 0;
     midi_play::playback::State m_state = midi_play::playback::State::Empty;
     bool m_loading = false;
+    bool m_showNotationStrip = false;
     QString m_error;
     QFont m_font;
     const VisualPlaybackClock* m_visualClock = nullptr;

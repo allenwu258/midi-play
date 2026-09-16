@@ -4,6 +4,7 @@
 #include "domain/settings/titlebarmode.h"
 #include "domain/settings/graphicsmode.h"
 
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -32,6 +33,7 @@ private slots:
     void updateRefreshRateSelection(int refreshRate);
     void updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode);
     void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
+    void updateNotationStripSelection(bool show);
     void updateSoundFontPath(const QString& path, bool usesDefault);
     void setSoundFontLoading(bool loading);
     void showSaveError(const QString& message);
@@ -44,6 +46,7 @@ private:
     QComboBox* m_refreshRateCombo = nullptr;
     QComboBox* m_titleBarModeCombo = nullptr;
     QComboBox* m_graphicsModeCombo = nullptr;
+    QCheckBox* m_showNotationStripCheckBox = nullptr;
     QLabel* m_customRefreshRateLabel = nullptr;
     QSpinBox* m_customRefreshRateSpinBox = nullptr;
     QLineEdit* m_soundFontPathEdit = nullptr;

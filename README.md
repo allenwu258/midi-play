@@ -208,6 +208,8 @@ cmake --build --preset windows-msvc-debug
 设置窗口提供：
 
 - **视觉刷新率**：30 FPS、60 FPS、120 FPS 或“自定义”；
+- **图形模式**：传统 Qt 绘制或 Vulkan（实验）；未包含 Vulkan 的构建只提供传统模式；
+- **显示简谱条**：默认关闭。关闭时移除琴键上方的简谱条及黄色判定线，音符在琴键顶部判定；开启后恢复简谱条和黄线。修改立即生效并自动保存，两种图形模式行为一致；
 - **标题栏样式**：Windows 可选择原生或自定义实验模式，macOS/Linux 只显示原生模式；
 - **音源**：选择 .sf2/.sf3，或恢复随程序提供的默认音源。
 
@@ -237,8 +239,10 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 
 | 配置键 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| General/schemaVersion | int | 3 | 设置结构版本 |
+| General/schemaVersion | int | 5 | 设置结构版本 |
 | General/visualizationRefreshRate | int | 60 | 有效范围 1..1000，界面提供常用预设和自定义输入 |
+| General/graphicsMode | int | 0 | 0 为传统 Qt 绘制；1 为 Vulkan（实验） |
+| General/showNotationStrip | bool | false | 是否显示简谱条；缺少此配置键的旧版配置也默认隐藏 |
 | General/titleBarMode | int | 0 | 0 为原生；Windows 上 1 为自定义实验模式 |
 | Audio/soundFontPath | string | 空 | 空值表示使用随程序提供的默认音源 |
 
@@ -392,7 +396,8 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | 拖动进度 | 播放中释放后继续播放，暂停中释放后保持暂停，下一次播放从目标位置开始 |
 | SoundFont | 默认 SF2 可加载，自定义 SF2/SF3 可切换，失败时显示错误并保留可恢复状态 |
 | 节拍器 | 小节首拍重音、变速同步，暂停和停止无声，关闭不截断钢琴音，切换音源后仍能发声 |
-| 设置持久化 | 重启后刷新率、标题栏模式和自定义音源路径仍可恢复 |
+| 简谱条显隐 | 默认隐藏简谱条和黄线，音符在琴键顶部判定；播放和暂停时切换立即生效，切换图形模式后保持选择 |
+| 设置持久化 | 重启后刷新率、图形模式、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
 | Release 部署 | exe、Qt 平台插件、FluidSynth DLL 和 assets/midisound.sf2 均可找到 |
 
 自动测试不替代人工听音验收；音频设备、系统音量和 FluidSynth 驱动初始化仍需在目标机器上确认。

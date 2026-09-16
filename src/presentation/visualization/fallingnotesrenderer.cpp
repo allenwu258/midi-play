@@ -225,16 +225,18 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
 {
     const qreal left = geometry.pianoRect.left();
     const qreal right = geometry.drumRect.isEmpty() ? geometry.pianoRect.right() : geometry.drumRect.right();
-    QColor glow = m_theme.strikeLine;
-    glow.setAlpha(18);
-    painter.fillRect(QRectF(left, geometry.strikeLineY - 3.0, right - left, 6.0), glow);
-    QColor line = m_theme.strikeLine;
-    line.setAlpha(145);
-    painter.setPen(QPen(line, 1));
-    painter.drawLine(QPointF(left, geometry.strikeLineY), QPointF(right, geometry.strikeLineY));
-
     painter.save();
     painter.setClipRect(geometry.fallingRect);
+    if (!geometry.notationStripRect.isEmpty()) {
+        QColor glow = m_theme.strikeLine;
+        glow.setAlpha(18);
+        painter.fillRect(QRectF(left, geometry.strikeLineY - 3.0, right - left, 6.0), glow);
+        QColor line = m_theme.strikeLine;
+        line.setAlpha(145);
+        painter.setPen(QPen(line, 1));
+        painter.drawLine(QPointF(left, geometry.strikeLineY), QPointF(right, geometry.strikeLineY));
+    }
+
     painter.setPen(Qt::NoPen);
     for (const auto& light : m_noteFrame.glows()) {
         painter.save();
@@ -251,7 +253,7 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     }
     painter.restore();
 
-    if (!state.chart) return;
+    if (!state.chart || geometry.notationStripRect.isEmpty()) return;
     const auto& labelNoteIndices = m_activeNoteLookup.melodicLabelNoteIndices();
     if (labelNoteIndices.isEmpty()) return;
     QFont font = painter.font();

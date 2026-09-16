@@ -11,7 +11,7 @@ class SceneLayoutEngine final {
 public:
     PlaybackSceneGeometry layout(const QSizeF& viewport,
                                  const midi_play::visualization::VisualChart* chart,
-                                 qint64 lookAheadUs) const;
+                                 qint64 lookAheadUs, bool showNotationStrip = false) const;
 
 private:
     static bool isBlackKey(int pitch);

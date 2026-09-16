@@ -26,6 +26,7 @@ struct PlaybackSceneState {
     VisualTime visibleWindowEndUs = 5'000'000;
     std::span<const int> candidateNoteIndices;
     bool loading = false;
+    bool showNotationStrip = false;
     QString errorMessage;
 };
 

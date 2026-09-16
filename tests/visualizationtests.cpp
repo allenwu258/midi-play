@@ -384,7 +384,16 @@ void testSceneGeometry()
     require(geometry.fallingRect.top() == 0.0,
             "falling field must start at the viewport top after removing the duplicate information bar");
     require(geometry.strikeLineY > geometry.fallingRect.top(), "strike line must be inside falling field");
-    require(geometry.strikeLineY < geometry.keyboardRect.top(), "strike line must be above keyboard");
+    require(geometry.notationStripRect.isEmpty() && geometry.strikeLineY == geometry.keyboardRect.top(),
+            "notation must be hidden by default with the strike line aligned to the keyboard");
+    const auto withNotation = SceneLayoutEngine().layout(QSizeF(1280.0, 720.0), chart.get(), 5'000'000, true);
+    require(!withNotation.notationStripRect.isEmpty()
+                && withNotation.strikeLineY == withNotation.notationStripRect.top()
+                && withNotation.notationStripRect.bottom() == geometry.keyboardRect.top(),
+            "visible notation must reserve space between the strike line and keyboard");
+    require(withNotation.keyboardRect == geometry.keyboardRect
+                && withNotation.pixelsPerMicrosecond < geometry.pixelsPerMicrosecond,
+            "notation visibility must change the falling distance without moving the keyboard");
     require(geometry.pixelsPerMicrosecond > 0.0, "time scale must be positive");
     const auto* c = geometry.pitchSlot(60);
     const auto* cSharp = geometry.pitchSlot(61);

@@ -607,6 +607,13 @@ void FallingNotesVulkanWindow::setTransportState(midi_play::playback::State stat
     requestUpdate();
 }
 
+void FallingNotesVulkanWindow::setShowNotationStrip(bool show)
+{
+    if (m_showNotationStrip == show) return;
+    m_showNotationStrip = show;
+    requestUpdate();
+}
+
 midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneState() const
 {
     midi_play::visualization::PlaybackSceneState result;
@@ -616,6 +623,7 @@ midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneStat
     result.durationUs = m_durationUs;
     result.transportState = m_state;
     result.loading = m_loading;
+    result.showNotationStrip = m_showNotationStrip;
     result.errorMessage = m_error;
     result.updateVisibleWindow();
     return result;

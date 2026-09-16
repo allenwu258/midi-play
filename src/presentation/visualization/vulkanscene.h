@@ -87,6 +87,7 @@ private:
     VisualizationTheme m_theme;
     QSize m_size;
     qint64 m_lookAheadUs = 0;
+    bool m_showNotationStrip = false;
     qreal m_dpr = 1;
     QImage m_atlas;
     QHash<QString, Glyph> m_glyphs;

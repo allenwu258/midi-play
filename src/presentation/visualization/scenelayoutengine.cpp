@@ -30,7 +30,8 @@ bool SceneLayoutEngine::isBlackKey(int pitch)
 
 PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
                                                 const midi_play::visualization::VisualChart* chart,
-                                                qint64 lookAheadUs) const
+                                                qint64 lookAheadUs,
+                                                bool showNotationStrip) const
 {
     PlaybackSceneGeometry geometry;
     geometry.bounds = QRectF(QPointF(0.0, 0.0), viewport);
@@ -42,7 +43,11 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
     geometry.keyboardRect = QRectF(0.0, bottom - keyboardHeight, width, keyboardHeight);
     geometry.fallingRect = QRectF(0.0, 0.0, width,
                                   std::max<qreal>(1.0, geometry.keyboardRect.top()));
-    geometry.strikeLineY = geometry.fallingRect.bottom() - std::clamp(height * 0.045, 24.0, 38.0);
+    const qreal notationHeight = showNotationStrip ? std::clamp(height * 0.045, 24.0, 38.0) : 0.0;
+    geometry.strikeLineY = geometry.keyboardRect.top() - notationHeight;
+    if (showNotationStrip) {
+        geometry.notationStripRect = QRectF(0.0, geometry.strikeLineY, width, notationHeight);
+    }
     geometry.pixelsPerMicrosecond = std::max<qreal>(0.000001,
         (geometry.strikeLineY - geometry.fallingRect.top()) / std::max<qint64>(1, lookAheadUs));
 

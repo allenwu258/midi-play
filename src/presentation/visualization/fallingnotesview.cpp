@@ -88,6 +88,17 @@ void FallingNotesView::setTransportState(midi_play::playback::State state)
     update();
 }
 
+void FallingNotesView::setShowNotationStrip(bool show)
+{
+    if (m_state.showNotationStrip == show) return;
+    m_state.showNotationStrip = show;
+    m_geometryDirty = true;
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setShowNotationStrip(show);
+#endif
+    update();
+}
+
 void FallingNotesView::setPlaybackRate(int percent)
 {
     m_visualClock.setRate(percent);
@@ -187,6 +198,7 @@ bool FallingNotesView::createVulkanView()
                 QMetaObject::invokeMethod(this, [this] { setGraphicsMode(midi_play::settings::GraphicsMode::Traditional); }, Qt::QueuedConnection);
             }, Qt::QueuedConnection);
     m_vulkanWindow->setSceneFont(font());
+    m_vulkanWindow->setShowNotationStrip(m_state.showNotationStrip);
     m_vulkanWindow->setChart(m_state.chart);
     m_vulkanWindow->setTransportPosition(m_state.transportPositionUs, m_state.durationUs);
     m_vulkanWindow->setTransportState(m_state.transportState);
@@ -219,7 +231,8 @@ void FallingNotesView::paintEvent(QPaintEvent* event)
     if (m_vulkanWindow) return;
 #endif
     if (m_geometryDirty) {
-        m_geometry = m_layoutEngine.layout(size(), m_state.chart.get(), m_state.lookAheadUs);
+        m_geometry = m_layoutEngine.layout(size(), m_state.chart.get(),
+                                           m_state.lookAheadUs, m_state.showNotationStrip);
         m_geometryDirty = false;
         m_staticKeyboardDirty = true;
     }

@@ -199,16 +199,18 @@ visualization::VisualChartPtr denseChart()
         document.tracks()[pitch < 60 ? 0 : 1].notes.push_back(note);
     }
     document.rebuildMeasureGrid();
+    music::MusicAnalyzer().analyze(document);
     return visualization::PlaybackVisualizationProjector().project(document, 1);
 }
 
 QImage renderRaster(const visualization::VisualChartPtr& chart, qint64 time, QSize size, qreal dpr = 1,
-                    FallingNotesRenderer* reusedRenderer = nullptr)
+                    FallingNotesRenderer* reusedRenderer = nullptr, bool showNotationStrip = false)
 {
     visualization::PlaybackSceneState state;
     state.chart = chart;
     state.transportPositionUs = time;
     state.transportState = playback::State::Playing;
+    state.showNotationStrip = showNotationStrip;
     state.updateVisibleWindow();
     QVector<int> indices;
     visualization::VisibleNoteIndex(chart->notes()).query(state.visibleWindowStartUs, state.visibleWindowEndUs, indices);
@@ -219,8 +221,34 @@ QImage renderRaster(const visualization::VisualChartPtr& chart, qint64 time, QSi
     QPainter painter(&image);
     FallingNotesRenderer renderer;
     auto& selected = reusedRenderer ? *reusedRenderer : renderer;
-    selected.render(painter, SceneLayoutEngine().layout(size, chart.get(), state.lookAheadUs), state);
+    selected.render(painter, SceneLayoutEngine().layout(size, chart.get(), state.lookAheadUs, showNotationStrip), state);
     return image;
+}
+
+void testNotationStripGeometry(const visualization::VisualChartPtr& chart)
+{
+    for (QSize size : {QSize(640, 440), QSize(1280, 720), QSize(2560, 1440)}) {
+        for (bool show : {false, true}) {
+            const auto geometry = SceneLayoutEngine().layout(size, chart.get(), 5'000'000, show);
+            NoteRenderCache cache;
+            cache.prepare(chart, geometry);
+            const auto* note = cache.note(0);
+            require(note != nullptr, "notation geometry test needs a note");
+            const auto onset = noteGeometry(*note, geometry, note->startUs);
+            require(qAbs(onset.head.bottom() - geometry.strikeLineY) < .001,
+                    "the note attack must reach the strike line at its musical onset in both layouts");
+            const auto future = noteGeometry(*note, geometry, note->startUs - 5'000'000);
+            require(qAbs(future.head.bottom() - geometry.fallingRect.top()) < .001,
+                    "layout changes must preserve the five-second look-ahead window");
+        }
+    }
+    FallingNotesRenderer renderer;
+    for (qreal dpr : {1.0, 1.5, 2.0}) {
+        for (bool show : {false, true, false})
+            require(renderRaster(chart, 500'000, {1280, 720}, dpr, &renderer, show)
+                        == renderRaster(chart, 500'000, {1280, 720}, dpr, nullptr, show),
+                    "toggling notation at the same size must match a fresh raster renderer");
+    }
 }
 
 void testFrameEffects(const visualization::VisualChartPtr& chart)
@@ -289,6 +317,19 @@ void testVulkanStaticKeyboard(const visualization::VisualChartPtr& chart)
     scene.prepare(state, {960, 640}, 2, QFont());
     require(scene.staticUiRevision() != revision && scene.staticUi().quads != keyboard,
             "resizing must rebuild the static keyboard");
+    for (bool show : {false, true, false}) {
+        state.showNotationStrip = show;
+        scene.prepare(state, {960, 640}, 2, QFont());
+        const auto& geometry = scene.geometry();
+        require(geometry.notationStripRect.isEmpty() != show,
+                "Vulkan must update notation layout even when size and chart are unchanged");
+        const auto range = scene.dynamicUi().range(VulkanUiLayer::Strike);
+        int labels = 0;
+        for (uint32_t i = range.first; i < range.first + range.count; ++i)
+            if (scene.dynamicUi().quads[i].options[2] > 0) ++labels;
+        require(show ? labels > 0 : labels == 0,
+                "notation visibility must control strike-label glyphs");
+    }
 }
 
 void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const QString& directory)
@@ -331,6 +372,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
     window.resize(2560, 1440);
     const auto advance = QObject::connect(&window, &FallingNotesVulkanWindow::frameRendered, &window, [&] {
         window.setTransportPosition((qint64(presentedFrames) * 250'000) % chart->durationUs(), chart->durationUs());
+        window.setShowNotationStrip((presentedFrames / 60) % 2 != 0);
     });
     while (presentedFrames < 900 && !failed && timer.elapsed() < 30'000) {
         QApplication::processEvents();
@@ -339,6 +381,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
     require(!failed && presentedFrames >= 900, "continuous playback must not reuse in-flight GPU resources");
     std::fprintf(stderr, "Continuous playback complete: validation errors=%d\n", int(validationErrors));
     QObject::disconnect(advance);
+    window.setShowNotationStrip(false);
     window.resize(1280, 720);
     NoteRenderCache cache;
     NoteFrameState noteFrame;
@@ -396,7 +439,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
     require(validationErrors == 0, "Vulkan lifetime and synchronization validation must pass");
 }
 
-void captureVulkan(const visualization::VisualChartPtr& chart, const QString& directory)
+void captureVulkan(const visualization::VisualChartPtr& chart, const QString& directory, bool showNotationStrip)
 {
     QVulkanInstance instance;
     require(instance.create(), "Vulkan instance must initialize");
@@ -404,6 +447,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     window.setVulkanInstance(&instance);
     window.resize(1280, 720);
     window.setChart(chart);
+    window.setShowNotationStrip(showNotationStrip);
     window.setTransportPosition(500'000, chart->durationUs());
     window.setTransportState(playback::State::Playing);
     bool failed = false;
@@ -420,11 +464,12 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     const auto image = window.grab();
     require(!image.isNull(), "Vulkan must return a non-empty rendered frame");
     require(image.save(directory + QStringLiteral("/notes-vulkan.png")), "Vulkan snapshot must save");
-    const auto reference = renderRaster(chart, 500'000, window.size(), window.devicePixelRatio());
+    const auto reference = renderRaster(chart, 500'000, window.size(), window.devicePixelRatio(), nullptr, showNotationStrip);
     require(reference.size() == image.size(), "backend comparison must use equal physical dimensions");
     require(reference.save(directory + QStringLiteral("/notes-qt-matched.png")), "matched raster snapshot must save");
     double difference = 0;
-    const int height = qRound(image.height() * 0.77);
+    const int height = qFloor(SceneLayoutEngine().layout(window.size(), chart.get(), 5'000'000, showNotationStrip)
+        .fallingRect.bottom() * window.devicePixelRatio());
     for (int y = 0; y < height; ++y) for (int x = 0; x < image.width(); ++x) {
         const auto a = image.pixelColor(x, y);
         const auto b = reference.pixelColor(x, y);
@@ -514,6 +559,7 @@ int main(int argc, char** argv)
     testGeometryAndMaterials();
     testVisualClock();
     const auto chart = denseChart();
+    testNotationStripGeometry(chart);
     testFrameEffects(chart);
     const auto first = renderRaster(chart, 500'000, {1280, 720});
     require(first == renderRaster(chart, 500'000, {1280, 720}), "raster snapshots must be deterministic");
@@ -549,7 +595,13 @@ int main(int argc, char** argv)
         require(QDir().mkpath(directory), "snapshot directory must be writable");
         require(first.save(directory + QStringLiteral("/notes-qt.png")), "raster snapshot must save");
 #if MIDI_PLAY_HAS_VULKAN
-        if (args.contains(QStringLiteral("--vulkan"))) captureVulkan(chart, directory);
+        if (args.contains(QStringLiteral("--vulkan"))) {
+            for (bool show : {false, true}) {
+                const auto variant = directory + (show ? QStringLiteral("/notation-shown") : QStringLiteral("/notation-hidden"));
+                require(QDir().mkpath(variant), "notation snapshot directory must be writable");
+                captureVulkan(chart, variant, show);
+            }
+        }
 #endif
     }
     std::puts("Note timing, materials, geometry, animation and rendering checks passed");

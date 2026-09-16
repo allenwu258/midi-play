@@ -13,6 +13,8 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QCheckBox>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QImage>
 #include <QFrame>
@@ -20,6 +22,7 @@
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QScreen>
+#include <QSettings>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTemporaryDir>
@@ -69,9 +72,8 @@ midi_play::visualization::VisualChartPtr makeChart()
 
 QImage capture(FallingNotesView& view)
 {
-    QImage image(view.size(), QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
-    view.render(&image);
+    // grab() resolves pending parent layout changes before allocating the image.
+    const QImage image = view.grab().toImage();
     require(image.pixelColor(image.width() / 2, image.height() / 2).alpha() == 255,
             "traditional view must paint an opaque frame");
     return image;
@@ -146,6 +148,71 @@ void testGraphicsModePreference()
     midi_play::infrastructure::settings::QSettingsStore persisted(path);
     require(persisted.load(nullptr).graphicsMode == GraphicsMode::VulkanExperimental,
             "saving unrelated settings must preserve the Vulkan preference");
+}
+
+void testNotationStripPreference()
+{
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary settings directory must be available");
+    const auto path = temporary.filePath(QStringLiteral("settings.ini"));
+    midi_play::infrastructure::settings::QSettingsStore persisted(path);
+    require(!persisted.load(nullptr).showNotationStrip, "new users must start with notation hidden");
+    {
+        QSettings legacy(path, QSettings::IniFormat);
+        legacy.setValue(QStringLiteral("General/schemaVersion"), 4);
+        legacy.setValue(QStringLiteral("General/visualizationRefreshRate"), 120);
+    }
+    midi_play::app::SettingsService settings(
+        std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(path));
+    settings.load();
+    require(!settings.showNotationStrip() && settings.visualizationRefreshRate() == 120,
+            "older settings must default notation to hidden without resetting other preferences");
+    midi_play::app::PlayerApplicationService player;
+    midi_play::presentation::MainWindow window(&player, &settings);
+    auto* view = window.findChild<FallingNotesView*>();
+    require(view && !view->showNotationStrip(), "main window must apply the hidden default");
+    const auto chart = makeChart();
+    view->resize(960, 640);
+    view->setChart(chart);
+    view->setTransportState(State::Playing);
+    view->setTransportPosition(600'000, chart->durationUs());
+    const auto hidden = capture(*view);
+    midi_play::presentation::settings::SettingsDialog dialog(&settings, nullptr);
+    auto* control = dialog.findChild<QCheckBox*>(QStringLiteral("showNotationStripCheckBox"));
+    require(control && control->isEnabled() && !control->isChecked(), "settings must expose the notation checkbox");
+    int changes = 0;
+    QObject::connect(&settings, &midi_play::app::SettingsService::showNotationStripChanged,
+                     &dialog, [&](bool) { ++changes; });
+    control->click();
+    require(changes == 1 && settings.showNotationStrip() && view->showNotationStrip(),
+            "one checkbox click must update the running view exactly once");
+    require(capture(*view) != hidden, "showing notation must immediately relayout the raster scene");
+    settings.setShowNotationStrip(true);
+    require(changes == 1, "an unchanged preference must not emit another update");
+    settings.setVisualizationRefreshRate(60);
+    {
+        midi_play::app::SettingsService restarted(
+            std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(path));
+        restarted.load();
+        midi_play::app::PlayerApplicationService nextPlayer;
+        midi_play::presentation::MainWindow nextWindow(&nextPlayer, &restarted);
+        require(restarted.showNotationStrip() && nextWindow.findChild<FallingNotesView*>()->showNotationStrip(),
+                "restart must restore visible notation after saving an unrelated setting");
+    }
+    settings.setShowNotationStrip(false);
+    require(changes == 2 && !control->isChecked() && !view->showNotationStrip(),
+            "programmatic changes must synchronize the checkbox without feedback");
+    require(capture(*view) == hidden, "hiding notation must restore the original geometry at the same song time");
+    require(!persisted.load(nullptr).showNotationStrip, "hidden preference must persist across reloads");
+
+    const auto args = QApplication::arguments();
+    const int output = args.indexOf(QStringLiteral("--snapshots"));
+    if (output >= 0 && output + 1 < args.size()) {
+        const auto directory = args[output + 1];
+        require(QDir().mkpath(directory), "settings snapshot directory must be writable");
+        require(dialog.grab().save(directory + QStringLiteral("/settings-notation-hidden.png")),
+                "settings snapshot must save");
+    }
 }
 
 void processEventsFor(int milliseconds)
@@ -290,12 +357,14 @@ void testVulkanSwitching()
     QApplication::processEvents();
     const auto traditional = capture(view);
     for (int cycle = 0; cycle < 2; ++cycle) {
+        view.setShowNotationStrip(true);
         view.setGraphicsMode(GraphicsMode::VulkanExperimental);
         FallingNotesVulkanWindow* window = nullptr;
         for (auto* candidate : QGuiApplication::allWindows()) {
             if (auto* vulkan = qobject_cast<FallingNotesVulkanWindow*>(candidate)) window = vulkan;
         }
         require(window != nullptr, "Vulkan selection must create a Vulkan window");
+        require(window->sceneState().showNotationStrip, "backend creation must retain the notation preference");
         int frames = 0;
         bool failed = false;
         QObject::connect(window, &FallingNotesVulkanWindow::frameRendered, &view, [&] { ++frames; });
@@ -311,7 +380,14 @@ void testVulkanSwitching()
         require(!failed && frames >= 3 && window->isValid(), "Vulkan must render successfully");
         require(window->supportsGrab(), "Vulkan smoke check requires swapchain readback");
         view.setTransportState(State::Paused);
+        const auto notationShown = window->grab();
+        view.setShowNotationStrip(false);
         const auto first = window->grab();
+        require(!window->sceneState().showNotationStrip && first != notationShown,
+                "hiding notation must update an existing Vulkan layout without resizing");
+        view.setShowNotationStrip(true);
+        require(window->grab() == notationShown, "Vulkan must restore the shown layout deterministically");
+        view.setShowNotationStrip(false);
         view.setTransportPosition(850'000, chart->durationUs());
         const auto second = window->grab();
         require(!first.isNull() && !second.isNull() && first != second,
@@ -355,6 +431,7 @@ int main(int argc, char* argv[])
     QApplication application(argc, argv);
     testTraditionalViewUpdates();
     testGraphicsModePreference();
+    testNotationStripPreference();
     testPlaybackRateInteraction();
     testMetronomeControl();
     if (application.arguments().contains(QStringLiteral("--vulkan-smoke"))) {

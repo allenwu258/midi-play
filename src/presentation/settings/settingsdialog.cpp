@@ -4,6 +4,7 @@
 #include "app/playerapplicationservice.h"
 #include "domain/settings/playersettings.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
@@ -61,6 +62,12 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     m_graphicsModeCombo->setToolTip(QStringLiteral("此版本未包含 Vulkan，当前使用传统 Qt 绘制"));
 #endif
     form->addRow(QStringLiteral("图形模式"), m_graphicsModeCombo);
+
+    m_showNotationStripCheckBox = new QCheckBox(QStringLiteral("显示简谱条"), this);
+    m_showNotationStripCheckBox->setObjectName(QStringLiteral("showNotationStripCheckBox"));
+    m_showNotationStripCheckBox->setChecked(midi_play::settings::kDefaultShowNotationStrip);
+    m_showNotationStripCheckBox->setToolTip(QStringLiteral("隐藏时同时隐藏黄线，音符在琴键顶部判定。修改立即生效并自动保存。"));
+    form->addRow(QStringLiteral("音符显示"), m_showNotationStripCheckBox);
 
     m_customRefreshRateLabel = new QLabel(QStringLiteral("自定义刷新率"), this);
     m_customRefreshRateSpinBox = new QSpinBox(this);
@@ -129,6 +136,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     setStyleSheet(QStringLiteral(R"(
         QDialog { background: #1b1d20; color: #f0f1ed; }
         QLabel { color: #f0f1ed; }
+        QCheckBox { color: #f0f1ed; spacing: 8px; min-height: 28px; }
         QLabel#settingsTitle { color: #f0f1ed; font-size: 16px; font-weight: 600; }
         QLabel#settingsHint { color: #aeb4af; font-size: 12px; }
         QLabel#settingsError { color: #ffb4a8; font-size: 12px; }
@@ -152,6 +160,13 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::applyCustomRefreshRateFromUi);
         updateTitleBarModeSelection(m_settingsService->titleBarMode());
         updateGraphicsModeSelection(m_settingsService->graphicsMode());
+        updateNotationStripSelection(m_settingsService->showNotationStrip());
+        connect(m_showNotationStripCheckBox, &QCheckBox::toggled, this, [this](bool show) {
+            m_errorLabel->hide();
+            m_settingsService->setShowNotationStrip(show);
+        });
+        connect(m_settingsService, &app::SettingsService::showNotationStripChanged,
+                this, &SettingsDialog::updateNotationStripSelection);
         updateSoundFontPath(m_settingsService->soundFontPath(),
                             m_settingsService->usesDefaultSoundFont());
         connect(m_titleBarModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -182,6 +197,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         m_refreshRateCombo->setEnabled(false);
         m_titleBarModeCombo->setEnabled(false);
         m_graphicsModeCombo->setEnabled(false);
+        m_showNotationStripCheckBox->setEnabled(false);
         showSaveError(QStringLiteral("设置服务不可用"));
     }
     if (!m_settingsService || !m_playerService) {
@@ -316,6 +332,12 @@ void SettingsDialog::updateGraphicsModeSelection(midi_play::settings::GraphicsMo
     if (index < 0 || index == m_graphicsModeCombo->currentIndex()) return;
     const QSignalBlocker blocker(m_graphicsModeCombo);
     m_graphicsModeCombo->setCurrentIndex(index);
+}
+
+void SettingsDialog::updateNotationStripSelection(bool show)
+{
+    const QSignalBlocker blocker(m_showNotationStripCheckBox);
+    m_showNotationStripCheckBox->setChecked(show);
 }
 
 void SettingsDialog::updateSoundFontPath(const QString& path, bool usesDefault)

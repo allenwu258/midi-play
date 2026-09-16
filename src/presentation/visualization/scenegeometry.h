@@ -27,6 +27,7 @@ struct PlaybackSceneGeometry {
     QRectF keyboardRect;
     QRectF pianoRect;
     QRectF drumRect;
+    QRectF notationStripRect; // Empty when the strike line is aligned with the keyboard.
     qreal strikeLineY = 0.0;
     qreal pixelsPerMicrosecond = 0.0;
     QVector<PitchSlotGeometry> pitches;

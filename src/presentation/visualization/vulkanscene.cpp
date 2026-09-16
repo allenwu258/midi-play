@@ -17,7 +17,8 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
                           QSize size, qreal dpr, const QFont& font)
 {
     const bool chartChanged = m_chart != state.chart;
-    const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs;
+    const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs
+        || m_showNotationStrip != state.showNotationStrip;
     if (chartChanged) {
         m_chart = state.chart;
         m_index = {};
@@ -29,7 +30,9 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     if (layoutChanged) {
         m_size = size;
         m_lookAheadUs = state.lookAheadUs;
-        m_geometry = SceneLayoutEngine().layout(size, m_chart.get(), state.lookAheadUs);
+        m_showNotationStrip = state.showNotationStrip;
+        m_geometry = SceneLayoutEngine().layout(size, m_chart.get(),
+                                                state.lookAheadUs, state.showNotationStrip);
         rebuildStaticUi();
     }
     if (m_atlas.isNull() || m_dpr != dpr || m_atlasFull || m_atlasY > 1536 || chartChanged) {
@@ -200,15 +203,17 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
         }
     }
     m_dynamicUi.beginLayer(VulkanUiLayer::Strike);
-    rect(output, {left,g.strikeLineY-3,right-left,6}, QColor(244,211,94,18));
-    QColor strike = m_theme.strikeLine;
-    strike.setAlpha(145);
-    rect(output, {left,g.strikeLineY-0.5,right-left,1}, strike);
+    if (!g.notationStripRect.isEmpty()) {
+        rect(output, {left,g.strikeLineY-3,right-left,6}, QColor(244,211,94,18));
+        QColor strike = m_theme.strikeLine;
+        strike.setAlpha(145);
+        rect(output, {left,g.strikeLineY-0.5,right-left,1}, strike);
+    }
     for (const auto& glow : m_noteFrame.glows()) {
         rect(output, glow.rect, glow.color);
         output.back().options[3] = 2;
     }
-    if (m_chart) {
+    if (m_chart && !g.notationStripRect.isEmpty()) {
         QFont labelFont(font); labelFont.setPointSizeF(10); labelFont.setWeight(QFont::DemiBold);
         qreal x = left + 8;
         for (int index : m_active.melodicLabelNoteIndices()) {

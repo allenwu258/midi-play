@@ -31,6 +31,7 @@ public:
     ~FallingNotesView() override;
 
     QSize minimumSizeHint() const override { return {640, 440}; }
+    bool showNotationStrip() const noexcept { return m_state.showNotationStrip; }
 
 public slots:
     void setChart(midi_play::visualization::VisualChartPtr chart);
@@ -40,6 +41,7 @@ public slots:
     void resetTransientEffects(qint64 positionUs);
     void setTransportState(midi_play::playback::State state);
     void setGraphicsMode(midi_play::settings::GraphicsMode mode);
+    void setShowNotationStrip(bool show);
     void setLoading(bool loading);
     void setErrorMessage(const QString& message);
 
