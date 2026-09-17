@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MIDI Play — Falling Notes</title>
+  <desc id="desc">Three square-ended piano-roll bars in jade, teal and blue frame a right-facing play arrow in negative space.</desc>
+  <g>
+    <path fill="#49D6A4" d="M104 96H184V228.198L156 216V392L184 379.802V416H104Z"/>
+    <path fill="#39C5CE" d="M216 144H296V276.990L216 242.139ZM216 365.861L296 331.010V416H216Z"/>
+    <path fill="#719CEC" d="M328 192H408V416H328V317.069L358 304L328 290.931Z"/>
+  </g>
+</svg>

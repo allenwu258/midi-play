@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MIDI Play mark for light backgrounds</title>
+  <desc id="desc">MIDI Play mark for light backgrounds</desc>
+<g>
+    <path fill="#157653" d="M104 96H184V228.198L156 216V392L184 379.802V416H104Z"/>
+    <path fill="#117F91" d="M216 144H296V276.990L216 242.139ZM216 365.861L296 331.010V416H216Z"/>
+    <path fill="#456DCA" d="M328 192H408V416H328V317.069L358 304L328 290.931Z"/>
+  </g>
+</svg>
