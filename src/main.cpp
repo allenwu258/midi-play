@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QIcon>
 #include <QTimer>
 
 #include <memory>
@@ -21,6 +22,7 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("MidiPlay"));
     app.setOrganizationName(QStringLiteral("MidiPlay"));
+    app.setWindowIcon(QIcon(QStringLiteral(":/midi_play/branding/midiplay.ico")));
 
     midi_play::app::PlayerApplicationService service;
     auto settingsStore = std::make_unique<midi_play::infrastructure::settings::QSettingsStore>();

@@ -229,6 +229,19 @@ target_compile_definitions(midi_play_core PUBLIC MIDI_PLAY_HAS_VULKAN=$<BOOL:${M
 
 qt_add_executable(midi_play src/main.cpp)
 target_link_libraries(midi_play PRIVATE midi_play_core)
+qt_add_resources(midi_play midi_play_branding_resources
+    PREFIX "/midi_play/branding"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding"
+    FILES assets/branding/midiplay.ico)
+if (WIN32)
+    enable_language(RC)
+    set(MIDI_PLAY_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/midiplay.ico")
+    set(MIDI_PLAY_ICON_RESOURCE "${CMAKE_CURRENT_BINARY_DIR}/midi_play_icon.rc")
+    configure_file(cmake/WindowsAppIcon.rc.in "${MIDI_PLAY_ICON_RESOURCE}" @ONLY)
+    set_source_files_properties("${MIDI_PLAY_ICON_RESOURCE}" PROPERTIES
+        OBJECT_DEPENDS "${MIDI_PLAY_APP_ICON}")
+    target_sources(midi_play PRIVATE "${MIDI_PLAY_ICON_RESOURCE}")
+endif()
 
 qt_add_executable(midi_play_cli src/cli/main.cpp)
 target_link_libraries(midi_play_cli PRIVATE midi_play_core)

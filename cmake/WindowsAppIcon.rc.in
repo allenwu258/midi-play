@@ -1,0 +1,3 @@
+// Embed the application icon in the GUI executable for the Windows shell.
+// The absolute, forward-slash path is supplied by CMake for out-of-source builds.
+1 ICON "@MIDI_PLAY_APP_ICON@"
