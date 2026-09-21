@@ -43,7 +43,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **演奏语义**：支持反复段、ending、D.C.、D.S.、Segno、Coda、Fine 的基础播放展开，以及 tie、staccato、accent、tenuto、ghost、dynamic、hairpin 和 pedal 等播放相关语义。
 - **实时播放控制**：播放、暂停、停止、拖动进度和 seek 后的音色/控制器/延音状态重建。
 - **节拍器**：独立点击音源与合成器，和歌曲分开管理复音、通过同一音频设备混音输出；跟随乐曲拍号、速度变化和重复段落，并随 20%～200% 播放倍率同步变速。
-- **SoundFont**：默认使用 assets/midisound.sf2，支持从设置窗口加载 .sf2 或 .sf3，并支持播放中事务化切换。SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
+- **SoundFont**：不内置乐曲音源，启动时检查用户已配置的 SF2/SF3；未配置或加载失败时引导选择，允许暂时跳过。支持播放中事务化切换，SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：原生标题栏为默认值；Windows 提供“自定义标题栏（实验）”，macOS/Linux 当前仅使用原生标题栏。
@@ -122,7 +122,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1
 1. 检查配置并初始化指定 VS 实例的 x64 编译环境，显式选用配置的 Qt 和 Vulkan，清除调用者残留的 SDK 搜索变量；
 2. 使用清单模式安装 `x64-windows` 依赖到 `build/dependencies/vcpkg_installed`，不修改 vcpkg 的 classic installed 目录。`vcpkg.json` 中的 `builtin-baseline` 固定依赖版本解析基线；
 3. 重新配置 CMake，复用对象文件进行 Release 构建，并运行全部 CTest；启用 Vulkan 时缺少任何必需能力会直接失败，不会静默产出传统版本；
-4. 在独立临时目录安装 GUI、CLI 和默认 SoundFont，用 `windeployqt` 部署 Qt DLL/插件，部署 FluidSynth 的传递依赖及 VS 提供的 **app-local MSVC CRT DLL**；
+4. 在独立临时目录安装 GUI、CLI（不复制用户音源），用 `windeployqt` 部署 Qt DLL/插件，部署 FluidSynth 的传递依赖及 VS 提供的 **app-local MSVC CRT DLL**；
 5. 移除 PATH 中的开发 SDK，检查每个 EXE/DLL/插件的依赖闭包，并运行发行包 CLI 和实际 Qt 渲染检查；
 6. 校验成功后替换正式发行目录，写入不含本机 SDK 路径的 `build-info.json`，附带项目许可证、vcpkg 依赖版权文件及 SDK 提供的 Qt SBOM。
 
@@ -138,7 +138,6 @@ dist/midi-play-windows-x64/
   msvcp140*.dll、vcruntime140*.dll 等 MSVC CRT
   platforms/qwindows.dll
   styles/、imageformats/ 等 Qt 插件
-  assets/midisound.sf2
   licenses/
   LICENSE
   build-info.json
@@ -157,13 +156,13 @@ dist/midi-play-windows-x64/
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -Traditional -BuildName windows-traditional -PackageName midi-play-traditional
 
 # 同时验证发行包的真实 FluidSynth 音频输出，会播放约 1.5 秒测试音
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -AudioSmoke
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -AudioSmoke -SoundFontPath 'C:\SoundFonts\example.sf3'
 
 # 使用另一份本地配置并限制并行度
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -EnvironmentFile build.env.other.local.psd1 -Jobs 4
 ~~~
 
-`-AudioSmoke` 需要可用音频设备，失败也会阻止发行目录替换；默认构建不依赖音频设备。`-CheckEnvironment` 只检查环境，不下载依赖或编译。`-BuildName` 和 `-PackageName` 只接受字母、数字、下划线和连字符，输出固定限制在本仓库的 `build` 和 `dist` 下。
+`-AudioSmoke` 需要可用音频设备和显式指定的 `-SoundFontPath`，失败也会阻止发行目录替换；默认构建不依赖音频设备。外部测试音源不会进入发行包；指定 `-SoundFontPath` 还会启用启动配置及实际播放集成测试。直接使用 CMake 时可设置 `MIDI_PLAY_TEST_SOUNDFONT`。`-CheckEnvironment` 只检查环境，不下载依赖或编译。`-BuildName` 和 `-PackageName` 只接受字母、数字、下划线和连字符，输出固定限制在本仓库的 `build` 和 `dist` 下。
 
 常见错误的处理：
 
@@ -215,21 +214,19 @@ cmake --build --preset windows-msvc-debug
 - **图形模式**：传统 Qt 绘制或 Vulkan（实验）；未包含 Vulkan 的构建只提供传统模式；
 - **显示简谱条**：默认关闭。关闭时移除琴键上方的简谱条及黄色判定线，音符在琴键顶部判定；开启后恢复简谱条和黄线。修改立即生效并自动保存，两种图形模式行为一致；
 - **标题栏样式**：Windows 可选择原生或自定义实验模式，macOS/Linux 只显示原生模式；
-- **音源**：选择 .sf2/.sf3，或恢复随程序提供的默认音源。
+- **音源**：选择或更换本地 .sf2/.sf3，成功加载后自动保存选择；加载失败会显示内联错误。
 
 主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。
 
 ## 配置与音源
 
-### 默认音源
+### 首次配置音源
 
-默认 SoundFont 的相对路径为：
+程序不附带乐曲 SoundFont，也不会自动下载或回退到内置音源。每次启动会在后台检查已保存的音源路径，并通过 FluidSynth 验证其可加载性。没有配置、文件已移走、格式损坏或后端无法解码时，会显示“配置播放音源”对话框，提供“选择音源…”和“暂时跳过”。选择框支持 `.sf2` 和 `.sf3`，取消选择不会覆盖已有配置。
 
-~~~text
-assets/midisound.sf2
-~~~
+跳过后可以正常导入、查看乐曲及调整进度；没有有效音源时点击播放，会在主界面显示与设置页相同风格的内联错误，不弹窗、不推进播放。之后从设置中成功加载音源即可播放，无需重新导入乐曲。正在检查音源时需等待加载结束；选择成功后才持久化路径。
 
-程序优先从可执行文件旁的 assets 目录查找，开发运行时再检查当前工作目录的 assets 目录。构建脚本会将仓库中的默认文件复制到输出目录。
+路径保存在用户级设置中，音源文件仍由用户自行管理，不会复制进程序目录。建议将文件放在稳定的本地位置，并选用覆盖所需乐器的音源（多轨 MIDI 通常需要完整 GM 音源）。关闭或跳过配置只影响本次启动，下次启动仍会检查。命令行指定的乐曲会在启动检查或跳过后导入。
 
 ### 用户级配置
 
@@ -250,7 +247,7 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 | General/graphicsMode | int | 0 | 0 为传统 Qt 绘制；1 为 Vulkan（实验） |
 | General/showNotationStrip | bool | false | 是否显示简谱条；缺少此配置键的旧版配置也默认隐藏 |
 | General/titleBarMode | int | 0 | 0 为原生；Windows 上 1 为自定义实验模式 |
-| Audio/soundFontPath | string | 空 | 空值表示使用随程序提供的默认音源 |
+| Audio/soundFontPath | string | 空 | 用户音源的绝对路径；空值表示尚未配置 |
 
 刷新率使用整数保存，便于高级用户直接编辑配置文件。无效值会回退到默认值，并通过设置加载警告提示。
 
@@ -258,9 +255,9 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 
 自定义音源的行为：
 
-- 用户主动选择或恢复默认音源后才更新持久化配置；
+- 仅成功加载的音源选择会写入持久化配置；
 - 播放中切换音源会冻结播放位置、flush 当前音符、重新加载 SoundFont，并恢复通道状态和播放位置；
-- 自定义文件被移动或删除时，本次启动会临时回退到默认音源，不会自动覆盖用户保存的自定义路径；
+- 音源被移动或删除时会提示重新选择，不会自动覆盖用户保存的路径；旧版本的自定义路径继续使用，未配置自定义音源的用户升级后需要选择音源；
 - 音频后端加载失败时，设置窗口显示实际错误，而不是永久保留“正在加载音源”状态。
 
 ## 命令行验证
@@ -285,9 +282,9 @@ $midiPlayCliExe = 'dist/midi-play-windows-x64/midi_play_cli.exe'
 该命令加载指定 SF2 或 SF3，初始化 FluidSynth 原生音频驱动，并提交一组测试音符：
 
 ~~~powershell
-& $midiPlayCliExe --audio-test 'assets/midisound.sf2'
+& $midiPlayCliExe --audio-test 'path/to/example.sf2'
 & $midiPlayCliExe --audio-test 'path/to/example.sf3'
-& $midiPlayCliExe --audio-test 'assets/midisound.sf2' 'path/to/example.sf3'
+& $midiPlayCliExe --audio-test 'path/to/example.sf2' 'path/to/example.sf3'
 ~~~
 
 第三条命令额外验证播放中从 SF2 切换到 SF3。运行前确认系统输出设备可用、系统音量未静音，且 FluidSynth 及其 SF3 codec DLL 位于 exe 同级目录或系统 DLL 搜索路径中。若 SF3 加载失败，程序会区分后端未启用 SF3、缺少 codec 依赖和文件内容损坏。
@@ -398,6 +395,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - note_color_modes：默认鲜明、旧配置迁移、损坏值与保存失败、设置联动、音级/打击乐映射、材质缓存失效及双后端版本传播；
 - note_visual_semantics_and_rendering：音符语义、方角几何、踏板尾迹、动画及共享渲染；提供双后端截图、连续 Vulkan 压力和光栅性能诊断入口；
 - soundfont_inspector：SoundFont 内容和格式检查；
+- soundfont_setup：无音源启动引导、跳过、乐曲导入及播放内联错误；指定外部测试音源时另运行 soundfont_setup_audio，覆盖验证、持久化及配置后播放；
 - visualization_domain：可视化投影、时间窗口、区间索引和场景数据；
 - playback_session_transport：播放、暂停、停止、seek、事件代际和 transport 状态。
 - metronome_timeline_and_readers：拍号、显式点击单位、附点速度、弱起、重复段落、MIDI format 2、重复标记的相位稳定性、可视化小节线与点击重音的一致性，以及丢帧后的节拍调度。
@@ -415,11 +413,11 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | MIDI format 0/1 | 多轨道同时播放，program/channel 和 tempo 基本正确 |
 | MIDI format 2 | 独立序列按规范串联，播放时长和轨道顺序合理 |
 | 拖动进度 | 播放中释放后继续播放，暂停中释放后保持暂停，下一次播放从目标位置开始 |
-| SoundFont | 默认 SF2 可加载，自定义 SF2/SF3 可切换，失败时显示错误并保留可恢复状态 |
+| SoundFont | 无有效配置时启动引导可跳过；缺少音源时播放仅内联报错；SF2/SF3 可配置和切换，失败时保留原有选择 |
 | 节拍器 | 小节首拍重音、变速同步，暂停和停止无声，关闭不截断钢琴音，切换音源后仍能发声 |
 | 简谱条显隐 | 默认隐藏简谱条和黄线，音符在琴键顶部判定；播放和暂停时切换立即生效，切换图形模式后保持选择 |
 | 设置持久化 | 重启后主题、音符色彩、刷新率、图形模式、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
-| Release 部署 | exe、Qt 平台插件、FluidSynth DLL 和 assets/midisound.sf2 均可找到 |
+| Release 部署 | exe、Qt 平台插件、FluidSynth DLL 完整，发行包不含外部 SF2/SF3 音源 |
 
 自动测试不替代人工听音验收；音频设备、系统音量和 FluidSynth 驱动初始化仍需在目标机器上确认。
 
@@ -445,7 +443,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 
 ~~~text
 assets/
-  midisound.sf2                       默认 SoundFont
+  metronome.sf2                       原创节拍器资源（嵌入可执行文件）
 src/
   app/                                应用服务和设置服务
   domain/music/                       音乐文档、时间线和分析
@@ -482,4 +480,4 @@ vcpkg.json                            锁定基线的 FluidSynth / SF3 依赖清
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE)。第三方依赖和 SoundFont 资源可能具有独立的许可证或使用条款，分发时请分别确认其授权范围。
+本项目采用 [MIT License](LICENSE)。发行包不包含第三方乐曲 SoundFont，用户自行选择的音源遵循各自的许可证或使用条款。仓库仅保留项目原创、程序化生成的节拍器资源 `assets/metronome.sf2`；Qt、FluidSynth 等第三方依赖仍遵循各自的许可证。

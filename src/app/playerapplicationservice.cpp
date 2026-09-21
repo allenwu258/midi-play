@@ -36,7 +36,6 @@ PlayerApplicationService::PlayerApplicationService(QObject* parent)
             completeSoundFontLoad(false, validationError);
             return;
         }
-        m_soundFontPath = m_pendingSoundFontPath;
         completeSoundFontLoad(true, {});
     });
 }
@@ -59,12 +58,14 @@ void PlayerApplicationService::openFile(const QString& path)
         return;
     }
     const quint64 generation = ++m_loadGeneration;
+    m_documentLoading = true;
     emit busyChanged(true);
     auto watcher = new QFutureWatcher<LoadedProject>(this);
     connect(watcher, &QFutureWatcher<LoadedProject>::finished, this, [this, watcher, path, generation] {
         const auto result = watcher->result();
         watcher->deleteLater();
         if (generation != m_loadGeneration) return;
+        m_documentLoading = false;
         emit busyChanged(false);
         if (!result.readResult.ok()) {
             emit errorOccurred(result.readResult.error);
@@ -88,13 +89,13 @@ void PlayerApplicationService::openFile(const QString& path)
             emit errorOccurred(controllerError);
             return;
         }
-        if (m_soundFontPath.isEmpty()) {
-            emit errorOccurred(QStringLiteral("没有可用的音源，无法建立播放会话"));
-            return;
-        }
-        if (!newController->loadSoundFont(m_soundFontPath, &controllerError)) {
-            emit errorOccurred(QStringLiteral("无法为乐曲加载音源: %1").arg(controllerError));
-            return;
+        QString soundFontError;
+        if (!m_soundFontPath.isEmpty()
+            && !newController->loadSoundFont(m_soundFontPath, &soundFontError)) {
+            // Keep the parsed score available even when the external font has
+            // disappeared. A later selection can initialize this same session.
+            m_soundFontPath.clear();
+            if (soundFontError.isEmpty()) soundFontError = QStringLiteral("无法为乐曲加载音源");
         }
 
         m_controller = std::move(newController);
@@ -111,6 +112,7 @@ void PlayerApplicationService::openFile(const QString& path)
                             m_durationUs);
         emit positionChanged(m_positionUs, m_durationUs);
         emit playbackStateChanged(m_playbackState);
+        if (!soundFontError.isEmpty()) reportSoundFontFailure(soundFontError);
     });
     watcher->setFuture(QtConcurrent::run([reader, path, generation] {
         LoadedProject result;
@@ -126,25 +128,21 @@ void PlayerApplicationService::openFile(const QString& path)
     }));
 }
 
-bool PlayerApplicationService::loadSoundFont(const QString& path)
-{
-    return loadSoundFontInternal(path, true);
-}
-
 void PlayerApplicationService::requestSoundFontLoad(const QString& path)
 {
-    if (m_soundFontLoading) {
-        reportSoundFontFailure(QStringLiteral("音源加载仍在进行中"));
+    if (m_soundFontLoading || m_documentLoading) {
+        reportSoundFontFailure(QStringLiteral("正在加载资源，请稍后再选择音源"));
         return;
     }
 
     QString normalizedPath;
     if (!normalizeSoundFontPath(path, &normalizedPath)) {
+        emit soundFontLoadFinished(false);
         return;
     }
 
     m_pendingSoundFontPath = normalizedPath;
-    m_pendingSoundFontCommit = true;
+    m_lastSoundFontError.clear();
     setSoundFontLoading(true);
     if (m_controller) {
         m_controller->loadSoundFontAsync(normalizedPath);
@@ -154,18 +152,17 @@ void PlayerApplicationService::requestSoundFontLoad(const QString& path)
     m_soundFontValidationWatcher.setFuture(QtConcurrent::run([normalizedPath] {
         audio::FluidSynthEngine validator;
         QString error;
-        return validator.validateSoundFont(normalizedPath, &error)
-            ? QString() : error;
+        if (validator.validateSoundFont(normalizedPath, &error)) return QString();
+        return error.isEmpty() ? QStringLiteral("音源验证失败") : error;
     }));
 }
 
-bool PlayerApplicationService::loadFallbackSoundFont(const QString& path)
+bool PlayerApplicationService::loadSoundFont(const QString& path)
 {
-    return loadSoundFontInternal(path, false);
-}
-
-bool PlayerApplicationService::loadSoundFontInternal(const QString& path, bool commitSelection)
-{
+    if (m_soundFontLoading || m_documentLoading) {
+        reportSoundFontFailure(QStringLiteral("正在加载资源，请稍后再选择音源"));
+        return false;
+    }
     QString normalizedPath;
     if (!validateSoundFontFile(path, &normalizedPath)) {
         return false;
@@ -179,8 +176,9 @@ bool PlayerApplicationService::loadSoundFontInternal(const QString& path, bool c
             return false;
         }
         m_soundFontPath = normalizedPath;
+        m_lastSoundFontError.clear();
         emit soundFontLoaded(normalizedPath);
-        if (commitSelection) emit soundFontSelectionCommitted(normalizedPath);
+        emit soundFontSelectionCommitted(normalizedPath);
         return true;
     }
 
@@ -196,8 +194,9 @@ bool PlayerApplicationService::loadSoundFontInternal(const QString& path, bool c
         return false;
     }
     m_soundFontPath = normalizedPath;
+    m_lastSoundFontError.clear();
     emit soundFontLoaded(normalizedPath);
-    if (commitSelection) emit soundFontSelectionCommitted(normalizedPath);
+    emit soundFontSelectionCommitted(normalizedPath);
     return true;
 }
 
@@ -227,8 +226,12 @@ bool PlayerApplicationService::validateSoundFontFile(const QString& path,
 bool PlayerApplicationService::normalizeSoundFontPath(const QString& path,
                                                       QString* normalizedPath)
 {
-    const QFileInfo soundFontInfo(path);
-    if (path.trimmed().isEmpty() || !soundFontInfo.exists() || !soundFontInfo.isFile()
+    if (path.trimmed().isEmpty()) {
+        reportSoundFontFailure(QStringLiteral("尚未配置有效音源，请在设置中选择 SF2/SF3 音源后播放。"));
+        return false;
+    }
+    const QFileInfo soundFontInfo(path.trimmed());
+    if (!soundFontInfo.exists() || !soundFontInfo.isFile()
         || !soundFontInfo.isReadable()) {
         reportSoundFontFailure(QStringLiteral("无法读取音源文件: %1").arg(path));
         return false;
@@ -248,8 +251,8 @@ bool PlayerApplicationService::normalizeSoundFontPath(const QString& path,
 
 void PlayerApplicationService::reportSoundFontFailure(const QString& message)
 {
-    emit soundFontLoadFailed(message.isEmpty()
-        ? QStringLiteral("音源加载失败") : message);
+    m_lastSoundFontError = message.isEmpty() ? QStringLiteral("音源加载失败") : message;
+    emit soundFontLoadFailed(m_lastSoundFontError);
 }
 
 void PlayerApplicationService::setVisualizationRefreshRate(int refreshRate)
@@ -292,7 +295,17 @@ void PlayerApplicationService::setGraphicsMode(settings::GraphicsMode mode)
     emit graphicsModeChanged(m_graphicsMode);
 }
 
-void PlayerApplicationService::play() { if (m_controller) m_controller->play(); }
+void PlayerApplicationService::play()
+{
+    if (m_soundFontLoading) {
+        reportSoundFontFailure(QStringLiteral("正在检查或加载音源，请稍后再播放。"));
+        return;
+    }
+    // Re-check readability/container on playback so moved or damaged external
+    // files yield an actionable inline error instead of silent transport.
+    if (!validateSoundFontFile(m_soundFontPath, nullptr)) return;
+    if (m_controller) m_controller->play();
+}
 void PlayerApplicationService::pause() { if (m_controller) m_controller->pause(); }
 void PlayerApplicationService::stop() { if (m_controller) m_controller->stop(); }
 void PlayerApplicationService::seek(qint64 microseconds)
@@ -324,18 +337,21 @@ void PlayerApplicationService::connectSession()
 void PlayerApplicationService::completeSoundFontLoad(bool success, const QString& error)
 {
     const QString path = m_pendingSoundFontPath;
-    const bool commitSelection = m_pendingSoundFontCommit;
     m_pendingSoundFontPath.clear();
-    m_pendingSoundFontCommit = false;
+    if (success) {
+        m_soundFontPath = path;
+        m_lastSoundFontError.clear();
+    }
     setSoundFontLoading(false);
     if (!success) {
         reportSoundFontFailure(error);
+        emit soundFontLoadFinished(false);
         return;
     }
 
-    m_soundFontPath = path;
     emit soundFontLoaded(path);
-    if (commitSelection) emit soundFontSelectionCommitted(path);
+    emit soundFontSelectionCommitted(path);
+    emit soundFontLoadFinished(true);
 }
 
 void PlayerApplicationService::setSoundFontLoading(bool loading)

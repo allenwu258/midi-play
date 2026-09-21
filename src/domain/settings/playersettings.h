@@ -29,8 +29,8 @@ struct PlayerSettings {
     ThemeMode themeMode = kDefaultThemeMode;
     NoteColorMode noteColorMode = kDefaultNoteColorMode;
     TitleBarMode titleBarMode = kDefaultTitleBarMode;
-    // Empty means that the bundled default SoundFont follows the application.
-    QString soundFontPathOverride;
+    // Empty means unconfigured. Only successful user selections are persisted.
+    QString soundFontPath;
 };
 
 bool isValidVisualizationRefreshRate(int refreshRate) noexcept;

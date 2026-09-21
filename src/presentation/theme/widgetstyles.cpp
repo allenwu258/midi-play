@@ -86,6 +86,7 @@ QString mainWindowStyle(const AppTheme& theme)
         QLabel#brandLabel { color: @text@; font-size: 17px; font-weight: 600; }
         QLabel#fileLabel { color: @fileText@; font-size: 12px; }
         QLabel#statusLabel { color: @mutedText@; font-size: 11px; }
+        QLabel#soundFontError { color: @errorText@; font-size: 12px; padding: 4px 8px; }
         QLabel#metricLabel { color: @secondaryText@; font-size: 11px; }
         QLabel#timeLabel { color: @timeText@; font-family: Consolas, monospace; font-size: 11px; }
         QFrame#toolbarSeparator { color: @separator@; max-height: 26px; }

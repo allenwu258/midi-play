@@ -29,7 +29,9 @@ public:
     {
         return m_controller ? m_controller->metronomeUnavailableReason() : QStringLiteral("请先加载乐曲");
     }
-    bool loadFallbackSoundFont(const QString& path);
+    bool hasSoundFont() const noexcept { return !m_soundFontPath.isEmpty(); }
+    bool isSoundFontLoading() const noexcept { return m_soundFontLoading; }
+    const QString& lastSoundFontError() const noexcept { return m_lastSoundFontError; }
 
 public slots:
     void openFile(const QString& path);
@@ -53,6 +55,8 @@ signals:
     void soundFontSelectionCommitted(const QString& path);
     void soundFontLoadFailed(const QString& message);
     void soundFontLoadingChanged(bool loading);
+    // Completion of requestSoundFontLoad; playback diagnostics do not emit it.
+    void soundFontLoadFinished(bool success);
     void positionChanged(qint64 position, qint64 duration, qint64 sampledAtUs = 0);
     void playbackDiscontinuity(qint64 position);
     void playbackStateChanged(midi_play::playback::State state);
@@ -65,7 +69,6 @@ signals:
 
 private:
     void connectSession();
-    bool loadSoundFontInternal(const QString& path, bool commitSelection);
     void completeSoundFontLoad(bool success, const QString& error);
     void setSoundFontLoading(bool loading);
     bool normalizeSoundFontPath(const QString& path, QString* normalizedPath);
@@ -76,9 +79,10 @@ private:
     QString m_fileName;
     QString m_soundFontPath;
     QString m_pendingSoundFontPath;
-    bool m_pendingSoundFontCommit = false;
+    QString m_lastSoundFontError;
     QFutureWatcher<QString> m_soundFontValidationWatcher;
     bool m_soundFontLoading = false;
+    bool m_documentLoading = false;
     readers::MusicReaderRegistry m_readerRegistry;
     playback::State m_playbackState = playback::State::Empty;
     qint64 m_positionUs = 0;

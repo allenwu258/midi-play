@@ -72,6 +72,7 @@ private:
     QLabel* m_tempoLabel = nullptr;
     QLabel* m_timeLabel = nullptr;
     QLabel* m_statusLabel = nullptr;
+    QLabel* m_soundFontErrorLabel = nullptr;
     QToolButton* m_playButton = nullptr;
     QToolButton* m_openButton = nullptr;
     QToolButton* m_settingsButton = nullptr;

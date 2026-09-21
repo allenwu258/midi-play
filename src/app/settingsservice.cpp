@@ -10,27 +10,12 @@
 namespace midi_play::app {
 
 SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store, QObject* parent)
-    : SettingsService(std::move(store), {}, parent)
-{
-}
-
-SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store,
-                                 QString defaultSoundFontPath,
-                                 QObject* parent)
     : QObject(parent), m_store(std::move(store))
-    , m_defaultSoundFontPath(defaultSoundFontPath.trimmed().isEmpty()
-          ? QString()
-          : QDir::cleanPath(QFileInfo(defaultSoundFontPath).absoluteFilePath()))
 {
     qRegisterMetaType<midi_play::settings::TitleBarMode>();
     qRegisterMetaType<midi_play::settings::GraphicsMode>();
     qRegisterMetaType<midi_play::settings::ThemeMode>();
     qRegisterMetaType<midi_play::settings::NoteColorMode>();
-}
-
-QString SettingsService::soundFontPath() const
-{
-    return usesDefaultSoundFont() ? m_defaultSoundFontPath : m_settings.soundFontPathOverride;
 }
 
 void SettingsService::load()
@@ -47,8 +32,7 @@ void SettingsService::load()
     loadedSettings.graphicsMode = settings::normalizeGraphicsMode(loadedSettings.graphicsMode);
     loadedSettings.themeMode = settings::normalizeThemeMode(loadedSettings.themeMode);
     loadedSettings.noteColorMode = settings::normalizeNoteColorMode(loadedSettings.noteColorMode);
-    loadedSettings.soundFontPathOverride =
-        normalizeSoundFontPathOverride(loadedSettings.soundFontPathOverride);
+    loadedSettings.soundFontPath = normalizeSoundFontPath(loadedSettings.soundFontPath);
     m_settings = loadedSettings;
     m_lastLoadWarning = warning;
     if (!warning.isEmpty()) {
@@ -127,48 +111,24 @@ void SettingsService::setTitleBarMode(settings::TitleBarMode mode)
 
 void SettingsService::setSoundFontPath(const QString& path)
 {
-    const QString normalizedOverride = normalizeSoundFontPathOverride(path);
-    if (m_settings.soundFontPathOverride == normalizedOverride) {
+    const QString normalizedPath = normalizeSoundFontPath(path);
+    if (m_settings.soundFontPath == normalizedPath) {
         return;
     }
 
-    m_settings.soundFontPathOverride = normalizedOverride;
-    emit soundFontPathChanged(soundFontPath(), usesDefaultSoundFont());
+    m_settings.soundFontPath = normalizedPath;
+    emit soundFontPathChanged(soundFontPath());
     persistSettings();
 }
 
-void SettingsService::resetSoundFontPath()
-{
-    setSoundFontPath({});
-}
-
-QString SettingsService::normalizeSoundFontPathOverride(const QString& path) const
+QString SettingsService::normalizeSoundFontPath(const QString& path)
 {
     const QString trimmedPath = path.trimmed();
     if (trimmedPath.isEmpty()) {
         return {};
     }
 
-    const QFileInfo pathInfo(trimmedPath);
-    const QString normalizedPath = QDir::cleanPath(pathInfo.absoluteFilePath());
-    if (m_defaultSoundFontPath.isEmpty()) {
-        return normalizedPath;
-    }
-
-    const QFileInfo defaultInfo(m_defaultSoundFontPath);
-    const QString canonicalPath = pathInfo.canonicalFilePath();
-    const QString canonicalDefaultPath = defaultInfo.canonicalFilePath();
-    const QString comparablePath = canonicalPath.isEmpty() ? normalizedPath : canonicalPath;
-    const QString comparableDefaultPath = canonicalDefaultPath.isEmpty()
-        ? QDir::cleanPath(defaultInfo.absoluteFilePath()) : canonicalDefaultPath;
-#if defined(Q_OS_WIN)
-    if (comparablePath.compare(comparableDefaultPath, Qt::CaseInsensitive) == 0) {
-#else
-    if (comparablePath == comparableDefaultPath) {
-#endif
-        return {};
-    }
-    return normalizedPath;
+    return QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
 }
 
 void SettingsService::persistSettings()

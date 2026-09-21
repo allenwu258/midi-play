@@ -69,7 +69,10 @@ CMakeUserPresets.json
 *.swo
 *~
 
-# Keep source assets, including SoundFont files, trackable.
+# Musical SoundFonts are user-provided; keep only the original procedural click.
+*.sf2
+*.sf3
+!assets/metronome.sf2
 
 # Local architecture and analysis documents
 /documents/

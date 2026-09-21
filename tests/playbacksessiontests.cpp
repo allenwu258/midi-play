@@ -303,55 +303,44 @@ void testSettingsServicePersistsTitleBarMode()
 #endif
 }
 
-void testSettingsServicePersistsAndResetsSoundFont()
+void testSettingsServicePersistsSoundFont()
 {
     auto store = std::make_unique<MemorySettingsStore>();
     auto* rawStore = store.get();
-    const QString defaultPath = QDir::cleanPath(
-        QDir::temp().absoluteFilePath(QStringLiteral("midi-play/default/midisound.sf2")));
     const QString customPath = QDir::cleanPath(
         QDir::temp().absoluteFilePath(QStringLiteral("midi-play/custom/orchestra.sf2")));
-    midi_play::app::SettingsService service(std::move(store), defaultPath);
+    midi_play::app::SettingsService service(std::move(store));
     service.load();
 
-    require(service.usesDefaultSoundFont(),
-            "missing SoundFont override must select the bundled default");
-    require(service.soundFontPath() == defaultPath,
-            "effective default SoundFont path must be exposed");
+    require(service.soundFontPath().isEmpty(), "new users must have no implicit SoundFont");
 
     int changeCount = 0;
     QString changedPath;
-    bool changedToDefault = false;
     QObject::connect(&service, &midi_play::app::SettingsService::soundFontPathChanged,
-                     [&](const QString& path, bool usesDefault) {
+                     [&](const QString& path) {
                          ++changeCount;
                          changedPath = path;
-                         changedToDefault = usesDefault;
                      });
 
     service.setSoundFontPath(customPath);
-    require(!service.usesDefaultSoundFont(),
-            "custom SoundFont must replace the effective default");
     require(service.soundFontPath() == customPath,
             "custom SoundFont path must be normalized and exposed");
     require(rawStore->saveCount == 1
-                && rawStore->savedSettings.soundFontPathOverride == customPath,
+                && rawStore->savedSettings.soundFontPath == customPath,
             "custom SoundFont override must be persisted");
-    require(changeCount == 1 && changedPath == customPath && !changedToDefault,
+    require(changeCount == 1 && changedPath == customPath,
             "custom SoundFont change must publish its effective state");
 
-    service.resetSoundFontPath();
-    require(service.usesDefaultSoundFont() && service.soundFontPath() == defaultPath,
-            "reset must restore the bundled default SoundFont");
+    service.setSoundFontPath({});
+    require(service.soundFontPath().isEmpty(), "clearing the path leaves the player unconfigured");
     require(rawStore->saveCount == 2
-                && rawStore->savedSettings.soundFontPathOverride.isEmpty(),
-            "reset must persist an empty override rather than the installed path");
-    require(changeCount == 2 && changedPath == defaultPath && changedToDefault,
-            "reset must publish the effective default SoundFont");
+                && rawStore->savedSettings.soundFontPath.isEmpty(),
+            "clearing a SoundFont must persist an empty path");
+    require(changeCount == 2 && changedPath.isEmpty(), "clearing must publish the unconfigured state");
 
-    service.setSoundFontPath(defaultPath);
+    service.setSoundFontPath({});
     require(rawStore->saveCount == 2 && changeCount == 2,
-            "selecting the bundled SoundFont must remain equivalent to reset");
+            "an unchanged empty path must not emit or write again");
 }
 
 void testSettingsServicePersistsOnlyEffectiveChanges()
@@ -409,7 +398,7 @@ void testQSettingsStorePersistsUserRefreshRate()
     PlayerSettings saved;
     saved.visualizationRefreshRate = 120;
     saved.titleBarMode = midi_play::settings::TitleBarMode::Custom;
-    saved.soundFontPathOverride = QStringLiteral("C:/SoundFonts/custom.sf2");
+    saved.soundFontPath = QStringLiteral("C:/SoundFonts/custom.sf2");
     QString error;
     require(store.save(saved, &error), "settings store must save a valid refresh rate");
     require(error.isEmpty(), "successful settings save must not report an error");
@@ -417,7 +406,7 @@ void testQSettingsStorePersistsUserRefreshRate()
     loaded = store.load(&warning);
     require(loaded.visualizationRefreshRate == 120,
             "settings store must reload the persisted refresh rate");
-    require(loaded.soundFontPathOverride == saved.soundFontPathOverride,
+    require(loaded.soundFontPath == saved.soundFontPath,
             "settings store must reload the custom SoundFont override");
 #if defined(Q_OS_WIN)
     require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Custom,
@@ -446,7 +435,7 @@ void testQSettingsStorePersistsUserRefreshRate()
     require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Native,
             "invalid persisted title bar mode must fall back to native");
 
-    loaded.soundFontPathOverride.clear();
+    loaded.soundFontPath.clear();
     require(store.save(loaded, &error),
             "settings store must save a reset SoundFont configuration");
     QSettings resetFile(settingsPath, QSettings::IniFormat);
@@ -1150,7 +1139,7 @@ int main(int argc, char* argv[])
     testGraphicsModeSettings();
     testTitleBarModePlatformPolicy();
     testSettingsServicePersistsTitleBarMode();
-    testSettingsServicePersistsAndResetsSoundFont();
+    testSettingsServicePersistsSoundFont();
     testSettingsServicePersistsOnlyEffectiveChanges();
     testQSettingsStorePersistsUserRefreshRate();
     testPlaybackTimelineCachesRepeatExpansion();

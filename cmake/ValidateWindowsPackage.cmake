@@ -5,11 +5,18 @@ if (NOT IS_DIRECTORY "${PACKAGE_DIR}" OR NOT EXISTS "${DUMPBIN_EXE}")
 endif()
 foreach (required IN ITEMS midi_play.exe midi_play_cli.exe Qt6Core.dll Qt6Gui.dll
          Qt6Widgets.dll Qt6Xml.dll platforms/qwindows.dll libfluidsynth-3.dll
-         assets/midisound.sf2 vcruntime140.dll vcruntime140_1.dll msvcp140.dll)
+         vcruntime140.dll vcruntime140_1.dll msvcp140.dll)
     if (NOT EXISTS "${PACKAGE_DIR}/${required}")
         message(FATAL_ERROR "Incomplete Windows package: missing ${required}")
     endif()
 endforeach()
+
+# Musical SoundFonts are user-provided. Catch stale or accidentally copied
+# resources; the tiny procedural metronome remains embedded in the executable.
+file(GLOB_RECURSE unexpected_soundfonts "${PACKAGE_DIR}/*.sf2" "${PACKAGE_DIR}/*.sf3")
+if (unexpected_soundfonts)
+    message(FATAL_ERROR "Release packages must not bundle SoundFonts: ${unexpected_soundfonts}")
+endif()
 
 # Scan every plugin as a root, including FluidSynth which is loaded via QLibrary.
 set(CMAKE_GET_RUNTIME_DEPENDENCIES_PLATFORM "windows+pe")

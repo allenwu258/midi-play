@@ -10,7 +10,8 @@ param(
     [int] $Jobs = [Math]::Max(1, [Math]::Min(8, [Environment]::ProcessorCount)),
     [switch] $Traditional,
     [switch] $CheckEnvironment,
-    [switch] $AudioSmoke
+    [switch] $AudioSmoke,
+    [string] $SoundFontPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -111,7 +112,10 @@ try {
     if (-not (Test-Path -LiteralPath "$vcpkgRoot\vcpkg.exe" -PathType Leaf)) {
         $null = Require-File "$vcpkgRoot\bootstrap-vcpkg.bat" 'vcpkg bootstrap script'
     }
-    $null = Require-File "$repo\assets\midisound.sf2" 'Bundled SoundFont'
+    if ($AudioSmoke -and [string]::IsNullOrWhiteSpace($SoundFontPath)) {
+        throw '-AudioSmoke requires -SoundFontPath pointing to a local SF2/SF3 file (not bundled).'
+    }
+    if ($SoundFontPath) { $SoundFontPath = Require-File $SoundFontPath 'External test SoundFont' }
     $cmake = $settings.CMakeExe
     if (-not $cmake) {
         $cmake = "$vsRoot\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
@@ -208,7 +212,8 @@ try {
         "-DQt6_DIR=$qtRoot/lib/cmake/Qt6", '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF',
         '-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF', '-DBUILD_TESTING=ON', '-DCMAKE_INSTALL_BINDIR=.',
         "-DFLUIDSYNTH_DLL=$fluidSynth", "-DMIDI_PLAY_ENABLE_VULKAN=$vulkanOption",
-        "-DMIDI_PLAY_REQUIRE_VULKAN=$vulkanOption")
+        "-DMIDI_PLAY_REQUIRE_VULKAN=$vulkanOption",
+        "-DMIDI_PLAY_TEST_SOUNDFONT=$SoundFontPath")
     if ($enableVulkan) {
         $configure += @("-DVulkan_INCLUDE_DIR=$($settings.VulkanSdk)/Include",
             "-DVulkan_LIBRARY=$($settings.VulkanSdk)/Lib/vulkan-1.lib", "-DGLSLANG_VALIDATOR=$glslang")
@@ -257,7 +262,7 @@ try {
             $null = Require-File "$stage\.smoke.png" 'Packaged Qt render smoke output'
             Remove-Item -LiteralPath "$stage\.smoke.png"
             if ($AudioSmoke) {
-                Invoke-Checked "$stage\midi_play_cli.exe" @('--audio-test', "$stage\assets\midisound.sf2")
+                Invoke-Checked "$stage\midi_play_cli.exe" @('--audio-test', $SoundFontPath)
             }
         } finally { Pop-Location }
     } finally { $env:PATH = $developmentPath }

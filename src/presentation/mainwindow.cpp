@@ -227,6 +227,13 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     controlRow->addWidget(m_statusLabel);
     transportLayout->addLayout(controlRow);
     root->addWidget(transport);
+    m_soundFontErrorLabel = new QLabel(central);
+    m_soundFontErrorLabel->setObjectName(QStringLiteral("soundFontError"));
+    m_soundFontErrorLabel->setTextFormat(Qt::PlainText);
+    m_soundFontErrorLabel->setWordWrap(true);
+    m_soundFontErrorLabel->setAccessibleName(QStringLiteral("音源错误"));
+    m_soundFontErrorLabel->hide();
+    root->addWidget(m_soundFontErrorLabel);
     setCentralWidget(central);
 
     applyTheme(m_themeController ? m_themeController->mode()
@@ -323,11 +330,20 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
             m_service, &app::PlayerApplicationService::setPlaybackRatePercent);
     connect(m_service, &app::PlayerApplicationService::soundFontLoaded, this, [this] {
         m_statusLabel->setText(QStringLiteral("音源已加载"));
+        m_soundFontErrorLabel->clear();
+        m_soundFontErrorLabel->hide();
     });
     connect(m_service, &app::PlayerApplicationService::soundFontLoadFailed,
             this, [this](const QString& message) {
-                m_statusLabel->setText(message);
+                m_statusLabel->setText(QStringLiteral("请检查音源设置"));
+                m_soundFontErrorLabel->setText(message);
+                m_soundFontErrorLabel->show();
             });
+    connect(m_service, &app::PlayerApplicationService::soundFontLoadingChanged, this, [this](bool loading) {
+        m_openButton->setEnabled(!loading);
+        if (loading) m_statusLabel->setText(QStringLiteral("正在检查音源…"));
+        updateTransportControls();
+    });
     connect(m_service, &app::PlayerApplicationService::busyChanged, this, [this](bool busy) {
         m_visualization->setLoading(busy);
         m_statusLabel->setText(busy ? QStringLiteral("正在分析音乐文件...") : QStringLiteral("就绪"));
@@ -630,7 +646,8 @@ void MainWindow::updateTransportControls()
 {
     const bool hasDocument = m_durationUs > 0 && m_playbackState != playback::State::Empty;
     m_playButton->setEnabled(hasDocument && m_playbackState != playback::State::Playing
-                             && m_playbackState != playback::State::Error);
+                             && m_playbackState != playback::State::Error
+                             && !m_service->isSoundFontLoading());
     m_pauseButton->setEnabled(m_playbackState == playback::State::Playing);
     m_stopButton->setEnabled(hasDocument && m_playbackState != playback::State::Stopped);
     m_positionSlider->setEnabled(hasDocument);

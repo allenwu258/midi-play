@@ -132,8 +132,6 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/infrastructure/audio/threadedplaybackaudioservice.cpp
     src/infrastructure/resources/projectaudiosettings.h
     src/infrastructure/resources/projectaudiosettings.cpp
-    src/infrastructure/resources/defaultsoundfontlocator.h
-    src/infrastructure/resources/defaultsoundfontlocator.cpp
     src/infrastructure/settings/qsettingsstore.h
     src/infrastructure/settings/qsettingsstore.cpp
     src/infrastructure/readers/imusicreader.h
@@ -160,6 +158,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/playbackmetadatapresenter.cpp
     src/presentation/settings/settingsdialog.h
     src/presentation/settings/settingsdialog.cpp
+    src/presentation/settings/soundfontsetup.h
+    src/presentation/settings/soundfontsetup.cpp
     src/presentation/theme/apptheme.h
     src/presentation/theme/apptheme.cpp
     src/presentation/theme/themecontroller.h
@@ -247,18 +247,6 @@ qt_add_executable(midi_play_cli src/cli/main.cpp)
 target_link_libraries(midi_play_cli PRIVATE midi_play_core)
 set_target_properties(midi_play PROPERTIES WIN32_EXECUTABLE TRUE)
 
-set(DEFAULT_SF2 "${CMAKE_CURRENT_SOURCE_DIR}/assets/midisound.sf2")
-if (EXISTS "${DEFAULT_SF2}")
-    foreach (runtime_target IN ITEMS midi_play midi_play_cli)
-        add_custom_command(TARGET ${runtime_target} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                "$<TARGET_FILE_DIR:${runtime_target}>/assets"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${DEFAULT_SF2}"
-                "$<TARGET_FILE_DIR:${runtime_target}>/assets/midisound.sf2")
-    endforeach()
-endif()
-
 set(FLUIDSYNTH_DLL "" CACHE FILEPATH "FluidSynth runtime DLL to copy beside the executable")
 set(VCPKG_INSTALLED_DIR "" CACHE PATH
     "Optional vcpkg installed directory containing the x64-windows FluidSynth runtime")
@@ -292,9 +280,6 @@ if (POLICY CMP0177)
     cmake_policy(SET CMP0177 NEW)
 endif()
 install(TARGETS midi_play midi_play_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-if (EXISTS "${DEFAULT_SF2}")
-    install(FILES "${DEFAULT_SF2}" DESTINATION "${CMAKE_INSTALL_BINDIR}/assets")
-endif()
 if (WIN32 AND EXISTS "${FLUIDSYNTH_DLL}")
     install(CODE
         "execute_process(COMMAND \"${CMAKE_COMMAND}\"
@@ -306,6 +291,25 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_soundfont_setup_tests tests/soundfontsetuptests.cpp)
+    target_link_libraries(midi_play_soundfont_setup_tests PRIVATE midi_play_core)
+    add_test(NAME soundfont_setup COMMAND midi_play_soundfont_setup_tests -platform offscreen
+        --fixture "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/deployment.musicxml")
+    if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        set_tests_properties(soundfont_setup PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+    endif()
+    # External test data is opt-in and is never installed or bundled.
+    set(MIDI_PLAY_TEST_SOUNDFONT "" CACHE FILEPATH "External SF2/SF3 for SoundFont setup integration tests")
+    if (EXISTS "${MIDI_PLAY_TEST_SOUNDFONT}")
+        add_test(NAME soundfont_setup_audio COMMAND midi_play_soundfont_setup_tests -platform offscreen
+            --fixture "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/deployment.musicxml"
+            --soundfont "${MIDI_PLAY_TEST_SOUNDFONT}")
+        if (TARGET Qt6::QOffscreenIntegrationPlugin)
+            set_tests_properties(soundfont_setup_audio PROPERTIES
+                ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+        endif()
+    endif()
     add_executable(midi_play_note_color_tests tests/notecolortests.cpp)
     target_link_libraries(midi_play_note_color_tests PRIVATE midi_play_core)
     add_test(NAME note_color_modes COMMAND midi_play_note_color_tests -platform offscreen)

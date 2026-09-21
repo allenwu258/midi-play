@@ -338,8 +338,8 @@ Vulkan 连续压力场景保持至少原有 4096 音符级别，交错进行模�
 
 ```powershell
 .\build\visual-polish-release\Release\midi_play_note_color_tests.exe --benchmark
-.\build\visual-polish-release\Release\midi_play_note_color_tests.exe --playback-smoke 'song.mid' 'assets/midisound.sf2'
-.\build\visual-polish-release\Release\midi_play_note_color_tests.exe --playback-smoke 'song.mid' 'assets/midisound.sf2' --vulkan
+.\build\visual-polish-release\Release\midi_play_note_color_tests.exe --playback-smoke 'song.mid' 'path/to/soundfont.sf2'
+.\build\visual-polish-release\Release\midi_play_note_color_tests.exe --playback-smoke 'song.mid' 'path/to/soundfont.sf2' --vulkan
 .\build\visual-polish-release\Release\midi_play_note_visual_tests.exe --benchmark
 .\build\visual-polish-release\Release\midi_play_note_visual_tests.exe --snapshots build/note-color-diagnostics/gpu --vulkan
 $env:VK_LAYER_VALIDATE_SYNC = '1'
@@ -372,7 +372,7 @@ Qt 1920×1080、DPR 1 离屏稳定帧（预热 5 帧、采样 60 帧）：
 
 ### 8.4 交付
 
-执行 `scripts/Build-Windows.ps1 -BuildName visual-polish-release -PackageName midi-play-note-colors -AudioSmoke`，生成独立目录 `dist/midi-play-note-colors`，入口 `midi_play.exe`。包含 Qt/FluidSynth 运行依赖与默认 SoundFont，保留此前所有发行目录。
+执行 `scripts/Build-Windows.ps1 -BuildName visual-polish-release -PackageName midi-play-note-colors -AudioSmoke -SoundFontPath 'path/to/soundfont.sf2'`，生成独立目录 `dist/midi-play-note-colors`，入口 `midi_play.exe`。包含 Qt/FluidSynth 运行依赖；测试音源由开发者提供，不进入发行包。保留此前所有发行目录。
 
 脚本最终构建的 CTest 9/9；移除 SDK PATH 后，依赖闭包、CLI 截图和真实音频 smoke 均通过。另行启动打包 GUI，等待窗口初始化后确认进程响应、存在 MIDI Play 主窗口，并正常关闭（退出码 0）。`build-info.json` 标记源基线 `52647fc`、存在本地改动和音频 smoke 成功。
 

@@ -33,7 +33,6 @@ private slots:
     void applyTitleBarModeFromUi();
     void applyGraphicsModeFromUi();
     void chooseSoundFont();
-    void resetSoundFont();
     void updateRefreshRateSelection(int refreshRate);
     void updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode);
     void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
@@ -41,7 +40,7 @@ private slots:
     void updateThemeSelection(midi_play::settings::ThemeMode mode);
     void updateNoteColorSelection(midi_play::settings::NoteColorMode mode);
     void applyTheme(midi_play::settings::ThemeMode mode);
-    void updateSoundFontPath(const QString& path, bool usesDefault);
+    void updateSoundFontPath(const QString& path);
     void setSoundFontLoading(bool loading);
     void showSaveError(const QString& message);
 
@@ -60,9 +59,7 @@ private:
     QSpinBox* m_customRefreshRateSpinBox = nullptr;
     QLineEdit* m_soundFontPathEdit = nullptr;
     QPushButton* m_loadSoundFontButton = nullptr;
-    QPushButton* m_resetSoundFontButton = nullptr;
     QLabel* m_errorLabel = nullptr;
-    bool m_soundFontLoading = false;
 };
 
 } // namespace midi_play::presentation::settings

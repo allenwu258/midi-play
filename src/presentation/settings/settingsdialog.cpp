@@ -1,4 +1,5 @@
 #include "settingsdialog.h"
+#include "soundfontsetup.h"
 
 #include "app/settingsservice.h"
 #include "app/playerapplicationservice.h"
@@ -10,8 +11,6 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
-#include <QFileDialog>
-#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -120,6 +119,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     m_soundFontPathEdit = new QLineEdit(soundFontEditor);
     m_soundFontPathEdit->setObjectName(QStringLiteral("soundFontPathEdit"));
     m_soundFontPathEdit->setReadOnly(true);
+    m_soundFontPathEdit->setPlaceholderText(QStringLiteral("尚未配置音源，请选择 SF2/SF3 文件"));
     m_soundFontPathEdit->setAccessibleName(QStringLiteral("当前音源文件"));
     soundFontLayout->addWidget(m_soundFontPathEdit);
     auto* soundFontActions = new QHBoxLayout();
@@ -128,11 +128,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     m_loadSoundFontButton = new QPushButton(QStringLiteral("加载音源"), soundFontEditor);
     m_loadSoundFontButton->setObjectName(QStringLiteral("loadSoundFontButton"));
     m_loadSoundFontButton->setToolTip(QStringLiteral("选择 SoundFont 音源文件"));
-    m_resetSoundFontButton = new QPushButton(QStringLiteral("恢复默认"), soundFontEditor);
-    m_resetSoundFontButton->setObjectName(QStringLiteral("resetSoundFontButton"));
-    m_resetSoundFontButton->setToolTip(QStringLiteral("恢复随程序提供的默认音源"));
     soundFontActions->addWidget(m_loadSoundFontButton);
-    soundFontActions->addWidget(m_resetSoundFontButton);
     soundFontActions->addStretch();
     soundFontLayout->addLayout(soundFontActions);
     form->addRow(QStringLiteral("音源"), soundFontEditor);
@@ -145,6 +141,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
 
     m_errorLabel = new QLabel(this);
     m_errorLabel->setObjectName(QStringLiteral("settingsError"));
+    m_errorLabel->setTextFormat(Qt::PlainText);
     m_errorLabel->setWordWrap(true);
     m_errorLabel->hide();
     root->addWidget(m_errorLabel);
@@ -192,16 +189,13 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         });
         connect(m_settingsService, &app::SettingsService::showNotationStripChanged,
                 this, &SettingsDialog::updateNotationStripSelection);
-        updateSoundFontPath(m_settingsService->soundFontPath(),
-                            m_settingsService->usesDefaultSoundFont());
+        updateSoundFontPath(m_settingsService->soundFontPath());
         connect(m_titleBarModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyTitleBarModeFromUi);
         connect(m_graphicsModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyGraphicsModeFromUi);
         connect(m_loadSoundFontButton, &QPushButton::clicked,
                 this, &SettingsDialog::chooseSoundFont);
-        connect(m_resetSoundFontButton, &QPushButton::clicked,
-                this, &SettingsDialog::resetSoundFont);
         connect(m_settingsService, &app::SettingsService::visualizationRefreshRateChanged,
                 this, &SettingsDialog::updateRefreshRateSelection);
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
@@ -221,6 +215,9 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                     this, &SettingsDialog::showSaveError);
             connect(m_playerService, &app::PlayerApplicationService::soundFontLoadingChanged,
                     this, &SettingsDialog::setSoundFontLoading);
+            if (m_playerService->isSoundFontLoading()) setSoundFontLoading(true);
+            else if (!m_playerService->lastSoundFontError().isEmpty())
+                showSaveError(m_playerService->lastSoundFontError());
         }
     } else {
         m_themeCombo->setEnabled(false);
@@ -233,7 +230,6 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     }
     if (!m_settingsService || !m_playerService) {
         m_loadSoundFontButton->setEnabled(false);
-        m_resetSoundFontButton->setEnabled(false);
     }
     resize(size().expandedTo(sizeHint()));
 }
@@ -291,29 +287,7 @@ void SettingsDialog::applyGraphicsModeFromUi()
 
 void SettingsDialog::chooseSoundFont()
 {
-    if (!m_settingsService || !m_playerService) {
-        return;
-    }
-
-    const QString currentPath = m_settingsService->soundFontPath();
-    const QString initialDirectory = QFileInfo(currentPath).absolutePath();
-    const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("加载音源"), initialDirectory,
-        QStringLiteral("SoundFont 音源 (*.sf2 *.sf3)"));
-    if (!path.isEmpty()) {
-        m_errorLabel->hide();
-        m_playerService->requestSoundFontLoad(path);
-    }
-}
-
-void SettingsDialog::resetSoundFont()
-{
-    if (!m_settingsService || !m_playerService) {
-        return;
-    }
-
-    m_errorLabel->hide();
-    m_playerService->requestSoundFontLoad(m_settingsService->defaultSoundFontPath());
+    chooseSoundFontFile(this, m_settingsService, m_playerService);
 }
 
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
@@ -392,29 +366,18 @@ void SettingsDialog::updateNotationStripSelection(bool show)
     m_showNotationStripCheckBox->setChecked(show);
 }
 
-void SettingsDialog::updateSoundFontPath(const QString& path, bool usesDefault)
+void SettingsDialog::updateSoundFontPath(const QString& path)
 {
-    if (!m_soundFontPathEdit || !m_resetSoundFontButton) {
-        return;
-    }
-
     m_soundFontPathEdit->setText(path);
-    m_soundFontPathEdit->setToolTip(usesDefault
-        ? QStringLiteral("默认音源：%1").arg(path)
-        : QStringLiteral("自定义音源：%1").arg(path));
-    m_soundFontPathEdit->setAccessibleDescription(
-        usesDefault ? QStringLiteral("默认音源") : QStringLiteral("自定义音源"));
+    m_soundFontPathEdit->setToolTip(path.isEmpty() ? QStringLiteral("尚未配置音源") : path);
+    m_soundFontPathEdit->setAccessibleDescription(QStringLiteral("用户选择的音源文件"));
     // Keep the file name visible when the absolute path is wider than the editor.
     m_soundFontPathEdit->setCursorPosition(path.size());
-    m_resetSoundFontButton->setEnabled(!usesDefault && !m_soundFontLoading);
 }
 
 void SettingsDialog::setSoundFontLoading(bool loading)
 {
-    m_soundFontLoading = loading;
     m_loadSoundFontButton->setEnabled(!loading);
-    m_resetSoundFontButton->setEnabled(!loading && m_settingsService
-                                       && !m_settingsService->usesDefaultSoundFont());
     if (loading) {
         m_errorLabel->setText(QStringLiteral("正在加载音源..."));
         m_errorLabel->show();
