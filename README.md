@@ -1,10 +1,18 @@
 # MIDI Play
 
-面向桌面端的 Qt Widgets 音乐播放器，读取 MusicXML 或标准 MIDI 文件，使用 FluidSynth 和 SoundFont 播放，并以音符下落视图呈现实时演奏状态。
+<p align="center">
+  <img src="docs/images/midiplay-banner.svg" alt="MIDI Play 横版 Logo" width="560">
+</p>
 
-> 当前发布基线：v0.2.7
-> 当前已验证平台：Windows x64 / MSVC 2022
-> 项目定位：播放与音游式可视化，不是 MuseScore 级别的严肃谱面排版编辑器。
+播放 MIDI 与 MusicXML，让音乐以彩色下落音符呈现。
+
+MIDI Play 是一款开源桌面音乐播放器，提供实时钢琴键盘、深浅色主题、鲜明音符配色、播放变速与节拍器。界面基于 Qt Widgets，音频由 FluidSynth 和用户选择的 SoundFont 驱动，支持传统 Qt 绘制与 Vulkan 实验模式。
+
+[下载 Windows x64 发行版](https://github.com/allenwu258/midi-play/releases/latest) · [快速开始](#快速开始) · [从源码构建](#源码构建) · [反馈问题](https://github.com/allenwu258/midi-play/issues)
+
+当前发布版本：[v0.4.0](https://github.com/allenwu258/midi-play/releases/tag/v0.4.0)，首次提供完整 Windows x64 便携发行包。此前版本通过 Git Tag 记录开发进展。
+
+> 播放前需自行准备本地 SF2 / SF3 音源。程序不附带乐曲音源，也不会自动下载；可以跳过首次配置，先打开并查看乐曲。
 
 ## 目录
 
@@ -12,6 +20,7 @@
 - [核心能力](#核心能力)
 - [支持格式与边界](#支持格式与边界)
 - [快速开始](#快速开始)
+- [源码构建](#源码构建)
 - [图形界面使用](#图形界面使用)
 - [配置与音源](#配置与音源)
 - [命令行验证](#命令行验证)
@@ -41,10 +50,11 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **MIDI 播放**：支持 .mid、.midi、.kar，包含 format 0/1/2、PPQN/SMPTE、Running Status、常用 Meta/SysEx、Program Change、Control Change、Pitch Bend、Channel Pressure、Poly Pressure 和踏板信息。
 - **统一时间线**：使用 tick、微秒和预计算 tempo map 表达音乐时间，并支持 tick 与实际播放时间双向转换。
 - **演奏语义**：支持反复段、ending、D.C.、D.S.、Segno、Coda、Fine 的基础播放展开，以及 tie、staccato、accent、tenuto、ghost、dynamic、hairpin 和 pedal 等播放相关语义。
-- **实时播放控制**：播放、暂停、停止、拖动进度和 seek 后的音色/控制器/延音状态重建。
+- **实时播放控制**：播放、暂停、停止、拖动进度、20%～200% 播放变速，以及 seek 后的音色/控制器/延音状态重建。
 - **节拍器**：独立点击音源与合成器，和歌曲分开管理复音、通过同一音频设备混音输出；跟随乐曲拍号、速度变化和重复段落，并随 20%～200% 播放倍率同步变速。
 - **SoundFont**：不内置乐曲音源，启动时检查用户已配置的 SF2/SF3；未配置或加载失败时引导选择，允许暂时跳过。支持播放中事务化切换，SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
+- **双渲染模式**：传统 Qt 绘制与 Vulkan（实验）共享音符布局、主题和色彩设置，可在设置中选择。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：原生标题栏为默认值；Windows 提供“自定义标题栏（实验）”，macOS/Linux 当前仅使用原生标题栏。
 - **深色 / 浅色主题**：设置中切换并自动保存；两套主题同时覆盖控件、下落音符和琴键，兼容传统 Qt 与 Vulkan 绘制。
@@ -67,6 +77,22 @@ MIDI format 2 的独立序列会按源轨道顺序串联到统一播放时间线
 MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAnalyzer 生成的调内 degree、量化网格、和弦组、tie 组、hold note、鼓组 lane 和调性置信度属于派生分析结果，不会替换原始播放时间。
 
 ## 快速开始
+
+1. 前往 [Releases](https://github.com/allenwu258/midi-play/releases/latest)，下载附件 `midi-play-v0.4.0-windows-x64.zip`。GitHub 自动提供的 `Source code` 是源码包。
+2. 完整解压 ZIP，运行其中的 `midi_play.exe`，保留同目录 DLL、插件和许可证文件。
+3. 在启动引导中选择本地 `.sf2` 或 `.sf3` 音源。多轨 MIDI 建议使用覆盖完整 General MIDI（GM）乐器的音源；选择成功后会尝试自动保存路径。
+4. 点击“打开乐曲”，选择 `.mid`、`.midi`、`.kar`、`.xml` 或 `.musicxml` 文件，再点击播放。
+5. 在“设置”中调整主题、音符色彩、简谱条显隐及图形模式。
+
+发行包无需安装，也不需要安装 Qt、Visual Studio 或 Vulkan SDK。当前已验证平台为 **Windows x64**；Vulkan 模式需要兼容的显卡及驱动，遇到显示问题时可在设置中切回传统 Qt 绘制。
+
+首次配置可以选择“暂时跳过”。没有有效音源时仍可导入、查看乐曲和调整进度，点击播放只显示行内提示；随后从设置中加载音源即可播放。详细行为见 [配置与音源](#配置与音源)，当前版本的问题见 [已知限制与后续方向](#已知限制与后续方向)。
+
+压缩 MusicXML（`.mxl`）和 MuseScore 工程（`.mscz` / `.mscx`）尚不支持，请先从制谱软件导出为普通 MusicXML 或 MIDI。
+
+## 源码构建
+
+以下步骤适用于希望自行编译或参与开发的用户。直接使用播放器可下载上面的便携发行包。
 
 ### Windows 前置条件
 
@@ -192,13 +218,14 @@ cmake --build --preset windows-msvc-debug
 
 ## 图形界面使用
 
-1. 启动 midi_play.exe。
-2. 点击顶部“打开乐曲”，选择 MusicXML、MIDI 或 KAR 文件。
-3. 点击底部播放、暂停或停止按钮。
-4. 拖动底部进度条进行 seek。播放中释放后会直接从目标位置继续，暂停时释放后保持暂停。
-5. 悬停底部播放键右侧的百分比按钮，拖动滑块调节播放速度，范围 **20%～200%**，步进 1%。也可点击按钮，在滑块右侧输入百分比，按回车或移开焦点生效；Esc 取消尚未确认的输入并关闭面板。
-6. 点击播放键右侧的“节拍器”按钮开关节拍器。开启后按曲目的拍号、速度和反复展开实时点击，暂停、seek、停止和调速均保持同步。
-7. 点击顶部“设置”打开独立设置窗口。
+1. 启动 `midi_play.exe`。
+2. 若提示配置音源，选择本地 SF2/SF3；也可暂时跳过，稍后从设置中加载。
+3. 点击顶部“打开乐曲”，选择 MusicXML、MIDI 或 KAR 文件。
+4. 音源可用后，点击底部播放、暂停或停止按钮。
+5. 拖动底部进度条进行 seek。播放中释放后会直接从目标位置继续，暂停时释放后保持暂停。
+6. 悬停底部播放键右侧的百分比按钮，拖动滑块调节播放速度，范围 **20%～200%**，步进 1%。也可点击按钮，在滑块右侧输入百分比，按回车或移开焦点生效；Esc 取消尚未确认的输入并关闭面板。
+7. 点击播放键右侧的“节拍器”按钮开关节拍器。开启后按曲目的拍号、速度和反复展开实时点击，暂停、seek、停止和调速均保持同步。
+8. 点击顶部“设置”打开独立设置窗口。
 
 播放速度默认 **100%**。播放中变速不重启音频会话、不改变音高，音符、踏板、控制器事件和下落画面共用调整后的播放时钟。暂停、停止、拖动进度、换曲和切换音源保留本次选择的倍率，重启程序恢复 100%。进度、总时长和顶部 BPM 均按原曲音乐时间显示；例如 200% 播放时，原曲进度每秒推进约两秒。
 
@@ -333,13 +360,14 @@ flowchart LR
     H --> M[VisibleNoteIndex / WindowCache]
     M --> N[FallingNotesView]
     N --> O[Qt Widgets / QPainter]
+    N --> P[QVulkanWindow / Vulkan]
 ~~~
 
 ### 分层职责
 
 | 层次 | 主要职责 | 关键对象 |
 | --- | --- | --- |
-| Presentation | 窗口、设置、进度条、可视化绘制和用户输入 | MainWindow、SettingsDialog、FallingNotesView |
+| Presentation | 窗口、启动音源引导、设置、进度条、双后端绘制和用户输入 | MainWindow、SoundFontSetup、SettingsDialog、FallingNotesView、FallingNotesVulkanWindow |
 | Application | 编排 reader、异步加载、播放会话和设置持久化 | PlayerApplicationService、SettingsService |
 | Domain / Music | 与文件格式无关的音乐事实和时间语义 | MusicDocument、Track、NoteEvent、tempo map |
 | Domain / Playback | 轨道事件、播放状态、seek、重复展开和状态恢复 | PlaybackModel、PlaybackSession、PlaybackController |
@@ -376,7 +404,7 @@ UI 不直接解析 XML/MIDI，也不直接调用 FluidSynth；播放域不依赖
 - 绘制路径关闭不必要的全局抗锯齿，并使用适合矩形、网格和钢琴键的栅格策略；
 - 播放线程的高频事件检查与 UI 位置发布解耦，视觉刷新率变化不会改变音符事件的时间精度。
 
-这些优化改善的是 CPU 使用率和界面响应，不代表在任意 4K、高 DPI、超高密度曲目上都能保证屏幕级 v-sync。若后续基准测试表明 QWidget + QPainter 仍无法满足目标，再评估 Qt Quick scene graph/RHI。
+传统模式通过上述缓存减少 CPU 绘制开销；Vulkan 模式使用 GPU 绘制，并复用共享的布局、音符材质与播放状态。实际性能取决于分辨率、曲目密度、硬件和驱动，不保证所有场景下都达到显示器刷新率。
 
 ## 测试与验收
 
@@ -423,6 +451,8 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 
 ## 已知限制与后续方向
 
+- v0.4.0 中，设置文件无法写入时，启动音源引导仍可能关闭，所选路径仅在本次运行中生效；重启后可能需要重新配置。
+- v0.4.0 中，音源文件临时移走后再恢复，播放可以恢复，但旧错误提示可能仍显示；在设置中重新加载音源可清除提示。
 - 当前只验证 Windows x64 / MSVC；macOS/Linux 的 Qt 架构分支已预留，但没有同等完整的构建、部署和音频验收基线。
 - 当前只有 FluidSynth 音频后端，不提供 Qt Multimedia 后端、外部 MIDI 硬件输出或音频文件导出。
 - MusicXML 解析面向播放所需语义，不等价于完整的 MuseScore notation DOM；复杂排版、符号布局和编辑语义不在当前范围内。
@@ -443,7 +473,11 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 
 ~~~text
 assets/
+  branding/                          Logo、横版字标与 Windows 应用图标
   metronome.sf2                       原创节拍器资源（嵌入可执行文件）
+docs/
+  images/midiplay-banner.svg          README 使用的深色底横版 Logo
+  *.md                                主题、音符色彩等设计与开发文档
 src/
   app/                                应用服务和设置服务
   domain/music/                       音乐文档、时间线和分析
@@ -455,7 +489,7 @@ src/
   infrastructure/readers/             通用 reader registry 和 adapter
   infrastructure/audio/               FluidSynth 动态适配和线程边界
   infrastructure/settings/            QSettings INI 存储
-  infrastructure/resources/           默认资源定位和项目资源模型
+  infrastructure/resources/           项目音频资源设置模型
   presentation/                       Qt Widgets、设置窗口和渲染器
 tests/                                呈现层、领域、transport 测试及部署样例
 scripts/Build-Windows.ps1              Windows 环境检查、一键构建和发行校验
@@ -476,7 +510,9 @@ vcpkg.json                            锁定基线的 FluidSynth / SF3 依赖清
 4. 对涉及播放时序、seek、SoundFont 或渲染性能的改动补充对应测试或验收说明；
 5. 保持领域层不依赖 Qt Widgets 和 FluidSynth 具体类型。
 
-问题反馈请尽量附带：操作系统、构建类型、输入文件格式、SoundFont 类型、复现步骤和相关日志。音频问题还应说明系统默认输出设备和 libfluidsynth-3.dll 的实际位置。
+欢迎通过 [Issues](https://github.com/allenwu258/midi-play/issues) 反馈问题和建议。问题反馈请尽量附带：软件版本、操作系统、图形模式、输入文件格式、SoundFont 类型、复现步骤和相关日志。音频问题还应说明系统默认输出设备和 libfluidsynth-3.dll 的实际位置；界面问题可附运行截图。
+
+Logo 与图标的使用规范见 [品牌资源说明](assets/branding/README.md)。
 
 ## 许可证
 
