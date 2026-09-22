@@ -49,6 +49,11 @@ public slots:
     void setLoading(bool loading);
     void setErrorMessage(const QString& message);
 
+signals:
+    // Emitted once after a requested backend renders its first frame or falls
+    // back to the traditional renderer.
+    void graphicsModeResolved(midi_play::settings::GraphicsMode mode);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -78,6 +83,7 @@ private:
     bool m_frameStateDirty = true;
     bool m_staticKeyboardDirty = true;
     midi_play::settings::GraphicsMode m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
+    bool m_graphicsModeResolutionPending = false;
 #if MIDI_PLAY_HAS_VULKAN
     std::unique_ptr<QVulkanInstance> m_vulkanInstance;
     FallingNotesVulkanWindow* m_vulkanWindow = nullptr;

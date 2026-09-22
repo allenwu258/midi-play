@@ -25,6 +25,9 @@ struct PlayerSettings {
     int schemaVersion = kSettingsSchemaVersion;
     int visualizationRefreshRate = kDefaultVisualizationRefreshRate;
     GraphicsMode graphicsMode = kDefaultGraphicsMode;
+    // Runtime metadata: the settings store derives this from the presence of
+    // General/graphicsMode. It is deliberately not serialized separately.
+    bool graphicsModeConfigured = false;
     bool showNotationStrip = kDefaultShowNotationStrip;
     ThemeMode themeMode = kDefaultThemeMode;
     NoteColorMode noteColorMode = kDefaultNoteColorMode;

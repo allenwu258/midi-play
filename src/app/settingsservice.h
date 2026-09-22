@@ -18,6 +18,7 @@ public:
     const settings::PlayerSettings& settings() const noexcept { return m_settings; }
     int visualizationRefreshRate() const noexcept { return m_settings.visualizationRefreshRate; }
     settings::GraphicsMode graphicsMode() const noexcept { return m_settings.graphicsMode; }
+    bool graphicsModeConfigured() const noexcept { return m_settings.graphicsModeConfigured; }
     bool showNotationStrip() const noexcept { return m_settings.showNotationStrip; }
     settings::ThemeMode themeMode() const noexcept { return m_settings.themeMode; }
     settings::NoteColorMode noteColorMode() const noexcept { return m_settings.noteColorMode; }

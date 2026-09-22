@@ -51,11 +51,13 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     result.visualizationRefreshRate =
         midi_play::settings::normalizeVisualizationRefreshRate(configuredRefreshRate);
 
+    const bool hasGraphicsMode = file.contains(QStringLiteral("General/graphicsMode"));
     const QVariant graphicsModeValue = file.value(QStringLiteral("General/graphicsMode"),
                                                    midi_play::settings::graphicsModePersistentValue(
                                                        midi_play::settings::kDefaultGraphicsMode));
     result.graphicsMode = midi_play::settings::graphicsModeFromPersistentValue(
         graphicsModeValue.toInt());
+    result.graphicsModeConfigured = hasGraphicsMode;
     result.showNotationStrip = file.value(QStringLiteral("General/showNotationStrip"),
         midi_play::settings::kDefaultShowNotationStrip).toBool();
     bool themeConversionOk = false;

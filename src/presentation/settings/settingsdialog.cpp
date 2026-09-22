@@ -69,11 +69,11 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
 
     m_graphicsModeCombo = new QComboBox(this);
     m_graphicsModeCombo->setObjectName(QStringLiteral("graphicsModeCombo"));
-    m_graphicsModeCombo->addItem(QStringLiteral("传统 Qt 绘制"),
+    m_graphicsModeCombo->addItem(QStringLiteral("传统 Qt 绘制（兼容）"),
                                  midi_play::settings::graphicsModePersistentValue(
                                      midi_play::settings::GraphicsMode::Traditional));
 #if MIDI_PLAY_HAS_VULKAN
-    m_graphicsModeCombo->addItem(QStringLiteral("Vulkan（实验）"),
+    m_graphicsModeCombo->addItem(QStringLiteral("Vulkan（推荐）"),
                                  midi_play::settings::graphicsModePersistentValue(
                                      midi_play::settings::GraphicsMode::VulkanExperimental));
 #else

@@ -173,17 +173,24 @@ void FallingNotesView::setGraphicsMode(midi_play::settings::GraphicsMode mode)
 #if !MIDI_PLAY_HAS_VULKAN
     Q_UNUSED(normalized)
     m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
+    m_graphicsModeResolutionPending = false;
+    emit graphicsModeResolved(m_graphicsMode);
     return;
 #else
     if (m_graphicsMode == normalized && (normalized == midi_play::settings::GraphicsMode::Traditional || m_vulkanWindow)) return;
     m_graphicsMode = normalized;
     if (normalized == midi_play::settings::GraphicsMode::VulkanExperimental) {
+        m_graphicsModeResolutionPending = true;
         if (!createVulkanView()) {
             m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
+            m_graphicsModeResolutionPending = false;
+            emit graphicsModeResolved(m_graphicsMode);
             qWarning() << "Vulkan view unavailable; keeping traditional renderer";
         }
     } else {
+        m_graphicsModeResolutionPending = false;
         destroyVulkanView();
+        emit graphicsModeResolved(m_graphicsMode);
     }
     update();
 #endif
@@ -213,6 +220,14 @@ bool FallingNotesView::createVulkanView()
     }
     layout()->addWidget(m_vulkanContainer);
     m_vulkanWindow = window;
+    connect(window, &FallingNotesVulkanWindow::frameRendered, this, [this] {
+        if (!m_graphicsModeResolutionPending
+            || m_graphicsMode != midi_play::settings::GraphicsMode::VulkanExperimental) {
+            return;
+        }
+        m_graphicsModeResolutionPending = false;
+        emit graphicsModeResolved(m_graphicsMode);
+    });
     m_vulkanWindow->setVisualClock(&m_visualClock);
     m_vulkanWindow->setEffectsStart(m_state.effectsStartUs);
     connect(window, &FallingNotesVulkanWindow::initializationFailed, this,

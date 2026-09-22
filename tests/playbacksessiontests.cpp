@@ -216,6 +216,16 @@ void testVisualizationRefreshRateSettingsNormalizeInts()
 
 void testGraphicsModeSettings()
 {
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary graphics settings directory must be available");
+    const auto settingsPath = temporary.filePath(QStringLiteral("settings.ini"));
+    midi_play::infrastructure::settings::QSettingsStore freshStore(settingsPath);
+    const auto freshSettings = freshStore.load(nullptr);
+    require(freshSettings.graphicsMode == midi_play::settings::GraphicsMode::VulkanExperimental,
+            "new settings must prefer Vulkan");
+    require(!freshSettings.graphicsModeConfigured,
+            "a missing graphics mode key must be treated as unconfigured");
+
     require(midi_play::settings::graphicsModeFromPersistentValue(0)
                 == midi_play::settings::GraphicsMode::Traditional,
             "graphics mode zero must select the traditional renderer");
@@ -241,6 +251,21 @@ void testGraphicsModeSettings()
     require(rawStore->savedSettings.graphicsMode
                 == midi_play::settings::GraphicsMode::VulkanExperimental,
             "persisted settings must retain Vulkan graphics mode");
+    require(rawStore->savedSettings.graphicsModeConfigured,
+            "resolving a graphics mode must mark the preference configured");
+
+    midi_play::app::SettingsService fallbackService(
+        std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(settingsPath));
+    fallbackService.load();
+    require(!fallbackService.graphicsModeConfigured(),
+            "a new settings file must still be unconfigured before renderer resolution");
+    fallbackService.setGraphicsMode(midi_play::settings::GraphicsMode::Traditional);
+    require(fallbackService.graphicsModeConfigured(),
+            "traditional fallback must become a persisted preference");
+    const auto persistedFallback = freshStore.load(nullptr);
+    require(persistedFallback.graphicsMode == midi_play::settings::GraphicsMode::Traditional
+                && persistedFallback.graphicsModeConfigured,
+            "traditional fallback must persist for the next launch");
 }
 
 void testTitleBarModePlatformPolicy()

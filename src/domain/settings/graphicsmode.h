@@ -9,7 +9,9 @@ enum class GraphicsMode : int {
     VulkanExperimental = 1
 };
 
-inline constexpr GraphicsMode kDefaultGraphicsMode = GraphicsMode::Traditional;
+// Vulkan is the preferred renderer for new installations. A persisted value
+// still takes precedence, so existing users keep their selected backend.
+inline constexpr GraphicsMode kDefaultGraphicsMode = GraphicsMode::VulkanExperimental;
 
 inline constexpr int graphicsModePersistentValue(GraphicsMode mode) noexcept
 {

@@ -56,11 +56,13 @@ void SettingsService::setVisualizationRefreshRate(int refreshRate)
 void SettingsService::setGraphicsMode(settings::GraphicsMode mode)
 {
     const auto normalizedMode = settings::normalizeGraphicsMode(mode);
-    if (m_settings.graphicsMode == normalizedMode) {
+    const bool modeChanged = m_settings.graphicsMode != normalizedMode;
+    if (!modeChanged && m_settings.graphicsModeConfigured) {
         return;
     }
 
     m_settings.graphicsMode = normalizedMode;
+    m_settings.graphicsModeConfigured = true;
     emit graphicsModeChanged(normalizedMode);
     persistSettings();
 }

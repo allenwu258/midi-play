@@ -129,6 +129,14 @@ void testPersistence()
 
 class ControlledStore final : public app::ISettingsStore {
 public:
+    ControlledStore()
+    {
+        // This fixture models an existing user with an explicit graphics
+        // preference; the test focuses on note-color save failures.
+        saved.graphicsMode = settings::GraphicsMode::Traditional;
+        saved.graphicsModeConfigured = true;
+    }
+
     bool fail = true;
     int writes = 0;
     settings::PlayerSettings saved;

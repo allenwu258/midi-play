@@ -152,6 +152,16 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     m_visualization = new visualization::FallingNotesView(central);
     root->addWidget(m_visualization, 1);
     if (m_settingsService) {
+        // A missing graphics preference starts with the Vulkan default. Keep
+        // that preference only after the renderer has produced its first
+        // frame; initialization failure records the traditional fallback.
+        if (!m_settingsService->graphicsModeConfigured()) {
+            connect(m_visualization, &visualization::FallingNotesView::graphicsModeResolved,
+                    this, [this](midi_play::settings::GraphicsMode mode) {
+                        if (m_settingsService && !m_settingsService->graphicsModeConfigured())
+                            m_settingsService->setGraphicsMode(mode);
+                    });
+        }
         m_visualization->setGraphicsMode(m_settingsService->graphicsMode());
         m_visualization->setShowNotationStrip(m_settingsService->showNotationStrip());
         m_visualization->setNoteColorMode(m_settingsService->noteColorMode());
