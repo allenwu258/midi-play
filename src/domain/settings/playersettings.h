@@ -19,7 +19,7 @@ inline constexpr int kMaximumPlaybackRatePercent = 200;
 inline constexpr int kMinimumVisualizationRefreshRate = 1;
 inline constexpr int kMaximumVisualizationRefreshRate = 1000;
 inline constexpr bool kDefaultShowNotationStrip = false;
-inline constexpr int kSettingsSchemaVersion = 7;
+inline constexpr int kSettingsSchemaVersion = 8;
 
 struct PlayerSettings {
     int schemaVersion = kSettingsSchemaVersion;
@@ -34,6 +34,9 @@ struct PlayerSettings {
     TitleBarMode titleBarMode = kDefaultTitleBarMode;
     // Empty means unconfigured. Only successful user selections are persisted.
     QString soundFontPath;
+    bool backgroundImageEnabled = false;
+    // Retained when the image background is disabled.
+    QString backgroundImagePath;
 };
 
 bool isValidVisualizationRefreshRate(int refreshRate) noexcept;

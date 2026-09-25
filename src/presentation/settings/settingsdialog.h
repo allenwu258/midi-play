@@ -8,6 +8,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -33,6 +34,8 @@ private slots:
     void applyTitleBarModeFromUi();
     void applyGraphicsModeFromUi();
     void chooseSoundFont();
+    void chooseBackgroundImage();
+    void applyBackgroundModeFromUi();
     void updateRefreshRateSelection(int refreshRate);
     void updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode);
     void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
@@ -41,6 +44,8 @@ private slots:
     void updateNoteColorSelection(midi_play::settings::NoteColorMode mode);
     void applyTheme(midi_play::settings::ThemeMode mode);
     void updateSoundFontPath(const QString& path);
+    void updateBackgroundImagePath(const QString& path);
+    void updateBackgroundModeSelection(bool enabled);
     void setSoundFontLoading(bool loading);
     void showSaveError(const QString& message);
 
@@ -59,6 +64,11 @@ private:
     QSpinBox* m_customRefreshRateSpinBox = nullptr;
     QLineEdit* m_soundFontPathEdit = nullptr;
     QPushButton* m_loadSoundFontButton = nullptr;
+    QLineEdit* m_backgroundImagePathEdit = nullptr;
+    QPushButton* m_loadBackgroundImageButton = nullptr;
+    QComboBox* m_backgroundModeCombo = nullptr;
+    QFormLayout* m_formLayout = nullptr;
+    QWidget* m_backgroundImageEditor = nullptr;
     QLabel* m_errorLabel = nullptr;
 };
 

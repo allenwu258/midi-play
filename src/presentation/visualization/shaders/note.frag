@@ -1,5 +1,6 @@
 #version 450
 layout(set=0,binding=0) uniform sampler2D atlas;
+layout(set=0,binding=1) uniform sampler2D background;
 layout(push_constant) uniform Frame {
     float width; float height; float position; float strike;
     float scale; float clipTop; float clipBottom; float dpr;
@@ -36,7 +37,8 @@ void main() {
             c.a*=u<.32 ? mix(.66,1,u/.32) : mix(1,.78,(u-.32)/.68);
         }
     } else if (flags.z>0) {
-        c.a *= texture(atlas,texcoord).a;
+        if (flags.z > 1.5) c *= texture(background, texcoord);
+        else c.a *= texture(atlas,texcoord).a;
     } else if (flags.w>0) {
         vec2 normalized=local/shape.xy*2-1;
         float radius=length(normalized);

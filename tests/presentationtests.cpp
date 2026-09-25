@@ -22,6 +22,7 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QScreen>
 #include <QSettings>
 #include <QSlider>
@@ -152,6 +153,48 @@ void testGraphicsModePreference()
     midi_play::infrastructure::settings::QSettingsStore persisted(path);
     require(persisted.load(nullptr).graphicsMode == GraphicsMode::VulkanExperimental,
             "saving unrelated settings must preserve the Vulkan preference");
+}
+
+void testBackgroundModePreference()
+{
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary settings directory must be available");
+    const auto path = temporary.filePath(QStringLiteral("settings.ini"));
+    midi_play::app::SettingsService service(
+        std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(path));
+    service.load();
+    midi_play::presentation::settings::SettingsDialog dialog(&service, nullptr);
+    auto* mode = dialog.findChild<QComboBox*>(QStringLiteral("backgroundModeCombo"));
+    auto* imagePath = dialog.findChild<QLineEdit*>(QStringLiteral("backgroundImagePathEdit"));
+    auto* choose = dialog.findChild<QPushButton*>(QStringLiteral("loadBackgroundImageButton"));
+    require(mode && imagePath && choose && !dialog.findChild<QPushButton*>(
+                QStringLiteral("clearBackgroundImageButton")),
+            "background settings must expose a mode and image chooser without a clear button");
+    require(mode->count() == 2 && mode->itemText(0) == QStringLiteral("无背景")
+                && mode->itemText(1) == QStringLiteral("图片背景（实验）")
+                && !mode->currentData().toBool() && imagePath->parentWidget()->isHidden(),
+            "new users must see no background with the image row hidden");
+
+    mode->setCurrentIndex(1);
+    require(service.backgroundImageEnabled() && !imagePath->parentWidget()->isHidden(),
+            "selecting image mode must reveal the image row and persist the mode");
+    const QString selectedPath = temporary.filePath(QStringLiteral("background.png"));
+    service.setBackgroundImagePath(selectedPath);
+    require(imagePath->text() == selectedPath,
+            "the image row must show the currently selected path");
+    mode->setCurrentIndex(0);
+    require(!service.backgroundImageEnabled() && imagePath->parentWidget()->isHidden()
+                && service.backgroundImagePath() == selectedPath,
+            "no background must hide the image row while retaining its path");
+
+    midi_play::app::SettingsService restarted(
+        std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(path));
+    restarted.load();
+    require(!restarted.backgroundImageEnabled() && restarted.backgroundImagePath() == selectedPath,
+            "background mode and image selection must survive restart independently");
+    restarted.setBackgroundImageEnabled(true);
+    require(restarted.activeBackgroundImagePath() == selectedPath,
+            "re-enabling image mode must restore the previous selection");
 }
 
 void testNotationStripPreference()
@@ -460,6 +503,7 @@ int main(int argc, char* argv[])
     testTraditionalViewUpdates(ThemeMode::Dark);
     testTraditionalViewUpdates(ThemeMode::Light);
     testGraphicsModePreference();
+    testBackgroundModePreference();
     testNotationStripPreference();
     testPlaybackRateInteraction();
     testMetronomeControl();

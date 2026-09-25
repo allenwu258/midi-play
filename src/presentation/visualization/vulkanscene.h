@@ -54,7 +54,8 @@ struct VulkanUiBatch {
 class VulkanScene final {
 public:
     void prepare(const midi_play::visualization::PlaybackSceneState& state,
-                 QSize logicalSize, qreal dpr, const QFont& font);
+                 QSize logicalSize, qreal dpr, const QFont& font,
+                 bool hasBackground = false, QSize backgroundSize = {}, quint64 backgroundRevision = 0);
     const QVector<VulkanQuad>& notes() const { return m_notes; }
     const VulkanUiBatch& staticUi() const { return m_staticUi; }
     const VulkanUiBatch& dynamicUi() const { return m_dynamicUi; }
@@ -92,6 +93,9 @@ private:
     QSize m_size;
     qint64 m_lookAheadUs = 0;
     bool m_showNotationStrip = false;
+    bool m_hasBackground = false;
+    QSize m_backgroundSize;
+    quint64 m_backgroundRevision = 0;
     qreal m_dpr = 1;
     QImage m_atlas;
     QHash<QString, Glyph> m_glyphs;

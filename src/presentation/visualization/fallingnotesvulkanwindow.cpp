@@ -36,13 +36,18 @@ struct ImageResources {
     Buffer dynamicUi;
     QVector<VulkanQuad> uploadedDynamicUi;
     Buffer staging;
+    Buffer backgroundStaging;
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory imageMemory = VK_NULL_HANDLE;
     VkImageView imageView = VK_NULL_HANDLE;
+    VkImage backgroundImage = VK_NULL_HANDLE;
+    VkDeviceMemory backgroundImageMemory = VK_NULL_HANDLE;
+    VkImageView backgroundImageView = VK_NULL_HANDLE;
     VkDescriptorSet descriptor = VK_NULL_HANDLE;
     quint64 notesRevision = 0;
     quint64 staticUiRevision = 0;
     quint64 atlasRevision = 0;
+    quint64 backgroundRevision = 0;
     // Optional host/GPU lifetime audit, enabled by the Vulkan stress test.
     VkEvent completionEvent = VK_NULL_HANDLE;
     bool submitted = false;
@@ -84,6 +89,7 @@ private:
     void createRenderPass();
     void createAtlas(ImageResources& frame);
     void uploadAtlas(ImageResources& frame, VkCommandBuffer command);
+    void uploadBackground(ImageResources& frame, VkCommandBuffer command);
     void completePresentation();
     void fail(const QString& message);
     void draw(VkCommandBuffer command, Buffer& buffer, uint32_t count, uint32_t first = 0);
@@ -208,14 +214,16 @@ void FallingNotesVulkanRenderer::initResources()
         m_window->physicalDevice(), m_window->graphicsQueueFamilyIndex(), m_window);
     m_window->vulkanInstance()->functions()->vkGetPhysicalDeviceMemoryProperties(m_window->physicalDevice(), &m_memoryProperties);
     try {
-        VkDescriptorSetLayoutBinding binding {};
-        binding.binding = 0;
-        binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        binding.descriptorCount = 1;
-        binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutBinding bindings[2] {};
+        for (uint32_t i = 0; i < 2; ++i) {
+            bindings[i].binding = i;
+            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            bindings[i].descriptorCount = 1;
+            bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
         VkDescriptorSetLayoutCreateInfo descriptor {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        descriptor.bindingCount = 1;
-        descriptor.pBindings = &binding;
+        descriptor.bindingCount = 2;
+        descriptor.pBindings = bindings;
         checked(m_df->vkCreateDescriptorSetLayout(m_device, &descriptor, nullptr, &m_descriptorLayout), "descriptor layout");
         VkSamplerCreateInfo sampler {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
@@ -344,7 +352,7 @@ void FallingNotesVulkanRenderer::initSwapChainResources()
         const uint32_t count = uint32_t(m_window->swapChainImageCount());
         m_images.resize(count);
         createRenderPass();
-        VkDescriptorPoolSize poolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count};
+        VkDescriptorPoolSize poolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count * 2};
         VkDescriptorPoolCreateInfo pool {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pool.maxSets = count;
         pool.poolSizeCount = 1;
@@ -384,10 +392,14 @@ void FallingNotesVulkanRenderer::releaseSwapChainResources()
     m_pipeline = VK_NULL_HANDLE;
     for (auto& frame : m_images) {
         if (frame.framebuffer) m_df->vkDestroyFramebuffer(m_device, frame.framebuffer, nullptr);
-        destroy(frame.notes); destroy(frame.staticUi); destroy(frame.dynamicUi); destroy(frame.staging);
+        destroy(frame.notes); destroy(frame.staticUi); destroy(frame.dynamicUi);
+        destroy(frame.staging); destroy(frame.backgroundStaging);
         if (frame.imageView) m_df->vkDestroyImageView(m_device, frame.imageView, nullptr);
         if (frame.image) m_df->vkDestroyImage(m_device, frame.image, nullptr);
         if (frame.imageMemory) m_df->vkFreeMemory(m_device, frame.imageMemory, nullptr);
+        if (frame.backgroundImageView) m_df->vkDestroyImageView(m_device, frame.backgroundImageView, nullptr);
+        if (frame.backgroundImage) m_df->vkDestroyImage(m_device, frame.backgroundImage, nullptr);
+        if (frame.backgroundImageMemory) m_df->vkFreeMemory(m_device, frame.backgroundImageMemory, nullptr);
         if (frame.completionEvent) m_df->vkDestroyEvent(m_device, frame.completionEvent, nullptr);
     }
     m_images.clear();
@@ -435,6 +447,8 @@ void FallingNotesVulkanRenderer::createAtlas(ImageResources& frame)
     write.descriptorCount = 1; write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &imageInfo;
     m_df->vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    write.dstBinding = 1;
+    m_df->vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 }
 
 void FallingNotesVulkanRenderer::uploadAtlas(ImageResources& frame, VkCommandBuffer command)
@@ -463,6 +477,80 @@ void FallingNotesVulkanRenderer::uploadAtlas(ImageResources& frame, VkCommandBuf
     m_df->vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
     frame.atlasRevision = m_scene.atlasRevision();
+}
+
+void FallingNotesVulkanRenderer::uploadBackground(ImageResources& frame, VkCommandBuffer command)
+{
+    const auto& image = m_window->backgroundImage();
+    const quint64 revision = m_window->backgroundRevision();
+    if (frame.backgroundRevision == revision) return;
+
+    if (frame.backgroundImageView) m_df->vkDestroyImageView(m_device, frame.backgroundImageView, nullptr);
+    if (frame.backgroundImage) m_df->vkDestroyImage(m_device, frame.backgroundImage, nullptr);
+    if (frame.backgroundImageMemory) m_df->vkFreeMemory(m_device, frame.backgroundImageMemory, nullptr);
+    frame.backgroundImageView = VK_NULL_HANDLE;
+    frame.backgroundImage = VK_NULL_HANDLE;
+    frame.backgroundImageMemory = VK_NULL_HANDLE;
+
+    if (image.isNull()) {
+        if (frame.imageView) {
+            VkDescriptorImageInfo descriptorInfo {m_sampler, frame.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = frame.descriptor; write.dstBinding = 1; write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; write.pImageInfo = &descriptorInfo;
+            m_df->vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        }
+        frame.backgroundRevision = revision;
+        return;
+    }
+
+    const int width = image.width();
+    const int height = image.height();
+    VkImageCreateInfo info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.imageType = VK_IMAGE_TYPE_2D; info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    info.extent = {uint32_t(width), uint32_t(height), 1};
+    info.mipLevels = info.arrayLayers = 1; info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    checked(m_df->vkCreateImage(m_device, &info, nullptr, &frame.backgroundImage), "background image");
+    VkMemoryRequirements requirements;
+    m_df->vkGetImageMemoryRequirements(m_device, frame.backgroundImage, &requirements);
+    VkMemoryAllocateInfo allocation {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memoryType(requirements.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    checked(m_df->vkAllocateMemory(m_device, &allocation, nullptr, &frame.backgroundImageMemory), "background image memory");
+    checked(m_df->vkBindImageMemory(m_device, frame.backgroundImage, frame.backgroundImageMemory, 0), "bind background image");
+    VkImageViewCreateInfo view {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view.image = frame.backgroundImage; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = info.format;
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    checked(m_df->vkCreateImageView(m_device, &view, nullptr, &frame.backgroundImageView), "background image view");
+
+    reserve(frame.backgroundStaging, image.sizeInBytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    upload(frame.backgroundStaging, image.constBits(), image.sizeInBytes());
+    VkImageMemoryBarrier barrier {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = frame.backgroundImage;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    m_df->vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkBufferImageCopy copy {};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {uint32_t(width), uint32_t(height), 1};
+    m_df->vkCmdCopyBufferToImage(command, frame.backgroundStaging.handle, frame.backgroundImage,
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    m_df->vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkDescriptorImageInfo descriptorInfo {m_sampler, frame.backgroundImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = frame.descriptor; write.dstBinding = 1; write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; write.pImageInfo = &descriptorInfo;
+    m_df->vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    frame.backgroundRevision = revision;
 }
 
 void FallingNotesVulkanRenderer::draw(VkCommandBuffer command, Buffer& buffer, uint32_t count, uint32_t first)
@@ -518,7 +606,9 @@ void FallingNotesVulkanRenderer::startNextFrame()
                     throw std::runtime_error("Vulkan resources reused before previous GPU draw completed");
                 checked(m_df->vkResetEvent(m_device, frame.completionEvent), "reset completion event");
             }
-            m_scene.prepare(state, m_window->size(), m_window->devicePixelRatio(), m_window->sceneFont());
+            m_scene.prepare(state, m_window->size(), m_window->devicePixelRatio(), m_window->sceneFont(),
+                            !m_window->backgroundImage().isNull(), m_window->backgroundImage().size(),
+                            m_window->backgroundRevision());
             if (frame.notesRevision != m_scene.notesRevision()) {
                 reserve(frame.notes, VkDeviceSize(m_scene.notes().size()) * sizeof(VulkanQuad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
                 upload(frame.notes, m_scene.notes().constData(), VkDeviceSize(m_scene.notes().size()) * sizeof(VulkanQuad));
@@ -533,6 +623,7 @@ void FallingNotesVulkanRenderer::startNextFrame()
             }
             uploadDynamicUi(frame);
             uploadAtlas(frame, command);
+            uploadBackground(frame, command);
             qCDebug(lcVulkan) << "Image:" << imageIndex << "frame:" << m_window->currentFrame()
                 << "static revision:" << frame.staticUiRevision << "notes revision:" << frame.notesRevision
                 << "instances (static/dynamic/notes):" << m_scene.staticUi().quads.size()
@@ -628,6 +719,13 @@ void FallingNotesVulkanWindow::setNoteColorMode(midi_play::settings::NoteColorMo
     const auto normalized = midi_play::settings::normalizeNoteColorMode(mode);
     if (m_noteColorMode == normalized) return;
     m_noteColorMode = normalized;
+    requestUpdate();
+}
+
+void FallingNotesVulkanWindow::setBackgroundImage(const QImage& image)
+{
+    m_backgroundImage = image;
+    ++m_backgroundRevision;
     requestUpdate();
 }
 

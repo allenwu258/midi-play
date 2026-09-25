@@ -13,6 +13,8 @@
 #include <QVBoxLayout>
 #endif
 #include <QDebug>
+#include <QImageReader>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
 #include <cmath>
@@ -196,6 +198,49 @@ void FallingNotesView::setGraphicsMode(midi_play::settings::GraphicsMode mode)
 #endif
 }
 
+void FallingNotesView::setBackgroundImagePath(const QString& path)
+{
+    m_backgroundImagePath = path.trimmed();
+    const quint64 requestId = ++m_backgroundRequestId;
+    m_backgroundImage = {};
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setBackgroundImage({});
+#endif
+    update();
+    if (m_backgroundImagePath.isEmpty()) return;
+
+    auto* watcher = new QFutureWatcher<QImage>(this);
+    connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher, requestId] {
+        const QImage image = watcher->result();
+        watcher->deleteLater();
+        if (requestId != m_backgroundRequestId) return;
+        m_backgroundImage = image;
+#if MIDI_PLAY_HAS_VULKAN
+        if (m_vulkanWindow) m_vulkanWindow->setBackgroundImage(m_backgroundImage);
+#endif
+        update();
+    });
+    watcher->setFuture(QtConcurrent::run(&FallingNotesView::loadBackgroundImage, m_backgroundImagePath));
+}
+
+QImage FallingNotesView::loadBackgroundImage(const QString& path)
+{
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    const QSize sourceSize = reader.size();
+    if (!sourceSize.isValid()) return {};
+    // Keep the per-swapchain Vulkan texture budget bounded. The renderer owns
+    // one copy per swapchain image, so 2048 keeps large source files from
+    // consuming hundreds of megabytes of device-local memory.
+    constexpr int maximumDimension = 2048;
+    QSize targetSize = sourceSize;
+    if (targetSize.width() > maximumDimension || targetSize.height() > maximumDimension)
+        targetSize.scale(maximumDimension, maximumDimension, Qt::KeepAspectRatio);
+    reader.setScaledSize(targetSize);
+    const QImage image = reader.read();
+    return image.isNull() ? QImage() : image.convertToFormat(QImage::Format_RGBA8888);
+}
+
 #if MIDI_PLAY_HAS_VULKAN
 bool FallingNotesView::createVulkanView()
 {
@@ -244,6 +289,7 @@ bool FallingNotesView::createVulkanView()
     m_vulkanWindow->setTransportState(m_state.transportState);
     m_vulkanWindow->setErrorMessage(m_state.errorMessage);
     m_vulkanWindow->setLoading(m_state.loading);
+    m_vulkanWindow->setBackgroundImage(m_backgroundImage);
     m_vulkanWindow->show();
     return true;
 }
@@ -296,7 +342,7 @@ void FallingNotesView::paintEvent(QPaintEvent* event)
     if (m_staticKeyboardDirty) rebuildStaticKeyboard(dpr, keyboardLogicalRect);
 
     QPainter painter(this);
-    m_renderer.renderStaticBackgroundLayer(painter, m_geometry, m_state);
+    m_renderer.renderStaticBackgroundLayer(painter, m_geometry, m_state, m_backgroundImage);
     if (!m_staticKeyboard.isNull()) {
         painter.drawImage(m_staticKeyboardLogicalRect.topLeft(), m_staticKeyboard);
     } else {

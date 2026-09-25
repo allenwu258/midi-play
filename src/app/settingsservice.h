@@ -25,6 +25,11 @@ public:
     const QString& lastLoadWarning() const noexcept { return m_lastLoadWarning; }
     settings::TitleBarMode titleBarMode() const noexcept { return m_settings.titleBarMode; }
     const QString& soundFontPath() const noexcept { return m_settings.soundFontPath; }
+    const QString& backgroundImagePath() const noexcept { return m_settings.backgroundImagePath; }
+    bool backgroundImageEnabled() const noexcept { return m_settings.backgroundImageEnabled; }
+    QString activeBackgroundImagePath() const {
+        return m_settings.backgroundImageEnabled ? m_settings.backgroundImagePath : QString();
+    }
 
     void load();
 
@@ -36,6 +41,8 @@ public slots:
     void setNoteColorMode(settings::NoteColorMode mode);
     void setTitleBarMode(settings::TitleBarMode mode);
     void setSoundFontPath(const QString& path);
+    void setBackgroundImagePath(const QString& path);
+    void setBackgroundImageEnabled(bool enabled);
 
 signals:
     void visualizationRefreshRateChanged(int refreshRate);
@@ -45,11 +52,14 @@ signals:
     void noteColorModeChanged(midi_play::settings::NoteColorMode mode);
     void titleBarModeChanged(midi_play::settings::TitleBarMode mode);
     void soundFontPathChanged(const QString& path);
+    void backgroundImagePathChanged(const QString& path);
+    void backgroundImageEnabledChanged(bool enabled);
     void settingsLoadWarning(const QString& message);
     void settingsSaveFailed(const QString& message);
 
 private:
     static QString normalizeSoundFontPath(const QString& path);
+    static QString normalizeBackgroundImagePath(const QString& path);
     void persistSettings();
 
     std::unique_ptr<ISettingsStore> m_store;

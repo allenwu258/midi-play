@@ -11,6 +11,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QImageReader>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -41,6 +43,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     root->addWidget(title);
 
     auto* form = new QFormLayout();
+    m_formLayout = form;
     form->setContentsMargins(0, 0, 0, 0);
     form->setHorizontalSpacing(14);
     form->setVerticalSpacing(10);
@@ -132,9 +135,38 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     soundFontActions->addStretch();
     soundFontLayout->addLayout(soundFontActions);
     form->addRow(QStringLiteral("音源"), soundFontEditor);
+
+    m_backgroundModeCombo = new QComboBox(this);
+    m_backgroundModeCombo->setObjectName(QStringLiteral("backgroundModeCombo"));
+    m_backgroundModeCombo->addItem(QStringLiteral("无背景"), false);
+    m_backgroundModeCombo->addItem(QStringLiteral("图片背景（实验）"), true);
+    form->addRow(QStringLiteral("下落背景"), m_backgroundModeCombo);
+
+    auto* backgroundEditor = new QWidget(this);
+    m_backgroundImageEditor = backgroundEditor;
+    auto* backgroundLayout = new QVBoxLayout(backgroundEditor);
+    backgroundLayout->setContentsMargins(0, 0, 0, 0);
+    backgroundLayout->setSpacing(6);
+    m_backgroundImagePathEdit = new QLineEdit(backgroundEditor);
+    m_backgroundImagePathEdit->setObjectName(QStringLiteral("backgroundImagePathEdit"));
+    m_backgroundImagePathEdit->setReadOnly(true);
+    m_backgroundImagePathEdit->setPlaceholderText(QStringLiteral("尚未选择图片"));
+    m_backgroundImagePathEdit->setAccessibleName(QStringLiteral("下落音符背景图片"));
+    backgroundLayout->addWidget(m_backgroundImagePathEdit);
+    auto* backgroundActions = new QHBoxLayout();
+    backgroundActions->setContentsMargins(0, 0, 0, 0);
+    backgroundActions->setSpacing(6);
+    m_loadBackgroundImageButton = new QPushButton(QStringLiteral("选择图片"), backgroundEditor);
+    m_loadBackgroundImageButton->setObjectName(QStringLiteral("loadBackgroundImageButton"));
+    m_loadBackgroundImageButton->setToolTip(QStringLiteral("选择本地 PNG、JPEG、WebP 或 BMP 图片"));
+    backgroundActions->addWidget(m_loadBackgroundImageButton);
+    backgroundActions->addStretch();
+    backgroundLayout->addLayout(backgroundActions);
+    form->addRow(QStringLiteral("背景图片"), backgroundEditor);
+    form->setRowVisible(backgroundEditor, false);
     root->addLayout(form);
 
-    auto* hint = new QLabel(QStringLiteral("视觉刷新率仅影响下落音符和界面刷新，不影响音频播放精度。"), this);
+    auto* hint = new QLabel(QStringLiteral("视觉刷新率仅影响下落音符和界面刷新，不影响音频播放精度；背景图片只覆盖下落音符区域。"), this);
     hint->setObjectName(QStringLiteral("settingsHint"));
     hint->setWordWrap(true);
     root->addWidget(hint);
@@ -190,12 +222,18 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         connect(m_settingsService, &app::SettingsService::showNotationStripChanged,
                 this, &SettingsDialog::updateNotationStripSelection);
         updateSoundFontPath(m_settingsService->soundFontPath());
+        updateBackgroundImagePath(m_settingsService->backgroundImagePath());
+        updateBackgroundModeSelection(m_settingsService->backgroundImageEnabled());
         connect(m_titleBarModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyTitleBarModeFromUi);
         connect(m_graphicsModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyGraphicsModeFromUi);
         connect(m_loadSoundFontButton, &QPushButton::clicked,
                 this, &SettingsDialog::chooseSoundFont);
+        connect(m_loadBackgroundImageButton, &QPushButton::clicked,
+                this, &SettingsDialog::chooseBackgroundImage);
+        connect(m_backgroundModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &SettingsDialog::applyBackgroundModeFromUi);
         connect(m_settingsService, &app::SettingsService::visualizationRefreshRateChanged,
                 this, &SettingsDialog::updateRefreshRateSelection);
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
@@ -204,6 +242,10 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::updateGraphicsModeSelection);
         connect(m_settingsService, &app::SettingsService::soundFontPathChanged,
                 this, &SettingsDialog::updateSoundFontPath);
+        connect(m_settingsService, &app::SettingsService::backgroundImagePathChanged,
+                this, &SettingsDialog::updateBackgroundImagePath);
+        connect(m_settingsService, &app::SettingsService::backgroundImageEnabledChanged,
+                this, &SettingsDialog::updateBackgroundModeSelection);
         connect(m_settingsService, &app::SettingsService::settingsSaveFailed,
                 this, &SettingsDialog::showSaveError);
         connect(m_settingsService, &app::SettingsService::settingsLoadWarning,
@@ -226,6 +268,8 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         m_titleBarModeCombo->setEnabled(false);
         m_graphicsModeCombo->setEnabled(false);
         m_showNotationStripCheckBox->setEnabled(false);
+        m_backgroundModeCombo->setEnabled(false);
+        m_loadBackgroundImageButton->setEnabled(false);
         showSaveError(QStringLiteral("设置服务不可用"));
     }
     if (!m_settingsService || !m_playerService) {
@@ -288,6 +332,29 @@ void SettingsDialog::applyGraphicsModeFromUi()
 void SettingsDialog::chooseSoundFont()
 {
     chooseSoundFontFile(this, m_settingsService, m_playerService);
+}
+
+void SettingsDialog::chooseBackgroundImage()
+{
+    if (!m_settingsService) return;
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("选择下落音符背景图片"), {},
+        QStringLiteral("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*)"));
+    if (path.isEmpty()) return;
+    QImageReader reader(path);
+    if (!reader.canRead()) {
+        showSaveError(QStringLiteral("无法读取背景图片：%1").arg(reader.errorString()));
+        return;
+    }
+    m_errorLabel->hide();
+    m_settingsService->setBackgroundImagePath(path);
+}
+
+void SettingsDialog::applyBackgroundModeFromUi()
+{
+    if (!m_settingsService) return;
+    m_errorLabel->hide();
+    m_settingsService->setBackgroundImageEnabled(m_backgroundModeCombo->currentData().toBool());
 }
 
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
@@ -373,6 +440,22 @@ void SettingsDialog::updateSoundFontPath(const QString& path)
     m_soundFontPathEdit->setAccessibleDescription(QStringLiteral("用户选择的音源文件"));
     // Keep the file name visible when the absolute path is wider than the editor.
     m_soundFontPathEdit->setCursorPosition(path.size());
+}
+
+void SettingsDialog::updateBackgroundImagePath(const QString& path)
+{
+    if (!m_backgroundImagePathEdit) return;
+    m_backgroundImagePathEdit->setText(path);
+    m_backgroundImagePathEdit->setToolTip(path.isEmpty() ? QStringLiteral("尚未选择图片") : path);
+    m_backgroundImagePathEdit->setCursorPosition(path.size());
+}
+
+void SettingsDialog::updateBackgroundModeSelection(bool enabled)
+{
+    const QSignalBlocker blocker(m_backgroundModeCombo);
+    m_backgroundModeCombo->setCurrentIndex(m_backgroundModeCombo->findData(enabled));
+    m_formLayout->setRowVisible(m_backgroundImageEditor, enabled);
+    if (isVisible()) resize(width(), sizeHint().height());
 }
 
 void SettingsDialog::setSoundFontLoading(bool loading)

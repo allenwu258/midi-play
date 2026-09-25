@@ -7,6 +7,7 @@
 
 #include <QVulkanWindow>
 #include <QFont>
+#include <QImage>
 
 namespace midi_play::presentation::visualization {
 
@@ -21,9 +22,12 @@ public:
     void setShowNotationStrip(bool show);
     void setThemeMode(midi_play::settings::ThemeMode mode);
     void setNoteColorMode(midi_play::settings::NoteColorMode mode);
+    void setBackgroundImage(const QImage& image);
     midi_play::visualization::VisualChartPtr chart() const { return m_chart; }
     qint64 positionUs() const noexcept { return m_positionUs; }
     qint64 durationUs() const noexcept { return m_durationUs; }
+    const QImage& backgroundImage() const noexcept { return m_backgroundImage; }
+    quint64 backgroundRevision() const noexcept { return m_backgroundRevision; }
     midi_play::playback::State transportState() const noexcept { return m_state; }
     midi_play::visualization::PlaybackSceneState sceneState() const;
     QFont sceneFont() const { return m_font; }
@@ -54,6 +58,8 @@ private:
     QFont m_font;
     const VisualPlaybackClock* m_visualClock = nullptr;
     qint64 m_effectsStartUs = 0;
+    QImage m_backgroundImage;
+    quint64 m_backgroundRevision = 1;
 };
 
 } // namespace midi_play::presentation::visualization

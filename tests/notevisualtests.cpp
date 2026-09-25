@@ -418,6 +418,26 @@ void testVulkanThemes(const visualization::VisualChartPtr& chart)
     }
 }
 
+void testVulkanSingleImageBackground(const visualization::VisualChartPtr& chart)
+{
+    VulkanScene scene;
+    visualization::PlaybackSceneState state;
+    state.chart = chart;
+    scene.prepare(state, {1280, 720}, 1, QFont(), true, {1920, 1080}, 1);
+    const auto range = scene.staticUi().range(VulkanUiLayer::Background);
+    require(range.count >= 2, "Vulkan background layer must contain the image and readability mask");
+    const auto& image = scene.staticUi().quads[range.first];
+    require(image.options[2] == 2 && (image.uv[2] < 1.0f || image.uv[3] < 1.0f),
+            "Vulkan background must use a dedicated texture with cover cropping");
+    const auto revision = scene.staticUiRevision();
+    scene.prepare(state, {1280, 720}, 1, QFont(), true, {1920, 1080}, 1);
+    require(scene.staticUiRevision() == revision,
+            "unchanged Vulkan background settings must not rebuild static geometry");
+    scene.prepare(state, {1280, 720}, 1, QFont(), false, {}, 2);
+    require(scene.staticUi().range(VulkanUiLayer::Background).count == range.count - 2,
+            "clearing the Vulkan background must remove its image and mask quads");
+}
+
 void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const QString& directory)
 {
     qputenv("MIDI_PLAY_VULKAN_VALIDATE_RESOURCES", "1");
@@ -674,6 +694,7 @@ int main(int argc, char** argv)
 #if MIDI_PLAY_HAS_VULKAN
     testVulkanStaticKeyboard(chart);
     testVulkanThemes(chart);
+    testVulkanSingleImageBackground(chart);
     if (args.contains(QStringLiteral("--vulkan-stress"))) {
         auto selectedChart = stressChart();
         const int midiArgument = args.indexOf(QStringLiteral("--midi"));

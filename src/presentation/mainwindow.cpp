@@ -163,6 +163,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                     });
         }
         m_visualization->setGraphicsMode(m_settingsService->graphicsMode());
+        m_visualization->setBackgroundImagePath(m_settingsService->activeBackgroundImagePath());
         m_visualization->setShowNotationStrip(m_settingsService->showNotationStrip());
         m_visualization->setNoteColorMode(m_settingsService->noteColorMode());
         connect(m_settingsService, &app::SettingsService::showNotationStripChanged,
@@ -171,6 +172,13 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_visualization, &visualization::FallingNotesView::setNoteColorMode);
         connect(m_settingsService, &app::SettingsService::graphicsModeChanged,
                 m_visualization, &visualization::FallingNotesView::setGraphicsMode);
+        const auto updateBackground = [this] {
+            m_visualization->setBackgroundImagePath(m_settingsService->activeBackgroundImagePath());
+        };
+        connect(m_settingsService, &app::SettingsService::backgroundImagePathChanged,
+                m_visualization, updateBackground);
+        connect(m_settingsService, &app::SettingsService::backgroundImageEnabledChanged,
+                m_visualization, updateBackground);
     }
 
     auto* transport = new QWidget(central);

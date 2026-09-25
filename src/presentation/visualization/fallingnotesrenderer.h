@@ -11,6 +11,7 @@
 #include "textlayoutcache.h"
 
 #include <QColor>
+#include <QImage>
 #include <QLineF>
 #include <QRectF>
 #include <QVector>
@@ -26,7 +27,8 @@ public:
     void renderStaticLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
                            const midi_play::visualization::PlaybackSceneState& state);
     void renderStaticBackgroundLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
-                                     const midi_play::visualization::PlaybackSceneState& state);
+                                     const midi_play::visualization::PlaybackSceneState& state,
+                                     const QImage& background = {});
     void renderStaticKeyboardLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                    const midi_play::visualization::PlaybackSceneState& state);
     void renderDynamicLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,

@@ -105,7 +105,7 @@ void testPersistence()
                 && restarted.themeMode() == ThemeMode::Dark && restarted.showNotationStrip()
                 && restarted.visualizationRefreshRate() == 120 && restarted.soundFontPath() == soundFont,
             "normal must persist independently of theme and unrelated settings");
-    require(QSettings(path, QSettings::IniFormat).value(QStringLiteral("General/schemaVersion")).toInt() == 7,
+    require(QSettings(path, QSettings::IniFormat).value(QStringLiteral("General/schemaVersion")).toInt() == midi_play::settings::kSettingsSchemaVersion,
             "saving note colors must persist schema 7");
     for (const QVariant& invalid : {QVariant(-1), QVariant(9), QVariant(QStringLiteral("vivid")), QVariant(QString())}) {
         {

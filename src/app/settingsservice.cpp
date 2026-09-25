@@ -33,6 +33,7 @@ void SettingsService::load()
     loadedSettings.themeMode = settings::normalizeThemeMode(loadedSettings.themeMode);
     loadedSettings.noteColorMode = settings::normalizeNoteColorMode(loadedSettings.noteColorMode);
     loadedSettings.soundFontPath = normalizeSoundFontPath(loadedSettings.soundFontPath);
+    loadedSettings.backgroundImagePath = normalizeBackgroundImagePath(loadedSettings.backgroundImagePath);
     m_settings = loadedSettings;
     m_lastLoadWarning = warning;
     if (!warning.isEmpty()) {
@@ -123,6 +124,24 @@ void SettingsService::setSoundFontPath(const QString& path)
     persistSettings();
 }
 
+void SettingsService::setBackgroundImagePath(const QString& path)
+{
+    const QString normalizedPath = normalizeBackgroundImagePath(path);
+    if (m_settings.backgroundImagePath == normalizedPath) return;
+
+    m_settings.backgroundImagePath = normalizedPath;
+    emit backgroundImagePathChanged(backgroundImagePath());
+    persistSettings();
+}
+
+void SettingsService::setBackgroundImageEnabled(bool enabled)
+{
+    if (m_settings.backgroundImageEnabled == enabled) return;
+    m_settings.backgroundImageEnabled = enabled;
+    emit backgroundImageEnabledChanged(enabled);
+    persistSettings();
+}
+
 QString SettingsService::normalizeSoundFontPath(const QString& path)
 {
     const QString trimmedPath = path.trimmed();
@@ -130,6 +149,13 @@ QString SettingsService::normalizeSoundFontPath(const QString& path)
         return {};
     }
 
+    return QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
+}
+
+QString SettingsService::normalizeBackgroundImagePath(const QString& path)
+{
+    const QString trimmedPath = path.trimmed();
+    if (trimmedPath.isEmpty()) return {};
     return QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
 }
 

@@ -14,7 +14,8 @@ float seconds(qint64 value, qint64 origin) { return float((value - origin) / 1'0
 }
 
 void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& state,
-                          QSize size, qreal dpr, const QFont& font)
+                          QSize size, qreal dpr, const QFont& font,
+                          bool hasBackground, QSize backgroundSize, quint64 backgroundRevision)
 {
     const bool chartChanged = m_chart != state.chart;
     const auto mode = midi_play::settings::normalizeThemeMode(state.themeMode);
@@ -23,6 +24,12 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     m_theme = theme::themeFor(mode).visualization;
     const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs
         || m_showNotationStrip != state.showNotationStrip;
+    const bool backgroundChanged = m_hasBackground != hasBackground
+        || (hasBackground && m_backgroundSize != backgroundSize)
+        || (hasBackground && m_backgroundRevision != backgroundRevision);
+    m_hasBackground = hasBackground;
+    m_backgroundSize = backgroundSize;
+    m_backgroundRevision = backgroundRevision;
     if (chartChanged) {
         m_chart = state.chart;
         m_index = {};
@@ -38,7 +45,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         m_geometry = SceneLayoutEngine().layout(size, m_chart.get(),
                                                 state.lookAheadUs, state.showNotationStrip);
     }
-    if (layoutChanged || themeChanged) rebuildStaticUi();
+    if (layoutChanged || themeChanged || backgroundChanged) rebuildStaticUi();
     if (m_atlas.isNull() || m_dpr != dpr || m_atlasFull || m_atlasY > 1536 || chartChanged) {
         m_dpr = dpr;
         m_atlas = QImage(2048, 2048, QImage::Format_RGBA8888_Premultiplied);
@@ -164,6 +171,22 @@ void VulkanScene::rebuildStaticUi()
     auto& output = m_staticUi.quads;
     const auto& g = m_geometry;
     m_staticUi.beginLayer(VulkanUiLayer::Background);
+    if (m_hasBackground) {
+        rect(output, g.fallingRect, Qt::white);
+        auto& background = output.back();
+        background.options[2] = 2;
+        const qreal imageAspect = m_backgroundSize.width() > 0 && m_backgroundSize.height() > 0
+            ? qreal(m_backgroundSize.width()) / m_backgroundSize.height() : 1.0;
+        const qreal areaAspect = g.fallingRect.width() / std::max<qreal>(1.0, g.fallingRect.height());
+        if (imageAspect > areaAspect) {
+            const qreal width = areaAspect / imageAspect;
+            background.uv = {float((1.0 - width) / 2.0), 0, float(width), 1};
+        } else {
+            const qreal height = imageAspect / std::max<qreal>(0.001, areaAspect);
+            background.uv = {0, float((1.0 - height) / 2.0), 1, float(height)};
+        }
+        rect(output, g.fallingRect, QColor(0, 0, 0, 85));
+    }
     for (const auto& pitch : g.pitches) {
         if (pitch.valid && pitch.blackKey)
             rect(output, {pitch.keyRect.x(), g.fallingRect.y(), pitch.keyRect.width(), g.fallingRect.height()}, m_theme.pitchBand);

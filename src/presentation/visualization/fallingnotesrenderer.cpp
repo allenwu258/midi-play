@@ -67,12 +67,26 @@ void FallingNotesRenderer::renderStaticLayer(QPainter& painter, const PlaybackSc
 
 void FallingNotesRenderer::renderStaticBackgroundLayer(
     QPainter& painter, const PlaybackSceneGeometry& geometry,
-    const PlaybackSceneState& state)
+    const PlaybackSceneState& state, const QImage& background)
 {
     prepareScene(geometry, state);
     painter.save();
     RasterRenderPolicy::apply(painter);
     painter.fillRect(geometry.bounds, m_theme.background);
+    if (!background.isNull() && !geometry.fallingRect.isEmpty()) {
+        painter.save();
+        painter.setClipRect(geometry.fallingRect);
+        const QSizeF sourceSize = background.size();
+        const QSizeF targetSize = geometry.fallingRect.size();
+        const qreal scale = std::max(targetSize.width() / sourceSize.width(),
+                                     targetSize.height() / sourceSize.height());
+        const QSizeF fitted = sourceSize * scale;
+        const QRectF target(geometry.fallingRect.center() - QPointF(fitted.width(), fitted.height()) / 2,
+                            fitted);
+        painter.drawImage(target, background);
+        painter.fillRect(geometry.fallingRect, QColor(0, 0, 0, 85));
+        painter.restore();
+    }
     drawPitchBands(painter, geometry);
     painter.restore();
 }

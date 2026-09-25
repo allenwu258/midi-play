@@ -83,6 +83,10 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     result.titleBarMode = midi_play::settings::titleBarModeFromPersistentValue(configuredTitleBarMode);
     result.soundFontPath =
         file.value(QStringLiteral("Audio/soundFontPath")).toString().trimmed();
+    result.backgroundImagePath =
+        file.value(QStringLiteral("Visualization/backgroundImagePath")).toString().trimmed();
+    result.backgroundImageEnabled = file.value(
+        QStringLiteral("Visualization/backgroundImageEnabled"), !result.backgroundImagePath.isEmpty()).toBool();
 
     const QString readStatus = statusMessage(file.status());
     if (!readStatus.isEmpty() && warning) {
@@ -155,6 +159,12 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
     } else {
         file.setValue(QStringLiteral("Audio/soundFontPath"), settings.soundFontPath);
     }
+    if (settings.backgroundImagePath.isEmpty()) {
+        file.remove(QStringLiteral("Visualization/backgroundImagePath"));
+    } else {
+        file.setValue(QStringLiteral("Visualization/backgroundImagePath"), settings.backgroundImagePath);
+    }
+    file.setValue(QStringLiteral("Visualization/backgroundImageEnabled"), settings.backgroundImageEnabled);
     file.sync();
 
     const QString writeStatus = statusMessage(file.status());

@@ -13,6 +13,7 @@
 #include <QSize>
 #include <QWidget>
 #include <QChronoTimer>
+#include <QFutureWatcher>
 #if MIDI_PLAY_HAS_VULKAN
 #include <QVulkanInstance>
 #endif
@@ -43,6 +44,7 @@ public slots:
     void resetTransientEffects(qint64 positionUs);
     void setTransportState(midi_play::playback::State state);
     void setGraphicsMode(midi_play::settings::GraphicsMode mode);
+    void setBackgroundImagePath(const QString& path);
     void setShowNotationStrip(bool show);
     void setThemeMode(midi_play::settings::ThemeMode mode);
     void setNoteColorMode(midi_play::settings::NoteColorMode mode);
@@ -66,6 +68,7 @@ private:
     bool createVulkanView();
     void destroyVulkanView();
 #endif
+    static QImage loadBackgroundImage(const QString& path);
 
     midi_play::visualization::PlaybackSceneState m_state;
     midi_play::visualization::VisibleNoteIndex m_noteIndex;
@@ -84,6 +87,9 @@ private:
     bool m_staticKeyboardDirty = true;
     midi_play::settings::GraphicsMode m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
     bool m_graphicsModeResolutionPending = false;
+    QString m_backgroundImagePath;
+    QImage m_backgroundImage;
+    quint64 m_backgroundRequestId = 0;
 #if MIDI_PLAY_HAS_VULKAN
     std::unique_ptr<QVulkanInstance> m_vulkanInstance;
     FallingNotesVulkanWindow* m_vulkanWindow = nullptr;

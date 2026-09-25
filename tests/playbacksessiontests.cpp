@@ -368,6 +368,56 @@ void testSettingsServicePersistsSoundFont()
             "an unchanged empty path must not emit or write again");
 }
 
+void testSettingsServicePersistsBackgroundImage()
+{
+    auto store = std::make_unique<MemorySettingsStore>();
+    auto* rawStore = store.get();
+    midi_play::app::SettingsService service(std::move(store));
+    service.load();
+
+    const QString path = QDir::cleanPath(
+        QDir::temp().absoluteFilePath(QStringLiteral("midi-play/background/image.png")));
+    int changes = 0;
+    int modeChanges = 0;
+    QObject::connect(&service, &midi_play::app::SettingsService::backgroundImagePathChanged,
+                     [&changes](const QString&) { ++changes; });
+    QObject::connect(&service, &midi_play::app::SettingsService::backgroundImageEnabledChanged,
+                     [&modeChanges](bool) { ++modeChanges; });
+
+    service.setBackgroundImagePath(path);
+    require(service.backgroundImagePath() == path
+                && rawStore->savedSettings.backgroundImagePath == path
+                && rawStore->saveCount == 1 && changes == 1,
+            "background image path must be normalized, published and persisted");
+    require(service.activeBackgroundImagePath().isEmpty(),
+            "a selected image must remain inactive until image mode is enabled");
+
+    service.setBackgroundImageEnabled(true);
+    require(service.backgroundImageEnabled() && service.activeBackgroundImagePath() == path
+                && rawStore->savedSettings.backgroundImageEnabled
+                && rawStore->saveCount == 2 && modeChanges == 1,
+            "enabling image mode must persist and activate the selected image");
+
+    service.setBackgroundImageEnabled(false);
+    require(!service.backgroundImageEnabled() && service.activeBackgroundImagePath().isEmpty()
+                && service.backgroundImagePath() == path && rawStore->savedSettings.backgroundImagePath == path
+                && rawStore->saveCount == 3 && modeChanges == 2,
+            "disabling image mode must preserve the image selection");
+    service.setBackgroundImageEnabled(false);
+    require(rawStore->saveCount == 3 && modeChanges == 2,
+            "an unchanged background mode must not emit or persist again");
+
+    service.setBackgroundImagePath(path);
+    require(rawStore->saveCount == 3 && changes == 1,
+            "an unchanged background image path must not be saved again");
+
+    service.setBackgroundImagePath({});
+    require(service.backgroundImagePath().isEmpty()
+                && rawStore->savedSettings.backgroundImagePath.isEmpty()
+                && rawStore->saveCount == 4 && changes == 2,
+            "clearing the background image must persist an empty path");
+}
+
 void testSettingsServicePersistsOnlyEffectiveChanges()
 {
     auto store = std::make_unique<MemorySettingsStore>();
@@ -424,6 +474,8 @@ void testQSettingsStorePersistsUserRefreshRate()
     saved.visualizationRefreshRate = 120;
     saved.titleBarMode = midi_play::settings::TitleBarMode::Custom;
     saved.soundFontPath = QStringLiteral("C:/SoundFonts/custom.sf2");
+    saved.backgroundImagePath = QStringLiteral("C:/Pictures/falling-notes.png");
+    saved.backgroundImageEnabled = true;
     QString error;
     require(store.save(saved, &error), "settings store must save a valid refresh rate");
     require(error.isEmpty(), "successful settings save must not report an error");
@@ -433,6 +485,17 @@ void testQSettingsStorePersistsUserRefreshRate()
             "settings store must reload the persisted refresh rate");
     require(loaded.soundFontPath == saved.soundFontPath,
             "settings store must reload the custom SoundFont override");
+    require(loaded.backgroundImagePath == saved.backgroundImagePath,
+            "settings store must reload the custom background image");
+    require(loaded.backgroundImageEnabled,
+            "settings store must reload image background mode");
+    {
+        QSettings legacy(settingsPath, QSettings::IniFormat);
+        legacy.remove(QStringLiteral("Visualization/backgroundImageEnabled"));
+        legacy.sync();
+    }
+    require(store.load(&warning).backgroundImageEnabled,
+            "legacy settings with a background image must keep it enabled");
 #if defined(Q_OS_WIN)
     require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Custom,
             "Windows settings store must reload the custom title bar mode");
@@ -461,11 +524,17 @@ void testQSettingsStorePersistsUserRefreshRate()
             "invalid persisted title bar mode must fall back to native");
 
     loaded.soundFontPath.clear();
+    loaded.backgroundImagePath.clear();
+    loaded.backgroundImageEnabled = false;
     require(store.save(loaded, &error),
             "settings store must save a reset SoundFont configuration");
     QSettings resetFile(settingsPath, QSettings::IniFormat);
     require(!resetFile.contains(QStringLiteral("Audio/soundFontPath")),
             "reset must remove the custom SoundFont key from the settings file");
+    require(!resetFile.contains(QStringLiteral("Visualization/backgroundImagePath")),
+            "reset must remove the custom background image key from the settings file");
+    require(!resetFile.value(QStringLiteral("Visualization/backgroundImageEnabled")).toBool(),
+            "reset must disable image background mode");
 }
 
 void testPlaybackTimelineCachesRepeatExpansion()
@@ -1165,6 +1234,7 @@ int main(int argc, char* argv[])
     testTitleBarModePlatformPolicy();
     testSettingsServicePersistsTitleBarMode();
     testSettingsServicePersistsSoundFont();
+    testSettingsServicePersistsBackgroundImage();
     testSettingsServicePersistsOnlyEffectiveChanges();
     testQSettingsStorePersistsUserRefreshRate();
     testPlaybackTimelineCachesRepeatExpansion();
