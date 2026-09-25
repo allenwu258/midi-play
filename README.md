@@ -55,7 +55,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **SoundFont**：不内置乐曲音源，启动时检查用户已配置的 SF2/SF3；未配置或加载失败时引导选择，允许暂时跳过。支持播放中事务化切换，SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
 - **双渲染模式**：默认优先使用 Vulkan 绘制，传统 Qt 绘制作为兼容和故障回退模式；两者共享音符布局、主题、色彩和单图片背景设置，也可在设置中手动选择。
-- **单图片背景**：可为下落音符区域选择本地 PNG、JPEG、WebP 或 BMP 图片；图片异步加载、按区域比例裁剪并带可读性遮罩，Vulkan 与传统 Qt 绘制共享配置。
+- **单图片背景**：可为下落音符区域选择本地 PNG、JPEG、静态 WebP 或 BMP 图片；WebP 由随程序部署的解码库读取，不依赖 Qt WebP 插件。图片异步加载、按区域比例裁剪并带可读性遮罩，Vulkan 与传统 Qt 绘制共享配置。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：原生标题栏为默认值；Windows 提供“自定义标题栏（实验）”，macOS/Linux 当前仅使用原生标题栏。
 - **深色 / 浅色主题**：设置中切换并自动保存；两套主题同时覆盖控件、下落音符和琴键，兼容传统 Qt 与 Vulkan 绘制。
@@ -106,7 +106,7 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 - **Vulkan SDK**：构建 Vulkan 版本时需要 x64 头文件、导入库和 `glslangValidator`。只构建传统版本可以不安装；
 - **CMake >= 3.24**：默认使用所配置 Visual Studio 附带的版本，也可以单独指定。
 
-不需要预先安装 FluidSynth。脚本根据 `vcpkg.json` 自动下载或恢复缓存并构建 FluidSynth、libsndfile 和 Ogg/Vorbis/FLAC/Opus 等传递依赖。首次构建需要联网，耗时取决于网络和 vcpkg 缓存；后续构建复用已安装依赖。程序通过 `QLibrary` 使用 FluidSynth，不链接 Qt Multimedia。
+不需要预先安装 FluidSynth 或 libwebp。脚本根据 `vcpkg.json` 自动下载或恢复缓存并构建 FluidSynth、libsndfile、libwebp 和 Ogg/Vorbis/FLAC/Opus 等传递依赖。首次构建需要联网，耗时取决于网络和 vcpkg 缓存；后续构建复用已安装依赖。程序通过 `QLibrary` 使用 FluidSynth，不链接 Qt Multimedia。
 
 ### 统一环境配置
 
@@ -211,7 +211,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -E
 $buildEnvironment = Import-PowerShellDataFile ./build.env.psd1
 $env:QT_ROOT = $buildEnvironment.QtRoot
 $env:VULKAN_SDK = $buildEnvironment.VulkanSdk
-cmake --preset windows-msvc-debug -DFLUIDSYNTH_DLL="$PWD/build/dependencies/vcpkg_installed/x64-windows/bin/libfluidsynth-3.dll"
+cmake --preset windows-msvc-debug -DFLUIDSYNTH_DLL="$PWD/build/dependencies/vcpkg_installed/x64-windows/bin/libfluidsynth-3.dll" -DWebP_DIR="$PWD/build/dependencies/vcpkg_installed/x64-windows/share/WebP"
 cmake --build --preset windows-msvc-debug
 ~~~
 
@@ -461,7 +461,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - 当前只验证 Windows x64 / MSVC；macOS/Linux 的 Qt 架构分支已预留，但没有同等完整的构建、部署和音频验收基线。
 - 当前只有 FluidSynth 音频后端，不提供 Qt Multimedia 后端、外部 MIDI 硬件输出或音频文件导出。
 - Vulkan 是否可用取决于显卡、驱动、Qt Vulkan 支持和运行环境。启动或设备初始化失败时程序会尝试回退传统 Qt；若图形设备在运行中丢失，建议重启后在设置中选择传统 Qt。
-- 单图片背景当前只支持本地静态图片，不支持多图轮播、视频、网络 URL 或背景音频；原图不会复制到发行目录，移动或删除文件后需要在设置中重新选择。
+- 单图片背景当前只支持本地静态图片，不支持动态 WebP、多图轮播、视频、网络 URL 或背景音频；WebP 文件大小上限为 64 MB。原图不会复制到发行目录，移动或删除文件后需要在设置中重新选择。
 - MusicXML 解析面向播放所需语义，不等价于完整的 MuseScore notation DOM；复杂排版、符号布局和编辑语义不在当前范围内。
 - 当前不支持 .mxl、.mscx、.mscz 等压缩或 MuseScore 专用工程格式。
 - 简谱、鼓组 lane、量化网格和调性识别是播放可视化的派生数据，不能当作完整的自动扒谱结果。

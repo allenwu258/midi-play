@@ -6,6 +6,7 @@
 #include "infrastructure/midi/midinormalizer.h"
 #include "infrastructure/midi/midireader.h"
 #include "presentation/visualization/fallingnotesrenderer.h"
+#include "presentation/visualization/backgroundimageloader.h"
 #include "presentation/visualization/noteframestate.h"
 #include "presentation/visualization/scenelayoutengine.h"
 #include "presentation/visualization/visualplaybackclock.h"
@@ -18,8 +19,11 @@
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QPainter>
+#include <QTemporaryDir>
 #include <QThread>
+#include <webp/encode.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -34,6 +38,68 @@ using midi_play::settings::NoteColorMode;
 void require(bool condition, const char* message)
 {
     if (!condition) { std::fprintf(stderr, "FAILED: %s\n", message); std::exit(EXIT_FAILURE); }
+}
+
+void testWebPBackgroundImage()
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "WebP test directory must be available");
+    QImage original(2, 2, QImage::Format_RGBA8888);
+    original.fill(QColor(40, 120, 200, 255));
+    original.setPixelColor(1, 0, QColor(220, 80, 30, 128));
+    uint8_t* encoded = nullptr;
+    const size_t encodedSize = WebPEncodeLosslessRGBA(
+        original.constBits(), original.width(), original.height(), original.bytesPerLine(), &encoded);
+    require(encodedSize > 0 && encoded, "WebP test image must encode successfully");
+    const QByteArray data(reinterpret_cast<const char*>(encoded), qsizetype(encodedSize));
+    WebPFree(encoded);
+
+    for (const QString& name : {QStringLiteral("image.webp"), QStringLiteral("image.bin")}) {
+        const QString path = directory.filePath(name);
+        QFile file(path);
+        require(file.open(QIODevice::WriteOnly) && file.write(data) == data.size(),
+                "WebP test image must be written");
+        file.close();
+        QString error;
+        require(canReadBackgroundImage(path, &error) && error.isEmpty(),
+                "WebP probe must recognize the encoded image");
+        const QImage loaded = loadBackgroundImage(path);
+        const auto closePixel = [](const QColor& actual, const QColor& expected) {
+            return actual.alpha() == expected.alpha()
+                && std::abs(actual.red() - expected.red()) <= 1
+                && std::abs(actual.green() - expected.green()) <= 1
+                && std::abs(actual.blue() - expected.blue()) <= 1;
+        };
+        require(loaded.size() == original.size()
+                    && closePixel(loaded.pixelColor(0, 0), original.pixelColor(0, 0))
+                    && closePixel(loaded.pixelColor(1, 0), original.pixelColor(1, 0)),
+                "WebP background decoder must preserve image colors and alpha");
+    }
+
+    uint8_t* lossy = nullptr;
+    const size_t lossySize = WebPEncodeRGBA(
+        original.constBits(), original.width(), original.height(), original.bytesPerLine(), 90.0f, &lossy);
+    require(lossySize > 0 && lossy, "lossy WebP test image must encode successfully");
+    const QString lossyPath = directory.filePath(QStringLiteral("lossy.webp"));
+    QFile lossyFile(lossyPath);
+    require(lossyFile.open(QIODevice::WriteOnly)
+                && lossyFile.write(reinterpret_cast<const char*>(lossy), qsizetype(lossySize)) == qsizetype(lossySize),
+            "lossy WebP test image must be written");
+    lossyFile.close();
+    WebPFree(lossy);
+    const QImage decodedLossy = loadBackgroundImage(lossyPath);
+    require(decodedLossy.size() == original.size() && decodedLossy.pixelColor(1, 0).alpha() == 128,
+            "lossy WebP background must decode with transparency");
+
+    const QString invalidPath = directory.filePath(QStringLiteral("invalid.webp"));
+    QFile invalidFile(invalidPath);
+    require(invalidFile.open(QIODevice::WriteOnly) && invalidFile.write("invalid", 7) == 7,
+            "invalid WebP test file must be written");
+    invalidFile.close();
+    QString error;
+    require(!canReadBackgroundImage(invalidPath, &error) && !error.isEmpty()
+                && loadBackgroundImage(invalidPath).isNull(),
+            "invalid WebP files must be rejected");
 }
 
 midi::MidiRawEvent event(midi::MidiMessageKind kind, music::Tick tick, int data1, int data2 = 0)
@@ -671,6 +737,7 @@ void benchmarkRaster(int noteCount, bool pedalTails, NoteColorMode colors)
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
+    testWebPBackgroundImage();
     testPedalTimingSurvivesImport();
     testSostenutoCapturesOnlyHeldInstances();
     testContinuousBarsAndPolyphonicTies();

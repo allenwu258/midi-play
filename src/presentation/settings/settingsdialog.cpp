@@ -7,12 +7,12 @@
 
 #include "presentation/theme/widgetstyles.h"
 #include "presentation/theme/themecontroller.h"
+#include "presentation/visualization/backgroundimageloader.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
-#include <QImageReader>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -341,9 +341,9 @@ void SettingsDialog::chooseBackgroundImage()
         this, QStringLiteral("选择下落音符背景图片"), {},
         QStringLiteral("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*)"));
     if (path.isEmpty()) return;
-    QImageReader reader(path);
-    if (!reader.canRead()) {
-        showSaveError(QStringLiteral("无法读取背景图片：%1").arg(reader.errorString()));
+    QString error;
+    if (!visualization::canReadBackgroundImage(path, &error)) {
+        showSaveError(QStringLiteral("无法读取背景图片：%1").arg(error));
         return;
     }
     m_errorLabel->hide();

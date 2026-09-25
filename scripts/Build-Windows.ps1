@@ -203,6 +203,7 @@ try {
     Invoke-Checked $vcpkg @('install', '--triplet=x64-windows', '--host-triplet=x64-windows',
         "--x-manifest-root=$repo", "--x-install-root=$installedDirectory", '--disable-metrics')
     $fluidSynth = Require-File "$installedDirectory\x64-windows\bin\libfluidsynth-3.dll" 'Installed FluidSynth'
+    $webPConfig = Require-File "$installedDirectory\x64-windows\share\WebP\WebPConfig.cmake" 'Installed WebP CMake package'
 
     $vulkanOption = if ($enableVulkan) { 'ON' } else { 'OFF' }
     $configure = @('--fresh', '-S', $repo, '-B', $buildDirectory, '-G', 'Visual Studio 17 2022', '-A', 'x64',
@@ -211,7 +212,8 @@ try {
         "-DCMAKE_GENERATOR_INSTANCE=$vsRoot", "-DCMAKE_PREFIX_PATH=$qtRoot",
         "-DQt6_DIR=$qtRoot/lib/cmake/Qt6", '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF',
         '-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF', '-DBUILD_TESTING=ON', '-DCMAKE_INSTALL_BINDIR=.',
-        "-DFLUIDSYNTH_DLL=$fluidSynth", "-DMIDI_PLAY_ENABLE_VULKAN=$vulkanOption",
+        "-DFLUIDSYNTH_DLL=$fluidSynth", "-DWebP_DIR=$(Split-Path $webPConfig)",
+        "-DMIDI_PLAY_ENABLE_VULKAN=$vulkanOption",
         "-DMIDI_PLAY_REQUIRE_VULKAN=$vulkanOption",
         "-DMIDI_PLAY_TEST_SOUNDFONT=$SoundFontPath")
     if ($enableVulkan) {

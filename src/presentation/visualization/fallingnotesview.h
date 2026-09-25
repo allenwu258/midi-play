@@ -68,7 +68,6 @@ private:
     bool createVulkanView();
     void destroyVulkanView();
 #endif
-    static QImage loadBackgroundImage(const QString& path);
 
     midi_play::visualization::PlaybackSceneState m_state;
     midi_play::visualization::VisibleNoteIndex m_noteIndex;

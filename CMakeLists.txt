@@ -10,6 +10,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
+find_package(WebP CONFIG REQUIRED)
 option(MIDI_PLAY_ENABLE_VULKAN "Build the experimental Vulkan renderer" ON)
 option(MIDI_PLAY_REQUIRE_VULKAN "Fail configuration if the Vulkan renderer is unavailable" OFF)
 set(MIDI_PLAY_HAS_VULKAN OFF)
@@ -195,6 +196,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/visualization/rasterrenderpolicy.cpp
     src/presentation/visualization/fallingnotesview.h
     src/presentation/visualization/fallingnotesview.cpp
+    src/presentation/visualization/backgroundimageloader.h
+    src/presentation/visualization/backgroundimageloader.cpp
 )
 if (MIDI_PLAY_HAS_VULKAN)
     list(APPEND MIDI_PLAY_COMMON_SOURCES
@@ -218,6 +221,7 @@ if (MIDI_PLAY_HAS_VULKAN)
 endif()
 target_include_directories(midi_play_core PUBLIC src)
 target_link_libraries(midi_play_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
+target_link_libraries(midi_play_core PRIVATE WebP::webp)
 if (MIDI_PLAY_HAS_VULKAN)
     add_dependencies(midi_play_core midi_play_vulkan_shaders)
     target_link_libraries(midi_play_core PUBLIC Vulkan::Vulkan)
@@ -289,6 +293,17 @@ if (WIN32 AND EXISTS "${FLUIDSYNTH_DLL}")
             COMMAND_ERROR_IS_FATAL ANY)")
 endif()
 
+if (WIN32)
+    # The WebP target links sharpyuv; deploy both imported runtimes.
+    add_custom_command(TARGET midi_play_core POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:WebP::webp>" "$<TARGET_FILE:WebP::sharpyuv>"
+            "$<TARGET_FILE_DIR:midi_play_core>"
+        VERBATIM)
+    install(FILES "$<TARGET_FILE:WebP::webp>" "$<TARGET_FILE:WebP::sharpyuv>"
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
 include(CTest)
 if (BUILD_TESTING)
     add_executable(midi_play_soundfont_setup_tests tests/soundfontsetuptests.cpp)
@@ -326,6 +341,7 @@ if (BUILD_TESTING)
     endif()
     add_executable(midi_play_note_visual_tests tests/notevisualtests.cpp)
     target_link_libraries(midi_play_note_visual_tests PRIVATE midi_play_core)
+    target_link_libraries(midi_play_note_visual_tests PRIVATE WebP::webp)
     add_test(NAME note_visual_semantics_and_rendering COMMAND midi_play_note_visual_tests -platform offscreen)
     if (TARGET Qt6::QOffscreenIntegrationPlugin)
         set_tests_properties(note_visual_semantics_and_rendering PROPERTIES

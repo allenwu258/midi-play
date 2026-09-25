@@ -1,4 +1,5 @@
 #include "fallingnotesview.h"
+#include "backgroundimageloader.h"
 #include "domain/settings/playersettings.h"
 #if MIDI_PLAY_HAS_VULKAN
 #include "fallingnotesvulkanwindow.h"
@@ -13,7 +14,6 @@
 #include <QVBoxLayout>
 #endif
 #include <QDebug>
-#include <QImageReader>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -220,25 +220,7 @@ void FallingNotesView::setBackgroundImagePath(const QString& path)
 #endif
         update();
     });
-    watcher->setFuture(QtConcurrent::run(&FallingNotesView::loadBackgroundImage, m_backgroundImagePath));
-}
-
-QImage FallingNotesView::loadBackgroundImage(const QString& path)
-{
-    QImageReader reader(path);
-    reader.setAutoTransform(true);
-    const QSize sourceSize = reader.size();
-    if (!sourceSize.isValid()) return {};
-    // Keep the per-swapchain Vulkan texture budget bounded. The renderer owns
-    // one copy per swapchain image, so 2048 keeps large source files from
-    // consuming hundreds of megabytes of device-local memory.
-    constexpr int maximumDimension = 2048;
-    QSize targetSize = sourceSize;
-    if (targetSize.width() > maximumDimension || targetSize.height() > maximumDimension)
-        targetSize.scale(maximumDimension, maximumDimension, Qt::KeepAspectRatio);
-    reader.setScaledSize(targetSize);
-    const QImage image = reader.read();
-    return image.isNull() ? QImage() : image.convertToFormat(QImage::Format_RGBA8888);
+    watcher->setFuture(QtConcurrent::run(&loadBackgroundImage, m_backgroundImagePath));
 }
 
 #if MIDI_PLAY_HAS_VULKAN
