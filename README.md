@@ -12,6 +12,8 @@ MIDI Play 是一款开源桌面音乐播放器，提供实时钢琴键盘、深�
 
 当前发布版本：[v0.4.0](https://github.com/allenwu258/midi-play/releases/tag/v0.4.0)，首次提供完整 Windows x64 便携发行包。此前版本通过 Git Tag 记录开发进展。
 
+本开发分支新增的音频导出尚未包含在 v0.4.0 发行包中，试用该功能需从本分支构建。
+
 > 播放前需自行准备本地 SF2 / SF3 音源。程序不附带乐曲音源，也不会自动下载；可以跳过首次配置，先打开并查看乐曲。
 
 ## 目录
@@ -52,6 +54,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **演奏语义**：支持反复段、ending、D.C.、D.S.、Segno、Coda、Fine 的基础播放展开，以及 tie、staccato、accent、tenuto、ghost、dynamic、hairpin 和 pedal 等播放相关语义。
 - **实时播放控制**：播放、暂停、停止、拖动进度、20%～200% 播放变速，以及 seek 后的音色/控制器/延音状态重建。
 - **节拍器**：独立点击音源与合成器，和歌曲分开管理复音、通过同一音频设备混音输出；跟随乐曲拍号、速度变化和重复段落，并随 20%～200% 播放倍率同步变速。
+- **音频导出**：使用独立 FluidSynth 实例将展开后的播放事件离线合成为 MP3 或 16-bit PCM WAV；可选采样率、MP3 码率、节拍器和尾音，支持进度、取消及安全覆盖。
 - **SoundFont**：不内置乐曲音源，启动时检查用户已配置的 SF2/SF3；未配置或加载失败时引导选择，允许暂时跳过。支持播放中事务化切换，SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
 - **双渲染模式**：默认优先使用 Vulkan 绘制，传统 Qt 绘制作为兼容和故障回退模式；两者共享音符布局、主题、色彩和单图片背景设置，也可在设置中手动选择。
@@ -106,7 +109,7 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 - **Vulkan SDK**：构建 Vulkan 版本时需要 x64 头文件、导入库和 `glslangValidator`。只构建传统版本可以不安装；
 - **CMake >= 3.24**：默认使用所配置 Visual Studio 附带的版本，也可以单独指定。
 
-不需要预先安装 FluidSynth 或 libwebp。脚本根据 `vcpkg.json` 自动下载或恢复缓存并构建 FluidSynth、libsndfile、libwebp 和 Ogg/Vorbis/FLAC/Opus 等传递依赖。首次构建需要联网，耗时取决于网络和 vcpkg 缓存；后续构建复用已安装依赖。程序通过 `QLibrary` 使用 FluidSynth，不链接 Qt Multimedia。
+不需要预先安装 FluidSynth、LAME 或 libwebp。脚本根据 `vcpkg.json` 自动下载或恢复缓存并构建 FluidSynth、libsndfile、libwebp、LAME 和 Ogg/Vorbis/FLAC/Opus 等传递依赖。首次构建需要联网，耗时取决于网络和 vcpkg 缓存；后续构建复用已安装依赖。程序通过 `QLibrary` 使用 FluidSynth，不链接 Qt Multimedia。
 
 ### 统一环境配置
 
@@ -245,7 +248,7 @@ cmake --build --preset windows-msvc-debug
 - **标题栏样式**：Windows 可选择原生或自定义实验模式，macOS/Linux 只显示原生模式；
 - **音源**：选择或更换本地 .sf2/.sf3，成功加载后自动保存选择；加载失败会显示内联错误。
 
-主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。
+主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。加载乐曲和有效音源后，点击顶部“导出音频”可选择 MP3/WAV、采样率、码率、节拍器、尾音及目标文件。导出在后台进行，可取消；导出期间可以继续查看或播放乐曲，当前导出始终使用开始时的乐曲和音源。MP3 默认为 44.1 kHz、192 kbps、立体声，尾音 500 ms；不会自动归一化或限制动态。
 
 ## 配置与音源
 
@@ -327,6 +330,15 @@ $midiPlayCliExe = 'dist/midi-play-windows-x64/midi_play_cli.exe'
 ~~~
 
 命令会输出轨道数量和按 tempo map 换算得到的播放时长。
+
+### 导出 MP3 或 WAV
+
+~~~powershell
+& $midiPlayCliExe --export-mp3 'path/to/example.mid' 'path/to/example.mp3' --soundfont 'path/to/example.sf2' --bitrate 192
+& $midiPlayCliExe --export-wav 'path/to/example.musicxml' 'path/to/example.wav' --soundfont 'path/to/example.sf3' --sample-rate 48000 --tail-ms 1000 --metronome
+~~~
+
+MP3 码率支持 128、160、192、256、320 kbps；采样率支持 44100 和 48000 Hz；尾音范围为 0–5000 ms，默认 500 ms。WAV 是立体声 16-bit PCM，受标准 RIFF 的 4 GB 长度限制。节拍器默认不导出；启用时使用反复展开后的乐曲节拍。输出文件只在编码成功后替换已有文件；导出失败或取消会保留原文件。CLI 必须显式提供音源路径，不读取 GUI 的用户设置。
 
 ### 生成离屏可视化帧
 
@@ -433,6 +445,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - playback_session_transport：播放、暂停、停止、seek、事件代际和 transport 状态。
 - metronome_timeline_and_readers：拍号、显式点击单位、附点速度、弱起、重复段落、MIDI format 2、重复标记的相位稳定性、可视化小节线与点击重音的一致性，以及丢帧后的节拍调度。
 - metronome_fluidsynth_audio：使用真实 FluidSynth 和正式混音回调离线合成，验证点击音强弱、自然结束、音源切换，以及歌曲复音满载时连续点击和取消不抢占任何歌曲声部；配置 Windows FluidSynth DLL 时启用，无需音频设备。
+- audio_export：使用内置测试音源验证 sample 边界、尾音、反复段、节拍器混音、WAV/MP3 输出、重复导出一致性，以及取消或失败时保留原目标文件。
 
 节拍器点击资源 `assets/metronome.sf2` 已提交到源码并通过 Qt Resource 嵌入可执行文件。`scripts/generate-metronome-soundfont.py` 使用 Python 标准库生成原创采样，仅用于重建该资源，普通构建和运行不需要 Python。内置资源需要写入系统临时目录供 FluidSynth 读取，退出时自动清理；提取或准备失败时仅禁用节拍器并显示原因。
 
@@ -450,7 +463,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | 节拍器 | 小节首拍重音、变速同步，暂停和停止无声，关闭不截断钢琴音，切换音源后仍能发声 |
 | 简谱条显隐 | 默认隐藏简谱条和黄线，音符在琴键顶部判定；播放和暂停时切换立即生效，切换图形模式后保持选择 |
 | 设置持久化 | 重启后主题、音符色彩、刷新率、图形模式、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
-| Release 部署 | exe、Qt 平台插件、FluidSynth DLL 完整，发行包不含外部 SF2/SF3 音源 |
+| Release 部署 | exe、Qt 平台插件、FluidSynth 与 LAME DLL 完整，发行包不含外部 SF2/SF3 音源 |
 
 自动测试不替代人工听音验收；音频设备、系统音量和 FluidSynth 驱动初始化仍需在目标机器上确认。
 
@@ -459,7 +472,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - v0.4.0 中，设置文件无法写入时，启动音源引导仍可能关闭，所选路径仅在本次运行中生效；重启后可能需要重新配置。
 - v0.4.0 中，音源文件临时移走后再恢复，播放可以恢复，但旧错误提示可能仍显示；在设置中重新加载音源可清除提示。
 - 当前只验证 Windows x64 / MSVC；macOS/Linux 的 Qt 架构分支已预留，但没有同等完整的构建、部署和音频验收基线。
-- 当前只有 FluidSynth 音频后端，不提供 Qt Multimedia 后端、外部 MIDI 硬件输出或音频文件导出。
+- 当前只有 FluidSynth 音频后端，不提供 Qt Multimedia 后端或外部 MIDI 硬件输出。音频导出支持 MP3/WAV，尚不支持 FLAC 或响度归一化。
 - Vulkan 是否可用取决于显卡、驱动、Qt Vulkan 支持和运行环境。启动或设备初始化失败时程序会尝试回退传统 Qt；若图形设备在运行中丢失，建议重启后在设置中选择传统 Qt。
 - 单图片背景当前只支持本地静态图片，不支持动态 WebP、多图轮播、视频、网络 URL 或背景音频；WebP 文件大小上限为 64 MB。原图不会复制到发行目录，移动或删除文件后需要在设置中重新选择。
 - MusicXML 解析面向播放所需语义，不等价于完整的 MuseScore notation DOM；复杂排版、符号布局和编辑语义不在当前范围内。
@@ -523,4 +536,4 @@ Logo 与图标的使用规范见 [品牌资源说明](assets/branding/README.md)
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE)。发行包不包含第三方乐曲 SoundFont，用户自行选择的音源遵循各自的许可证或使用条款。仓库仅保留项目原创、程序化生成的节拍器资源 `assets/metronome.sf2`；Qt、FluidSynth 等第三方依赖仍遵循各自的许可证。
+本项目采用 [MIT License](LICENSE)。发行包不包含第三方乐曲 SoundFont，用户自行选择的音源遵循各自的许可证或使用条款。仓库仅保留项目原创、程序化生成的节拍器资源 `assets/metronome.sf2`；Qt、FluidSynth、LAME 等第三方依赖仍遵循各自的许可证。Windows 发行包动态链接 LAME，并在 `licenses/vcpkg/mp3lame` 保留其版权与许可文本。

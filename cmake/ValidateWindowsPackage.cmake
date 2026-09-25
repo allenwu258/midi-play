@@ -5,7 +5,7 @@ if (NOT IS_DIRECTORY "${PACKAGE_DIR}" OR NOT EXISTS "${DUMPBIN_EXE}")
 endif()
 foreach (required IN ITEMS midi_play.exe midi_play_cli.exe Qt6Core.dll Qt6Gui.dll
          Qt6Widgets.dll Qt6Xml.dll platforms/qwindows.dll libfluidsynth-3.dll
-         libwebp.dll
+         libwebp.dll libmp3lame.dll
          vcruntime140.dll vcruntime140_1.dll msvcp140.dll)
     if (NOT EXISTS "${PACKAGE_DIR}/${required}")
         message(FATAL_ERROR "Incomplete Windows package: missing ${required}")

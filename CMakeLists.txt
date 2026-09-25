@@ -11,6 +11,7 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
 find_package(WebP CONFIG REQUIRED)
+find_package(mp3lame CONFIG REQUIRED)
 option(MIDI_PLAY_ENABLE_VULKAN "Build the experimental Vulkan renderer" ON)
 option(MIDI_PLAY_REQUIRE_VULKAN "Fail configuration if the Vulkan renderer is unavailable" OFF)
 set(MIDI_PLAY_HAS_VULKAN OFF)
@@ -61,6 +62,8 @@ if (MIDI_PLAY_HAS_VULKAN)
 endif()
 
 set(MIDI_PLAY_COMMON_SOURCES
+    src/app/audioexportservice.h
+    src/app/audioexportservice.cpp
     src/app/playerapplicationservice.h
     src/app/playerapplicationservice.cpp
     src/app/isettingsstore.h
@@ -131,6 +134,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/infrastructure/audio/fluidsynthaudioservice.cpp
     src/infrastructure/audio/threadedplaybackaudioservice.h
     src/infrastructure/audio/threadedplaybackaudioservice.cpp
+    src/infrastructure/encoding/audiofileencoder.h
+    src/infrastructure/encoding/audiofileencoder.cpp
     src/infrastructure/resources/projectaudiosettings.h
     src/infrastructure/resources/projectaudiosettings.cpp
     src/infrastructure/settings/qsettingsstore.h
@@ -221,7 +226,7 @@ if (MIDI_PLAY_HAS_VULKAN)
 endif()
 target_include_directories(midi_play_core PUBLIC src)
 target_link_libraries(midi_play_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
-target_link_libraries(midi_play_core PRIVATE WebP::webp)
+target_link_libraries(midi_play_core PRIVATE WebP::webp mp3lame::mp3lame)
 if (MIDI_PLAY_HAS_VULKAN)
     add_dependencies(midi_play_core midi_play_vulkan_shaders)
     target_link_libraries(midi_play_core PUBLIC Vulkan::Vulkan)
@@ -302,10 +307,29 @@ if (WIN32)
         VERBATIM)
     install(FILES "$<TARGET_FILE:WebP::webp>" "$<TARGET_FILE:WebP::sharpyuv>"
         DESTINATION ${CMAKE_INSTALL_BINDIR})
+    get_target_property(MIDI_PLAY_LAME_IMPORT_LIBRARY mp3lame::mp3lame IMPORTED_LOCATION_RELEASE)
+    get_filename_component(MIDI_PLAY_LAME_LIB_DIR "${MIDI_PLAY_LAME_IMPORT_LIBRARY}" DIRECTORY)
+    get_filename_component(MIDI_PLAY_LAME_DLL "${MIDI_PLAY_LAME_LIB_DIR}/../bin/libmp3lame.dll" ABSOLUTE)
+    if (EXISTS "${MIDI_PLAY_LAME_DLL}")
+        foreach (runtime_target IN ITEMS midi_play midi_play_cli)
+            add_custom_command(TARGET ${runtime_target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MIDI_PLAY_LAME_DLL}" "$<TARGET_FILE_DIR:${runtime_target}>"
+                VERBATIM)
+        endforeach()
+        install(FILES "${MIDI_PLAY_LAME_DLL}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    else()
+        message(FATAL_ERROR "MP3 LAME runtime DLL not found in vcpkg installed directory")
+    endif()
 endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_audio_export_tests tests/audioexporttests.cpp)
+    target_link_libraries(midi_play_audio_export_tests PRIVATE midi_play_core)
+    target_compile_definitions(midi_play_audio_export_tests PRIVATE
+        MIDI_PLAY_TEST_CLICK_SF2="${CMAKE_CURRENT_SOURCE_DIR}/assets/metronome.sf2")
+    add_test(NAME audio_export COMMAND midi_play_audio_export_tests)
     add_executable(midi_play_soundfont_setup_tests tests/soundfontsetuptests.cpp)
     target_link_libraries(midi_play_soundfont_setup_tests PRIVATE midi_play_core)
     add_test(NAME soundfont_setup COMMAND midi_play_soundfont_setup_tests -platform offscreen

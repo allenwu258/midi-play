@@ -99,6 +99,7 @@ void PlayerApplicationService::openFile(const QString& path)
         }
 
         m_controller = std::move(newController);
+        m_document = result.readResult.document;
         emit metronomeAvailabilityChanged(m_controller->supportsMetronome(),
                                           m_controller->metronomeUnavailableReason());
         m_fileName = path;

@@ -1,3 +1,4 @@
+#include "app/audioexportservice.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "domain/visualization/visiblenoteindex.h"
@@ -30,6 +31,7 @@ void printUsage(FILE* stream)
         "Usage: midi_play_cli <musicxml|mxl|mid|midi|kar file>\n"
         "       midi_play_cli --audio-test <sf2|sf3 file> [replacement SoundFont]\n"
         "       midi_play_cli --midi-test <MIDI file>\n"
+        "       midi_play_cli --export-mp3|--export-wav <music file> <output file> --soundfont <sf2|sf3> [--bitrate 128|160|192|256|320] [--sample-rate 44100|48000] [--tail-ms 0..5000] [--metronome]\n"
         "       midi_play_cli --render-test <music file> <output.png> [position_us [width [height]]] [--theme dark|light] [--note-colors normal|vivid]\n"
         "       midi_play_cli --help\n",
         stream);
@@ -81,6 +83,76 @@ int runMidiTest(const QString& inputPath)
                       << "duration_us="
                       << result.document->tickToMicroseconds(result.document->duration());
     return 0;
+}
+
+int runAudioExport(const QStringList& arguments)
+{
+    if (arguments.size() < 6) {
+        printUsage(stderr);
+        return 2;
+    }
+    midi_play::app::AudioExportOptions options;
+    options.format = arguments.at(1) == QStringLiteral("--export-wav")
+        ? midi_play::encoding::AudioFileFormat::Wav : midi_play::encoding::AudioFileFormat::Mp3;
+    const QString inputPath = arguments.at(2);
+    options.outputPath = arguments.at(3);
+    for (int index = 4; index < arguments.size();) {
+        const QString flag = arguments.at(index++);
+        if (flag == QStringLiteral("--metronome")) {
+            options.includeMetronome = true;
+            continue;
+        }
+        if (index >= arguments.size()) {
+            qCritical().noquote() << "Missing value for" << flag;
+            return 2;
+        }
+        const QString value = arguments.at(index++);
+        bool validNumber = false;
+        if (flag == QStringLiteral("--soundfont")) options.soundFontPath = value;
+        else if (flag == QStringLiteral("--bitrate")) {
+            options.bitrateKbps = value.toInt(&validNumber);
+            if (!validNumber) return 2;
+        } else if (flag == QStringLiteral("--sample-rate")) {
+            options.sampleRate = value.toInt(&validNumber);
+            if (!validNumber) return 2;
+        } else if (flag == QStringLiteral("--tail-ms")) {
+            options.tailMilliseconds = value.toInt(&validNumber);
+            if (!validNumber) return 2;
+        } else {
+            qCritical().noquote() << "Unknown export option:" << flag;
+            return 2;
+        }
+    }
+    if (options.soundFontPath.isEmpty()) {
+        qCritical() << "--soundfont is required";
+        return 2;
+    }
+    midi_play::readers::MusicReaderRegistry registry;
+    registerReaders(registry);
+    const auto* reader = registry.find(QFileInfo(inputPath).suffix());
+    if (!reader) {
+        qCritical().noquote() << "Unsupported music file extension:" << QFileInfo(inputPath).suffix();
+        return 1;
+    }
+    const auto read = reader->read(inputPath);
+    if (!read.ok()) {
+        qCritical().noquote() << read.error;
+        return 1;
+    }
+    const auto result = midi_play::app::AudioExportService::exportDocument(
+        read.document, options, nullptr, [](int percent) {
+            if (percent % 10 == 0) std::fprintf(stderr, "\rExporting: %d%%", percent);
+        });
+    std::fputc('\n', stderr);
+    if (result.status == midi_play::app::AudioExportStatus::Success) {
+        qInfo().noquote() << "Exported:" << QFileInfo(options.outputPath).absoluteFilePath()
+                          << "frames=" << result.frames
+                          << "peaks=" << result.peakLeft << result.peakRight
+                          << "clipped_samples=" << result.clippedSamples;
+        return 0;
+    }
+    qCritical().noquote() << result.error;
+    return 1;
 }
 
 int runRenderTest(QStringList arguments)
@@ -225,6 +297,9 @@ int main(int argc, char* argv[])
     }
     if (command == QStringLiteral("--midi-test") && arguments.size() == 3) {
         return runMidiTest(arguments.at(2));
+    }
+    if (command == QStringLiteral("--export-mp3") || command == QStringLiteral("--export-wav")) {
+        return runAudioExport(arguments);
     }
     if (command == QStringLiteral("--render-test")) {
         return runRenderTest(arguments);

@@ -8,6 +8,8 @@
 
 #include <QMainWindow>
 #include <QPointer>
+#include <atomic>
+#include <memory>
 
 class QLabel;
 class QFrame;
@@ -15,6 +17,7 @@ class QSlider;
 class QToolButton;
 class QResizeEvent;
 class QEvent;
+class QProgressDialog;
 
 namespace midi_play::app { class PlayerApplicationService; }
 namespace midi_play::app { class SettingsService; }
@@ -33,6 +36,7 @@ public:
                         app::SettingsService* settingsService,
                         QWidget* parent = nullptr,
                         theme::ThemeController* themeController = nullptr);
+    ~MainWindow() override;
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -41,6 +45,7 @@ protected:
 
 private slots:
     void openMusicFile();
+    void exportAudio();
     void showSettings();
     void updatePosition(qint64 position, qint64 duration, qint64 sampledAtUs = 0);
     void updatePlaybackState(midi_play::playback::State state);
@@ -75,6 +80,7 @@ private:
     QLabel* m_soundFontErrorLabel = nullptr;
     QToolButton* m_playButton = nullptr;
     QToolButton* m_openButton = nullptr;
+    QToolButton* m_exportButton = nullptr;
     QToolButton* m_settingsButton = nullptr;
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_stopButton = nullptr;
@@ -90,6 +96,9 @@ private:
     qint64 m_positionUs = 0;
     qint64 m_durationUs = 0;
     bool m_sliderDragging = false;
+    bool m_exporting = false;
+    std::shared_ptr<std::atomic_bool> m_exportCancel;
+    QPointer<QProgressDialog> m_exportProgress;
     bool m_seekPending = false;
     qint64 m_pendingSeekUs = 0;
     qint64 m_displayedPositionSecond = -1;

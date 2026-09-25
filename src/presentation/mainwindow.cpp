@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include "app/audioexportservice.h"
 #include "app/playerapplicationservice.h"
 #include "app/settingsservice.h"
 #include "playbackmetadatapresenter.h"
@@ -13,20 +14,32 @@
 #include "presentation/theme/themecontroller.h"
 
 #include <QFileDialog>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QEvent>
+#include <QFormLayout>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
+#include <QProgressDialog>
+#include <QPushButton>
 #include <QResizeEvent>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtMath>
+#include <QtConcurrent>
 
 #if defined(Q_OS_WIN)
 #include <windows.h>
@@ -116,9 +129,13 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
 
     m_openButton = toolButton(topBar, QIcon(),
                                  QStringLiteral("打开乐曲"), QStringLiteral("打开 MusicXML 或 MIDI 文件"));
+    m_exportButton = toolButton(topBar, QIcon(),
+                                QStringLiteral("导出音频"), QStringLiteral("将当前乐曲导出为 MP3 或 WAV"));
+    m_exportButton->setObjectName(QStringLiteral("exportButton"));
     m_settingsButton = toolButton(topBar, QIcon(),
                                       QStringLiteral("设置"), QStringLiteral("打开播放器设置"));
     topLayout->addWidget(m_openButton);
+    topLayout->addWidget(m_exportButton);
     topLayout->addWidget(m_settingsButton);
 
     m_windowControlsSeparator = verticalSeparator(topBar);
@@ -263,6 +280,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     }
 
     connect(m_openButton, &QToolButton::clicked, this, &MainWindow::openMusicFile);
+    connect(m_exportButton, &QToolButton::clicked, this, &MainWindow::exportAudio);
     connect(m_settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
     connect(m_minimizeButton, &QToolButton::clicked, this, &MainWindow::showMinimized);
     connect(m_maximizeButton, &QToolButton::clicked, this, [this] {
@@ -545,6 +563,7 @@ void MainWindow::applyTheme(midi_play::settings::ThemeMode mode)
     m_visualization->setThemeMode(m_themeMode);
     m_playbackRateControl->setThemeMode(m_themeMode);
     m_openButton->setIcon(theme::themedIcon(theme::IconGlyph::Open, current));
+    m_exportButton->setIcon(theme::themedIcon(theme::IconGlyph::Export, current));
     m_settingsButton->setIcon(theme::themedIcon(theme::IconGlyph::Settings, current));
     m_playButton->setIcon(theme::themedIcon(theme::IconGlyph::Play, current));
     m_pauseButton->setIcon(theme::themedIcon(theme::IconGlyph::Pause, current));
@@ -560,6 +579,161 @@ void MainWindow::openMusicFile()
         this, QStringLiteral("打开音乐文件"), {},
         QStringLiteral("音乐文件 (*.xml *.musicxml *.mid *.midi *.kar);;MusicXML (*.xml *.musicxml);;MIDI (*.mid *.midi *.kar);;所有文件 (*.*)"));
     if (!path.isEmpty()) m_service->openFile(path);
+}
+
+MainWindow::~MainWindow()
+{
+    if (m_exportCancel) m_exportCancel->store(true);
+}
+
+void MainWindow::exportAudio()
+{
+    const auto document = m_service->document();
+    if (!document || m_exporting) return;
+    const QString soundFont = m_service->soundFontPath();
+    if (soundFont.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("导出音频"),
+                             QStringLiteral("请先在设置中选择 SF2/SF3 音源。"));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("导出音频"));
+    dialog.setMinimumWidth(470);
+    auto* form = new QFormLayout(&dialog);
+    auto* song = new QLabel(QFileInfo(m_service->fileName()).fileName(), &dialog);
+    auto* font = new QLabel(QFileInfo(soundFont).fileName(), &dialog);
+    song->setToolTip(m_service->fileName());
+    font->setToolTip(soundFont);
+    form->addRow(QStringLiteral("乐曲"), song);
+    form->addRow(QStringLiteral("音源"), font);
+    auto* format = new QComboBox(&dialog);
+    format->addItem(QStringLiteral("MP3"));
+    format->addItem(QStringLiteral("WAV (16-bit PCM)"));
+    form->addRow(QStringLiteral("格式"), format);
+    auto* bitrate = new QComboBox(&dialog);
+    for (int value : {128, 160, 192, 256, 320})
+        bitrate->addItem(QStringLiteral("%1 kbps").arg(value), value);
+    bitrate->setCurrentIndex(2);
+    form->addRow(QStringLiteral("MP3 码率"), bitrate);
+    connect(format, &QComboBox::currentIndexChanged, bitrate,
+            [bitrate](int index) { bitrate->setEnabled(index == 0); });
+    auto* sampleRate = new QComboBox(&dialog);
+    sampleRate->addItem(QStringLiteral("44.1 kHz"), 44100);
+    sampleRate->addItem(QStringLiteral("48 kHz"), 48000);
+    form->addRow(QStringLiteral("采样率"), sampleRate);
+    auto* metronome = new QCheckBox(QStringLiteral("包含节拍器"), &dialog);
+    form->addRow(QString(), metronome);
+    auto* tail = new QSpinBox(&dialog);
+    tail->setRange(0, 5000);
+    tail->setSingleStep(250);
+    tail->setSuffix(QStringLiteral(" ms"));
+    tail->setValue(500);
+    form->addRow(QStringLiteral("尾音"), tail);
+    auto* pathRow = new QWidget(&dialog);
+    auto* pathLayout = new QHBoxLayout(pathRow);
+    pathLayout->setContentsMargins(0, 0, 0, 0);
+    auto* path = new QLineEdit(pathRow);
+    path->setText(QFileInfo(m_service->fileName()).absolutePath() + QLatin1Char('/')
+                  + QFileInfo(m_service->fileName()).completeBaseName() + QStringLiteral(".mp3"));
+    auto* browse = new QPushButton(QStringLiteral("浏览…"), pathRow);
+    pathLayout->addWidget(path, 1);
+    pathLayout->addWidget(browse);
+    form->addRow(QStringLiteral("输出文件"), pathRow);
+    connect(format, &QComboBox::currentIndexChanged, path, [path](int index) {
+        const QFileInfo current(path->text());
+        if (current.suffix().compare(QStringLiteral("mp3"), Qt::CaseInsensitive) == 0
+            || current.suffix().compare(QStringLiteral("wav"), Qt::CaseInsensitive) == 0) {
+            path->setText(current.absolutePath() + QLatin1Char('/') + current.completeBaseName()
+                          + (index == 0 ? QStringLiteral(".mp3") : QStringLiteral(".wav")));
+        }
+    });
+    connect(browse, &QPushButton::clicked, &dialog, [&] {
+        const QString selected = QFileDialog::getSaveFileName(
+            &dialog, QStringLiteral("导出音频"), path->text(),
+            format->currentIndex() == 0 ? QStringLiteral("MP3 音频 (*.mp3)")
+                                        : QStringLiteral("WAV 音频 (*.wav)"));
+        if (!selected.isEmpty()) path->setText(selected);
+    });
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("开始导出"));
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    app::AudioExportOptions options;
+    options.format = format->currentIndex() == 0
+        ? encoding::AudioFileFormat::Mp3 : encoding::AudioFileFormat::Wav;
+    options.sampleRate = sampleRate->currentData().toInt();
+    options.bitrateKbps = bitrate->currentData().toInt();
+    options.includeMetronome = metronome->isChecked();
+    options.tailMilliseconds = tail->value();
+    options.soundFontPath = soundFont;
+    options.outputPath = QFileInfo(path->text().trimmed()).absoluteFilePath();
+    const QString expectedSuffix = options.format == encoding::AudioFileFormat::Mp3
+        ? QStringLiteral("mp3") : QStringLiteral("wav");
+    if (path->text().trimmed().isEmpty()
+        || QFileInfo(options.outputPath).suffix().compare(expectedSuffix, Qt::CaseInsensitive) != 0) {
+        QMessageBox::warning(this, QStringLiteral("导出音频"),
+                             QStringLiteral("输出文件扩展名需要与所选格式一致。"));
+        return;
+    }
+    if (QFileInfo::exists(options.outputPath)
+        && QMessageBox::question(this, QStringLiteral("覆盖文件"),
+            QStringLiteral("目标文件已存在，确定覆盖吗？\n%1").arg(options.outputPath))
+            != QMessageBox::Yes) return;
+
+    m_exporting = true;
+    m_exportButton->setEnabled(false);
+    m_exportCancel = std::make_shared<std::atomic_bool>(false);
+    auto* progress = new QProgressDialog(QStringLiteral("正在导出音频"), QStringLiteral("取消"),
+                                         0, 100, this);
+    progress->setWindowTitle(QStringLiteral("导出音频"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    m_exportProgress = progress;
+    const auto cancel = m_exportCancel;
+    connect(progress, &QProgressDialog::canceled, this, [cancel] { cancel->store(true); });
+    progress->show();
+
+    auto* watcher = new QFutureWatcher<app::AudioExportResult>(this);
+    auto renderedPercent = std::make_shared<std::atomic_int>(0);
+    auto* progressTimer = new QTimer(this);
+    progressTimer->setInterval(80);
+    connect(progressTimer, &QTimer::timeout, this, [this, renderedPercent] {
+        if (m_exportProgress && !m_exportProgress->wasCanceled())
+            m_exportProgress->setValue(renderedPercent->load());
+    });
+    progressTimer->start();
+    connect(watcher, &QFutureWatcher<app::AudioExportResult>::finished, this,
+            [this, watcher, progressTimer, options] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        progressTimer->stop();
+        progressTimer->deleteLater();
+        if (m_exportProgress) m_exportProgress->deleteLater();
+        m_exportProgress = nullptr;
+        m_exportCancel.reset();
+        m_exporting = false;
+        updateTransportControls();
+        if (result.status == app::AudioExportStatus::Success) {
+            m_statusLabel->setText(result.clippedSamples
+                ? QStringLiteral("音频已导出（检测到削波）: %1").arg(options.outputPath)
+                : QStringLiteral("音频已导出: %1").arg(options.outputPath));
+        } else if (result.status == app::AudioExportStatus::Canceled) {
+            m_statusLabel->setText(QStringLiteral("已取消音频导出"));
+        } else {
+            m_statusLabel->setText(QStringLiteral("音频导出失败"));
+            QMessageBox::warning(this, QStringLiteral("音频导出失败"), result.error);
+        }
+    });
+    watcher->setFuture(QtConcurrent::run([document, options, cancel, renderedPercent] {
+        return app::AudioExportService::exportDocument(document, options, cancel.get(),
+            [renderedPercent](int percent) { renderedPercent->store(percent); });
+    }));
 }
 
 void MainWindow::showSettings()
@@ -669,6 +843,7 @@ void MainWindow::updateTransportControls()
     m_pauseButton->setEnabled(m_playbackState == playback::State::Playing);
     m_stopButton->setEnabled(hasDocument && m_playbackState != playback::State::Stopped);
     m_positionSlider->setEnabled(hasDocument);
+    m_exportButton->setEnabled(m_service->document() && !m_exporting);
 }
 
 } // namespace midi_play::presentation

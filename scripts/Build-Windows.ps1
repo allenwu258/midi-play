@@ -204,6 +204,7 @@ try {
         "--x-manifest-root=$repo", "--x-install-root=$installedDirectory", '--disable-metrics')
     $fluidSynth = Require-File "$installedDirectory\x64-windows\bin\libfluidsynth-3.dll" 'Installed FluidSynth'
     $webPConfig = Require-File "$installedDirectory\x64-windows\share\WebP\WebPConfig.cmake" 'Installed WebP CMake package'
+    $lameConfig = Require-File "$installedDirectory\x64-windows\share\mp3lame\mp3lame-config.cmake" 'Installed LAME CMake package'
 
     $vulkanOption = if ($enableVulkan) { 'ON' } else { 'OFF' }
     $configure = @('--fresh', '-S', $repo, '-B', $buildDirectory, '-G', 'Visual Studio 17 2022', '-A', 'x64',
@@ -213,6 +214,7 @@ try {
         "-DQt6_DIR=$qtRoot/lib/cmake/Qt6", '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF',
         '-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF', '-DBUILD_TESTING=ON', '-DCMAKE_INSTALL_BINDIR=.',
         "-DFLUIDSYNTH_DLL=$fluidSynth", "-DWebP_DIR=$(Split-Path $webPConfig)",
+        "-Dmp3lame_DIR=$(Split-Path $lameConfig)",
         "-DMIDI_PLAY_ENABLE_VULKAN=$vulkanOption",
         "-DMIDI_PLAY_REQUIRE_VULKAN=$vulkanOption",
         "-DMIDI_PLAY_TEST_SOUNDFONT=$SoundFontPath")
@@ -263,6 +265,13 @@ try {
             Invoke-Checked "$stage\midi_play_cli.exe" @('--render-test', "$repo\tests\fixtures\deployment.musicxml", "$stage\.smoke.png")
             $null = Require-File "$stage\.smoke.png" 'Packaged Qt render smoke output'
             Remove-Item -LiteralPath "$stage\.smoke.png"
+            Invoke-Checked "$stage\midi_play_cli.exe" @('--export-mp3', "$repo\tests\fixtures\deployment.musicxml",
+                "$stage\.smoke.mp3", '--soundfont', "$repo\assets\metronome.sf2")
+            $mp3Smoke = Require-File "$stage\.smoke.mp3" 'Packaged MP3 export smoke output'
+            if ((Get-Item -LiteralPath $mp3Smoke).Length -lt 1000) {
+                throw 'Packaged MP3 export produced an unexpectedly small file.'
+            }
+            Remove-Item -LiteralPath "$stage\.smoke.mp3"
             if ($AudioSmoke) {
                 Invoke-Checked "$stage\midi_play_cli.exe" @('--audio-test', $SoundFontPath)
             }

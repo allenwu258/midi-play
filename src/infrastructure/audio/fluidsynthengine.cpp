@@ -167,7 +167,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
 
     if (!m_newSettings || !m_deleteSettings || !m_newSynth || !m_deleteSynth || !m_sfload
         || !m_programSelect || !m_noteOn || !m_noteOff || !m_systemReset
-        || !m_newAudioDriver || !m_deleteAudioDriver) {
+        || !m_settingsSetNum || !m_process) {
         if (error) *error = QStringLiteral("FluidSynth 动态库缺少必要 API");
         m_library.unload();
         return false;
@@ -181,7 +181,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
 }
 
 bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* error,
-                                       bool dynamicSampleLoading)
+                                       bool dynamicSampleLoading, int sampleRate, bool metronome)
 {
     release();
     if (!resolveSymbols(error)) return false;
@@ -192,6 +192,11 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         return false;
     }
     if (m_settingsSetNum) m_settingsSetNum(m_settings, "synth.gain", 0.8);
+    if (sampleRate > 0 && m_settingsSetNum(m_settings, "synth.sample-rate", sampleRate) != 0) {
+        if (error) *error = QStringLiteral("无法设置 FluidSynth 采样率");
+        release();
+        return false;
+    }
     if (m_settingsSetInt) {
         // Playback uses on-demand decoding to bound startup time and memory.
         // Standalone validation passes false so FluidSynth eagerly decodes all
@@ -210,14 +215,14 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         release();
         return false;
     }
-    if (dynamicSampleLoading) initializeMetronomeSynth();
+    if (dynamicSampleLoading && metronome) initializeMetronomeSynth();
     return true;
 }
 
 void FluidSynthEngine::initializeMetronomeSynth()
 {
     // An optional feature must never reduce song polyphony or prevent playback.
-    if (!m_newAudioDriver2 || !m_process || !m_settingsSetInt || !m_settingsSetNum
+    if (!m_process || !m_settingsSetInt || !m_settingsSetNum
         || !m_settingsGetNum || !m_setChannelType || !m_allSoundsOff || !m_cc) return;
     double sampleRate = 0;
     if (m_settingsGetNum(m_settings, "synth.sample-rate", &sampleRate) != 0) return;
@@ -270,6 +275,11 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
         return loadSoundFontIntoActiveSynth(soundFontPath, error);
     }
     if (!initializeSynth(soundFontPath, error)) return false;
+    if (!m_newAudioDriver || !m_deleteAudioDriver) {
+        if (error) *error = QStringLiteral("FluidSynth 动态库缺少音频驱动 API");
+        release();
+        return false;
+    }
 
     // FluidSynth owns the realtime audio thread through its native driver.
     if (m_metronomeSynth) {
@@ -283,6 +293,40 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
         return false;
     }
     m_loaded = true;
+    return true;
+}
+
+bool FluidSynthEngine::loadOffline(const QString& soundFontPath, int sampleRate,
+                                   bool metronome, QString* error)
+{
+    if (error) error->clear();
+    if (sampleRate != 44100 && sampleRate != 48000) {
+        if (error) *error = QStringLiteral("导出采样率必须为 44100 或 48000 Hz");
+        return false;
+    }
+    if (!initializeSynth(soundFontPath, error, true, sampleRate, metronome)) return false;
+    m_loaded = true;
+    if (metronome && !prepareMetronome(error)) {
+        release();
+        return false;
+    }
+    return true;
+}
+
+bool FluidSynthEngine::renderOffline(int frames, float* left, float* right, QString* error)
+{
+    if (!m_loaded || !m_synth || frames <= 0 || !left || !right) {
+        if (error) *error = QStringLiteral("离线音频引擎尚未准备好");
+        return false;
+    }
+    std::fill_n(left, frames, 0.0f);
+    std::fill_n(right, frames, 0.0f);
+    float* outputs[2] {left, right};
+    if (m_process(m_synth, frames, 2, outputs, 2, outputs) != 0
+        || (m_metronomeReady && m_process(m_metronomeSynth, frames, 0, nullptr, 2, outputs) != 0)) {
+        if (error) *error = QStringLiteral("FluidSynth 离线渲染失败");
+        return false;
+    }
     return true;
 }
 

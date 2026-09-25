@@ -19,6 +19,9 @@
     {
       "name": "libwebp",
       "default-features": false
+    },
+    {
+      "name": "mp3lame"
     }
   ]
 }

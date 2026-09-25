@@ -18,6 +18,8 @@ public:
 
     playback::PlaybackSession* session() const { return m_controller ? m_controller->session() : nullptr; }
     QString fileName() const { return m_fileName; }
+    std::shared_ptr<const music::MusicDocument> document() const { return m_document; }
+    QString soundFontPath() const { return m_soundFontPath; }
     playback::State playbackState() const { return m_playbackState; }
     qint64 positionMicroseconds() const { return m_positionUs; }
     qint64 durationMicroseconds() const { return m_durationUs; }
@@ -76,6 +78,7 @@ private:
     void reportSoundFontFailure(const QString& message);
 
     std::unique_ptr<playback::PlaybackController> m_controller;
+    std::shared_ptr<const music::MusicDocument> m_document;
     QString m_fileName;
     QString m_soundFontPath;
     QString m_pendingSoundFontPath;

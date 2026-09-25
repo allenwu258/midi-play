@@ -52,6 +52,11 @@ public:
             painter->drawPolyline(QPolygonF {QPointF(2, 14), QPointF(2, 4), QPointF(7, 4), QPointF(9, 6), QPointF(15, 6)});
             painter->drawPolygon(QPolygonF {QPointF(2, 14), QPointF(5, 8), QPointF(16, 8), QPointF(13, 14)});
             break;
+        case IconGlyph::Export:
+            painter->drawLine(QPointF(9, 2), QPointF(9, 11));
+            painter->drawPolyline(QPolygonF {QPointF(5, 8), QPointF(9, 12), QPointF(13, 8)});
+            painter->drawPolyline(QPolygonF {QPointF(3, 12), QPointF(3, 16), QPointF(15, 16), QPointF(15, 12)});
+            break;
         case IconGlyph::Settings:
             for (int y : {4, 9, 14}) painter->drawLine(QPointF(2, y), QPointF(16, y));
             painter->setBrush(color);

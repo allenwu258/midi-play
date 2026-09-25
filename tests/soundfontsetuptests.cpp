@@ -70,6 +70,8 @@ struct Harness {
             [](const QString&) { require(false, "SoundFont problems must not use the modal error channel"); });
         window = std::make_unique<presentation::MainWindow>(&player, &settings);
         window->show();
+        require(!window->findChild<QToolButton*>("exportButton")->isEnabled(),
+                "audio export is disabled before loading a score");
         setup = std::make_unique<SoundFontSetup>(&settings, &player, window.get());
         QObject::connect(setup.get(), &SoundFontSetup::finished, &player, [this] { ++finished; });
     }
@@ -80,6 +82,8 @@ struct Harness {
     {
         player.openFile(fixture);
         require(waitUntil([this] { return player.session() != nullptr; }), "score must load without a SoundFont");
+        require(window->findChild<QToolButton*>("exportButton")->isEnabled(),
+                "audio export becomes available after loading a score");
     }
 };
 

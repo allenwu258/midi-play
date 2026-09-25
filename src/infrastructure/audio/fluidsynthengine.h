@@ -37,6 +37,8 @@ public:
 
     bool validateSoundFont(const QString& soundFontPath, QString* error);
     bool load(const QString& soundFontPath, QString* error);
+    bool loadOffline(const QString& soundFontPath, int sampleRate, bool metronome, QString* error);
+    bool renderOffline(int frames, float* left, float* right, QString* error);
     FluidSynthCapabilities capabilities() const;
     bool configureTrack(int channel, int program, QString* error);
     bool start();
@@ -65,7 +67,8 @@ private:
     friend struct FluidSynthEngineTestAccess;
     bool resolveSymbols(QString* error);
     bool initializeSynth(const QString& soundFontPath, QString* error,
-                         bool dynamicSampleLoading = true);
+                         bool dynamicSampleLoading = true, int sampleRate = 0,
+                         bool metronome = true);
     void initializeMetronomeSynth();
     void releaseMetronomeSynth();
     static int renderAudio(void* context, int frames, int effectCount,
