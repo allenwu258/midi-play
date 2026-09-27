@@ -11,6 +11,15 @@ std::array<float, 4> rgba(const QColor& c)
     return {float(c.redF()), float(c.greenF()), float(c.blueF()), float(c.alphaF())};
 }
 float seconds(qint64 value, qint64 origin) { return float((value - origin) / 1'000'000.0); }
+
+VulkanEffectsProfile effectsProfileFor(midi_play::settings::ThemeMode mode, bool enabled)
+{
+    if (!enabled) return {};
+    const bool light = mode == midi_play::settings::ThemeMode::Light;
+    return light
+        ? VulkanEffectsProfile {0.20f, 0.58f, 0.34f, 0.20f, 0.34f, 0.52f}
+        : VulkanEffectsProfile {0.34f, 0.82f, 0.52f, 0.32f, 0.58f, 0.80f};
+}
 }
 
 void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& state,
@@ -24,6 +33,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     m_themeMode = mode;
     m_theme = theme::themeFor(mode).visualization;
     m_visualEffectsEnabled = state.visualEffectsEnabled;
+    m_effectsProfile = effectsProfileFor(mode, state.visualEffectsEnabled);
     const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs
         || m_showNotationStrip != state.showNotationStrip;
     const bool backgroundChanged = m_hasBackground != hasBackground
@@ -98,7 +108,10 @@ void VulkanScene::rebuildNotes(const midi_play::visualization::PlaybackSceneStat
                 : kind == 1 ? style->material.tail : style->material.body);
             quad.activeBorder = rgba(style->material.head);
             const float phase = float((note->instanceId % 4096u) * 0.000244140625);
-            quad.options = {1, (note->flags & midi_play::visualization::GhostNote) ? 1.f : 0.f,
+            // options.x is the halo padding in logical pixels for note
+            // primitives. The vertex shader ignores it as a stroke width for
+            // notes, while UI quads continue to use it as their border width.
+            quad.options = {6, (note->flags & midi_play::visualization::GhostNote) ? 1.f : 0.f,
                             state.visualEffectsEnabled ? 1.f : 0.f, phase};
             m_notes.push_back(quad);
         }
@@ -222,6 +235,16 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     m_dynamicUi.beginLayer(VulkanUiLayer::Background);
     const qreal left = g.pianoRect.left();
     const qreal right = g.drumRect.isEmpty() ? g.pianoRect.right() : g.drumRect.right();
+    if (state.visualEffectsEnabled && !g.fallingRect.isEmpty()) {
+        QColor atmosphere = m_theme.strikeLine;
+        atmosphere.setAlphaF(0.045);
+        rect(output, g.fallingRect.adjusted(g.fallingRect.width() * 0.08,
+                                             g.fallingRect.height() * 0.04,
+                                             -g.fallingRect.width() * 0.08,
+                                             -g.fallingRect.height() * 0.06),
+             atmosphere, Qt::transparent, 0, true);
+        output.back().options[3] = 2;
+    }
     if (m_chart) {
         QFont gridFont(font); gridFont.setPointSizeF(8);
         const auto& lines = m_chart->gridLines();
@@ -239,18 +262,38 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
         }
     }
     m_dynamicUi.beginLayer(VulkanUiLayer::Strike);
-    if (!g.notationStripRect.isEmpty()) {
+    const bool showStrikeLine = !g.notationStripRect.isEmpty() || state.visualEffectsEnabled;
+    if (showStrikeLine) {
         if (state.visualEffectsEnabled) {
             const qreal pulse = 0.5 + 0.5 * std::sin(
                 qreal(state.transportPositionUs) * 0.0000075);
             QColor ambient = m_theme.strikeGlow;
-            ambient.setAlphaF(0.06 + 0.05 * pulse);
-            rect(output, {left, g.strikeLineY - 8.0, right - left, 16.0}, ambient);
+            ambient.setAlphaF(0.075 + 0.09 * pulse * m_effectsProfile.strikeGlowStrength);
+            rect(output, {left, g.strikeLineY - 13.0, right - left, 26.0}, ambient);
+            QColor beam = m_theme.strikeGlow;
+            beam.setAlphaF(0.16 + 0.20 * m_effectsProfile.strikeGlowStrength);
+            rect(output, {left, g.strikeLineY - 4.0, right - left, 8.0}, beam);
+            QColor strike = m_theme.strikeLine;
+            strike.setAlphaF(0.70 + 0.18 * pulse);
+            rect(output, {left, g.strikeLineY - 0.9, right - left, 1.8}, strike);
+            for (const auto& slot : g.pitches) {
+                if (!slot.valid) continue;
+                const auto& light = m_noteFrame.key(slot.pitch);
+                if (light.noteIndex < 0 || light.strength <= 0.02) continue;
+                const auto* style = m_cache.styleForNote(light.noteIndex);
+                if (!style) continue;
+                QColor segment = style->material.glow;
+                segment.setAlphaF(std::min<qreal>(0.84,
+                    light.strength * (0.68 + m_effectsProfile.strikeGlowStrength)));
+                rect(output, {slot.centerX - slot.noteWidth * 0.95,
+                              g.strikeLineY - 2.4, slot.noteWidth * 1.9, 4.8}, segment);
+            }
+        } else {
+            rect(output, {left,g.strikeLineY-3,right-left,6}, m_theme.strikeGlow);
+            QColor strike = m_theme.strikeLine;
+            strike.setAlpha(145);
+            rect(output, {left,g.strikeLineY-0.5,right-left,1}, strike);
         }
-        rect(output, {left,g.strikeLineY-3,right-left,6}, m_theme.strikeGlow);
-        QColor strike = m_theme.strikeLine;
-        strike.setAlpha(145);
-        rect(output, {left,g.strikeLineY-0.5,right-left,1}, strike);
     }
     for (const auto& glow : m_noteFrame.glows()) {
         rect(output, glow.rect, glow.color);
@@ -260,17 +303,25 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
         && state.transportState == midi_play::playback::State::Playing) {
         int particleCount = 0;
         const auto addParticles = [&](const KeyIllumination& light, qreal centerX) {
-            if (light.noteIndex < 0 || light.attack <= 0.04 || particleCount >= 48) return;
+            if (light.noteIndex < 0 || light.attack <= 0.04 || particleCount >= 96) return;
             const auto* style = m_cache.styleForNote(light.noteIndex);
             if (!style) return;
             QColor particle = style->material.glow;
-            particle.setAlphaF(std::min<qreal>(0.34, light.attack * 0.42));
+            particle.setAlphaF(std::min<qreal>(0.42,
+                light.attack * 0.52 * m_effectsProfile.particleStrength));
             const qreal travel = (1.0 - std::sqrt(light.attack)) * 18.0;
             for (const int direction : {-1, 1}) {
-                if (particleCount >= 48) break;
+                if (particleCount >= 96) break;
                 const qreal x = centerX + direction * travel * 0.42;
                 const qreal y = g.strikeLineY - 5.0 - travel;
-                rect(output, {x - 2.0, y - 2.0, 4.0, 4.0}, particle,
+                rect(output, {x - 2.4, y - 2.4, 4.8, 4.8}, particle,
+                     Qt::transparent, 0, true);
+                output.back().options[3] = 2;
+                ++particleCount;
+                if (particleCount >= 96) break;
+                QColor streak = particle;
+                streak.setAlphaF(particle.alphaF() * 0.72);
+                rect(output, {x - 1.0, y - 5.0, 2.0, 10.0}, streak,
                      Qt::transparent, 0, true);
                 output.back().options[3] = 2;
                 ++particleCount;
@@ -312,6 +363,16 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
                 light.strength * (black ? 0.70 : 0.60));
             rect(output, slot.keyRect.adjusted(black ? .5 : 0,0,-.5,black ? -1 : -.5),
                   color, black ? m_theme.blackKeyBorder : m_theme.whiteKeyBorder, 1);
+            if (state.visualEffectsEnabled) {
+                QColor wash = style->material.glow;
+                wash.setAlphaF(std::min<qreal>(0.46,
+                    light.strength * m_effectsProfile.keyGlowStrength));
+                const qreal spread = black ? 0.16 : 0.24;
+                rect(output, slot.keyRect.adjusted(-slot.keyRect.width() * spread, -16,
+                    slot.keyRect.width() * spread, 6), wash,
+                    Qt::transparent, 0, true);
+                output.back().options[3] = 2;
+            }
             QColor top = style->material.keyTop;
             top.setAlphaF(light.strength);
             rect(output, {slot.keyRect.left() + (black ? 0.5 : 0), slot.keyRect.top(),

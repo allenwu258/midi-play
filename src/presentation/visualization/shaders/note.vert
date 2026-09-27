@@ -10,6 +10,12 @@ layout(push_constant) uniform Frame {
     float width; float height; float position; float strike;
     float scale; float clipTop; float clipBottom; float dpr;
     float bodyOpacity;
+    float noteHaloStrength;
+    float noteEdgeStrength;
+    float noteSheenStrength;
+    float strikeGlowStrength;
+    float keyGlowStrength;
+    float particleStrength;
 } frame;
 layout(location=0) out vec2 local;
 layout(location=1) out vec2 world;
@@ -24,6 +30,7 @@ void main() {
     vec2 corner = corners[gl_VertexIndex];
     vec4 r = rectangle;
     float kind = times.w;
+    float notePadding = 0.0;
     if (kind < 0.0) {
         // Expand by half a physical pixel on both sides. The fragment shader
         // then computes smooth coverage while the line remains continuously
@@ -57,6 +64,11 @@ void main() {
         }
         color.a *= clamp(1-(frame.position-times.z)/.24,0,1);
         if (kind<=2) color.a*=frame.bodyOpacity;
+    }
+    if (kind > 0.0 && kind < 4.0 && flags.z > 0.5) {
+        notePadding = max(1.0, options.x);
+        r.xy -= vec2(notePadding);
+        r.zw += vec2(notePadding * 2.0);
     }
     local=corner*r.zw;
     // Include half a physical pixel for the square rectangle's edge coverage.

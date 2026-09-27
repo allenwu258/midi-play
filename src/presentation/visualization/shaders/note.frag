@@ -5,6 +5,12 @@ layout(push_constant) uniform Frame {
     float width; float height; float position; float strike;
     float scale; float clipTop; float clipBottom; float dpr;
     float bodyOpacity;
+    float noteHaloStrength;
+    float noteEdgeStrength;
+    float noteSheenStrength;
+    float strikeGlowStrength;
+    float keyGlowStrength;
+    float particleStrength;
 } frame;
 layout(location=0) in vec2 local;
 layout(location=1) in vec2 world;
@@ -25,38 +31,63 @@ void main() {
         c.a *= coverage;
     } else if (shape.w>0 && shape.w<4) {
         if (shape.x<=0 || shape.y<=0) discard;
-        // Independent box coverage preserves right-angle corners and smooth
-        // subpixel motion, including note lanes narrower than one pixel.
-        vec2 coverage=clamp(local*frame.dpr+.5,0,1)
-                     -clamp((local-shape.xy)*frame.dpr+.5,0,1);
-        c.a*=coverage.x*coverage.y;
-        if (shape.w==1) {
-            c.a*=mix(.16,1,clamp(local.y/shape.y,0,1));
-        } else if (shape.w==2) {
-            float u=clamp(local.x/shape.x,0,1);
-            c.a*=u<.32 ? mix(.66,1,u/.32) : mix(1,.78,(u-.32)/.68);
-        }
-        if (flags.z > 0.5) {
-            vec2 normalized = clamp(local / shape.xy, 0.0, 1.0);
-            float edgeDistance = min(min(normalized.x, 1.0 - normalized.x),
-                                     min(normalized.y, 1.0 - normalized.y));
-            float rim = 1.0 - smoothstep(0.025, 0.16, edgeDistance);
-            float verticalGlass = smoothstep(0.95, 0.06, normalized.y);
-            vec3 highlight = mix(edge.rgb, vec3(1.0), 0.62);
-            c.rgb = mix(c.rgb, highlight, rim * (shape.w == 3.0 ? 0.68 : 0.46));
-            c.rgb = mix(c.rgb, edge.rgb, verticalGlass * 0.08);
-            c.a = min(1.0, c.a + rim * (shape.w == 3.0 ? 0.16 : 0.10));
+        bool glass = flags.z > 0.5;
+        vec2 normalized = clamp(local / shape.xy, 0.0, 1.0);
+        if (glass) {
+            float padding = max(1.0, flags.x);
+            vec2 coreSize = max(shape.xy - vec2(padding * 2.0), vec2(0.001));
+            vec2 coreLocal = local - vec2(padding);
+            normalized = clamp(coreLocal / coreSize, 0.0, 1.0);
+            float radius = min(7.0, min(coreSize.x, coreSize.y) * 0.34);
+            vec2 centered = coreLocal - coreSize * 0.5;
+            vec2 q = abs(centered) - (coreSize * 0.5 - vec2(radius));
+            float signedDistance = length(max(q, vec2(0.0)))
+                           + min(max(q.x, q.y), 0.0) - radius;
+            float antialias = max(0.65 / frame.dpr, 0.001);
+            float coreMask = 1.0 - smoothstep(-antialias, antialias, signedDistance);
+            float haloMask = 1.0 - smoothstep(0.0, padding * 1.15, signedDistance);
+            float outerHalo = max(0.0, haloMask - coreMask);
+            c.a *= coreMask;
+            vec3 haloColor = mix(c.rgb, edge.rgb, 0.40);
+            c.rgb = mix(c.rgb, haloColor, outerHalo * 0.72);
+            c.a = min(1.0, c.a + outerHalo * frame.noteHaloStrength);
 
-            // A narrow specular band travels with musical time. The phase is
-            // derived from the note instance, so it remains deterministic
-            // across dropped frames, seeks, and backend switches.
-            float sheenCenter = fract(frame.position * 0.34 + flags.w);
-            float sheen = 1.0 - smoothstep(0.0, 0.095,
-                abs(normalized.y - sheenCenter));
-            sheen *= smoothstep(0.04, 0.18, normalized.y)
-                   * smoothstep(0.04, 0.18, 1.0 - normalized.y);
-            c.rgb = mix(c.rgb, vec3(1.0), sheen * (shape.w == 3.0 ? 0.34 : 0.23));
-            c.a = min(1.0, c.a + sheen * 0.10);
+            float rim = 1.0 - smoothstep(0.0, radius * 1.55, -signedDistance);
+            vec3 edgeHighlight = mix(edge.rgb, vec3(1.0), 0.72);
+            c.rgb = mix(c.rgb, edgeHighlight,
+                        rim * frame.noteEdgeStrength * (shape.w == 3.0 ? 1.08 : 0.82));
+            c.a = min(1.0, c.a + rim * 0.11 * frame.noteEdgeStrength);
+
+            // A broad diagonal sheen produces a glass-like reflection rather
+            // than a single hard stripe. Its position remains deterministic
+            // for seeks and dropped frames because it is driven by music time.
+            float sheenCoordinate = normalized.y * 0.84 + normalized.x * 0.16;
+            float sheenCenter = fract(frame.position * 0.24 + flags.w);
+            float sheen = 1.0 - smoothstep(0.0, 0.13,
+                abs(sheenCoordinate - sheenCenter));
+            sheen *= smoothstep(0.03, 0.16, normalized.y)
+                   * smoothstep(0.03, 0.16, 1.0 - normalized.y);
+            c.rgb = mix(c.rgb, vec3(1.0), sheen * frame.noteSheenStrength);
+            c.a = min(1.0, c.a + sheen * 0.12 * frame.noteSheenStrength);
+
+            // Keep a restrained luminous core inside the colored body. This
+            // gives narrow lanes a readable center even when the surrounding
+            // halo is composited over a bright background.
+            float coreStripe = 1.0 - smoothstep(0.0, 0.44,
+                abs(normalized.x - 0.5));
+            c.rgb = mix(c.rgb, vec3(1.0), coreStripe * 0.12);
+        } else {
+            // Independent box coverage preserves the original renderer when
+            // enhanced effects are disabled.
+            vec2 coverage=clamp(local*frame.dpr+.5,0,1)
+                         -clamp((local-shape.xy)*frame.dpr+.5,0,1);
+            c.a*=coverage.x*coverage.y;
+        }
+        if (shape.w==1) {
+            c.a*=mix(.16,1,normalized.y);
+        } else if (shape.w==2) {
+            float u=normalized.x;
+            c.a*=u<.32 ? mix(.66,1,u/.32) : mix(1,.78,(u-.32)/.68);
         }
     } else if (shape.w==4) {
         float distanceToLine=abs(local.y-(6-6*local.x/max(shape.x,1)));

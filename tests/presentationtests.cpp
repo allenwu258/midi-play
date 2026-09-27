@@ -253,6 +253,10 @@ void testNotationStripPreference()
     midi_play::presentation::MainWindow window(&player, &settings);
     auto* view = window.findChild<FallingNotesView*>();
     require(view && !view->showNotationStrip(), "main window must apply the hidden default");
+    // This preference test validates the synchronous QPainter relayout. Keep
+    // it independent from the machine's Vulkan presentation surface; the
+    // dedicated Vulkan smoke test below covers that backend separately.
+    view->setGraphicsMode(GraphicsMode::Traditional);
     const auto chart = makeChart();
     view->resize(960, 640);
     view->setChart(chart);

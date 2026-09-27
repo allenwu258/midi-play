@@ -85,11 +85,11 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
 #endif
     form->addRow(QStringLiteral("图形模式"), m_graphicsModeCombo);
 
-    m_visualEffectsCheckBox = new QCheckBox(QStringLiteral("启用流光玻璃特效"), this);
+    m_visualEffectsCheckBox = new QCheckBox(QStringLiteral("启用流光玻璃特效（Vulkan）"), this);
     m_visualEffectsCheckBox->setObjectName(QStringLiteral("visualEffectsCheckBox"));
     m_visualEffectsCheckBox->setAccessibleName(QStringLiteral("流光玻璃特效"));
     m_visualEffectsCheckBox->setToolTip(QStringLiteral(
-        "Vulkan 模式下启用半透明音符、边缘流光、击键光晕与星屑；修改立即生效并自动保存。"));
+        "仅在 Vulkan 模式下启用半透明音符、圆角边缘流光、击键光晕与星屑；修改立即生效并自动保存。"));
     form->addRow(QStringLiteral("视觉特效"), m_visualEffectsCheckBox);
 
     m_showNotationStripCheckBox = new QCheckBox(QStringLiteral("显示简谱条"), this);

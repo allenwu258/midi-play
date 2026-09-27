@@ -63,8 +63,14 @@ struct FrameConstants {
     float clipBottom;
     float dpr;
     float bodyOpacity;
+    float noteHaloStrength;
+    float noteEdgeStrength;
+    float noteSheenStrength;
+    float strikeGlowStrength;
+    float keyGlowStrength;
+    float particleStrength;
 };
-static_assert(sizeof(FrameConstants) == 36);
+static_assert(sizeof(FrameConstants) == 60);
 }
 
 class FallingNotesVulkanRenderer final : public QVulkanWindowRenderer {
@@ -645,7 +651,10 @@ void FallingNotesVulkanRenderer::startNextFrame()
         FrameConstants constants {float(m_window->width()) * dpr, float(m_window->height()) * dpr,
             float((state.transportPositionUs - m_scene.timeOriginUs())/1'000'000.0), float(g.strikeLineY),
             float(g.pixelsPerMicrosecond*1'000'000), float(g.fallingRect.top()), float(g.fallingRect.bottom()), dpr,
-            float(m_scene.bodyOpacity())};
+            float(m_scene.bodyOpacity()), m_scene.effectsProfile().noteHaloStrength,
+            m_scene.effectsProfile().noteEdgeStrength, m_scene.effectsProfile().noteSheenStrength,
+            m_scene.effectsProfile().strikeGlowStrength, m_scene.effectsProfile().keyGlowStrength,
+            m_scene.effectsProfile().particleStrength};
         VkViewport viewport {0, 0, float(physical.width()), float(physical.height()), 0, 1};
         VkRect2D scissor {{0, 0}, begin.renderArea.extent};
         m_df->vkCmdSetViewport(command, 0, 1, &viewport);

@@ -29,6 +29,18 @@ struct VulkanQuad {
 };
 static_assert(sizeof(VulkanQuad) == 112);
 
+// Vulkan-only visual tuning. These values are intentionally kept out of the
+// shared playback model so the enhanced look can evolve without changing
+// chart timing or the traditional renderer.
+struct VulkanEffectsProfile {
+    float noteHaloStrength = 0.30f;
+    float noteEdgeStrength = 0.72f;
+    float noteSheenStrength = 0.42f;
+    float strikeGlowStrength = 0.28f;
+    float keyGlowStrength = 0.34f;
+    float particleStrength = 0.72f;
+};
+
 // White-key illumination must precede black keys, including inactive ones.
 enum class VulkanUiLayer : size_t { Background, Strike, WhiteKeys, BlackKeys, Labels, Overlay, Count };
 
@@ -67,6 +79,7 @@ public:
     const PlaybackSceneGeometry& geometry() const { return m_geometry; }
     qsizetype visibleNoteCount() const { return m_visibleNoteCount; }
     qreal bodyOpacity() const { return m_noteFrame.bodyOpacity(); }
+    const VulkanEffectsProfile& effectsProfile() const { return m_effectsProfile; }
 
 private:
     struct Glyph { QRect pixels; QSizeF size; };
@@ -94,6 +107,7 @@ private:
     qint64 m_lookAheadUs = 0;
     bool m_showNotationStrip = false;
     bool m_visualEffectsEnabled = true;
+    VulkanEffectsProfile m_effectsProfile;
     bool m_hasBackground = false;
     QSize m_backgroundSize;
     quint64 m_backgroundRevision = 0;

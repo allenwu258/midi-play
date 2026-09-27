@@ -477,9 +477,11 @@ void testVulkanThemes(const visualization::VisualChartPtr& chart)
                 "Vulkan must restore every batch deterministically after a theme round trip");
         if (!show) {
             const auto range = scene.dynamicUi().range(VulkanUiLayer::Strike);
+            bool hasStrikeCore = false;
             for (uint32_t i = range.first; i < range.first + range.count; ++i)
-                require(scene.dynamicUi().quads[i].options[3] == 2,
-                        "hidden notation may retain local note effects, but no strike line or yellow glow");
+                hasStrikeCore = hasStrikeCore || scene.dynamicUi().quads[i].options[3] == 0;
+            require(hasStrikeCore,
+                    "enhanced Vulkan effects must retain a visible strike line when notation is hidden");
         }
     }
 }
@@ -619,7 +621,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
 }
 
 void captureVulkan(const visualization::VisualChartPtr& chart, const QString& directory, bool showNotationStrip,
-                   ThemeMode mode, NoteColorMode colors)
+                   ThemeMode mode, NoteColorMode colors, bool effectsEnabled = true)
 {
     QVulkanInstance instance;
     require(instance.create(), "Vulkan instance must initialize");
@@ -628,6 +630,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     window.resize(1280, 720);
     window.setChart(chart);
     window.setShowNotationStrip(showNotationStrip);
+    window.setVisualEffectsEnabled(effectsEnabled);
     window.setThemeMode(mode);
     window.setNoteColorMode(colors);
     window.setTransportPosition(500'000, chart->durationUs());
@@ -649,11 +652,26 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     const auto reference = renderRaster(chart, 500'000, window.size(), window.devicePixelRatio(), nullptr, showNotationStrip, mode, colors);
     require(reference.size() == image.size(), "backend comparison must use equal physical dimensions");
     require(reference.save(directory + QStringLiteral("/notes-qt-matched.png")), "matched raster snapshot must save");
+    QImage comparison = image;
+    if (effectsEnabled) {
+        // The enhanced Vulkan image is intentionally brighter than the
+        // traditional renderer. Compare the same window with effects disabled
+        // to keep geometry/material regression coverage independent from the
+        // visual treatment under review.
+        window.setVisualEffectsEnabled(false);
+        for (int i = 0; i < 3; ++i) QApplication::processEvents();
+        comparison = window.grab();
+        require(comparison.save(directory + QStringLiteral("/notes-vulkan-disabled.png")),
+                "disabled Vulkan snapshot must save");
+        require(image != comparison, "enabled Vulkan effects must change the rendered frame");
+        window.setVisualEffectsEnabled(true);
+        for (int i = 0; i < 3; ++i) QApplication::processEvents();
+    }
     double difference = 0;
     const int height = qFloor(SceneLayoutEngine().layout(window.size(), chart.get(), 5'000'000, showNotationStrip)
         .fallingRect.bottom() * window.devicePixelRatio());
     for (int y = 0; y < height; ++y) for (int x = 0; x < image.width(); ++x) {
-        const auto a = image.pixelColor(x, y);
+        const auto a = comparison.pixelColor(x, y);
         const auto b = reference.pixelColor(x, y);
         difference += std::abs(a.red() - b.red()) + std::abs(a.green() - b.green()) + std::abs(a.blue() - b.blue());
     }
@@ -674,7 +692,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
         const qreal dpr = window.devicePixelRatio();
         for (int y = qCeil(interior.top() * dpr); y < qFloor(interior.bottom() * dpr); ++y)
             for (int x = qCeil(interior.left() * dpr); x < qFloor(interior.right() * dpr); ++x) {
-                const auto a = image.pixelColor(x, y);
+                const auto a = comparison.pixelColor(x, y);
                 const auto b = reference.pixelColor(x, y);
                 keyboardDifference += std::abs(a.red() - b.red()) + std::abs(a.green() - b.green()) + std::abs(a.blue() - b.blue());
                 ++keyboardPixels;
