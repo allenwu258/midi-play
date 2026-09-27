@@ -38,7 +38,10 @@ void main() {
             vec2 coreSize = max(shape.xy - vec2(padding * 2.0), vec2(0.001));
             vec2 coreLocal = local - vec2(padding);
             normalized = clamp(coreLocal / coreSize, 0.0, 1.0);
-            float radius = min(7.0, min(coreSize.x, coreSize.y) * 0.34);
+            // Keep the note silhouette strictly rectangular. The halo uses
+            // the same box distance, so the glow follows the square corners
+            // instead of reintroducing a rounded cap.
+            float radius = 0.0;
             vec2 centered = coreLocal - coreSize * 0.5;
             vec2 q = abs(centered) - (coreSize * 0.5 - vec2(radius));
             float signedDistance = length(max(q, vec2(0.0)))
@@ -52,7 +55,8 @@ void main() {
             c.rgb = mix(c.rgb, haloColor, outerHalo * 0.72);
             c.a = min(1.0, c.a + outerHalo * frame.noteHaloStrength);
 
-            float rim = 1.0 - smoothstep(0.0, radius * 1.55, -signedDistance);
+            float rimWidth = max(1.6 / frame.dpr, 0.75);
+            float rim = (1.0 - smoothstep(0.0, rimWidth, -signedDistance)) * coreMask;
             vec3 edgeHighlight = mix(edge.rgb, vec3(1.0), 0.72);
             c.rgb = mix(c.rgb, edgeHighlight,
                         rim * frame.noteEdgeStrength * (shape.w == 3.0 ? 1.08 : 0.82));
