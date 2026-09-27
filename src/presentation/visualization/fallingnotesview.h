@@ -2,6 +2,7 @@
 
 #include "domain/playback/playbacktypes.h"
 #include "domain/settings/graphicsmode.h"
+#include "domain/settings/visualeffectlevel.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "domain/visualization/visiblenoteindex.h"
 #include "domain/visualization/visiblenotewindowcache.h"
@@ -34,6 +35,8 @@ public:
     QSize minimumSizeHint() const override { return {640, 440}; }
     bool showNotationStrip() const noexcept { return m_state.showNotationStrip; }
     bool visualEffectsEnabled() const noexcept { return m_state.visualEffectsEnabled; }
+    midi_play::settings::VisualEffectLevel visualEffectsLevel() const noexcept
+    { return m_state.visualEffectsLevel; }
     midi_play::settings::ThemeMode themeMode() const noexcept { return m_state.themeMode; }
     midi_play::settings::NoteColorMode noteColorMode() const noexcept { return m_state.noteColorMode; }
 
@@ -48,6 +51,7 @@ public slots:
     void setBackgroundImagePath(const QString& path);
     void setShowNotationStrip(bool show);
     void setVisualEffectsEnabled(bool enabled);
+    void setVisualEffectsLevel(midi_play::settings::VisualEffectLevel level);
     void setThemeMode(midi_play::settings::ThemeMode mode);
     void setNoteColorMode(midi_play::settings::NoteColorMode mode);
     void setLoading(bool loading);

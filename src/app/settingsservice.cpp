@@ -16,6 +16,7 @@ SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store, QObject*
     qRegisterMetaType<midi_play::settings::GraphicsMode>();
     qRegisterMetaType<midi_play::settings::ThemeMode>();
     qRegisterMetaType<midi_play::settings::NoteColorMode>();
+    qRegisterMetaType<midi_play::settings::VisualEffectLevel>();
 }
 
 void SettingsService::load()
@@ -32,6 +33,8 @@ void SettingsService::load()
     loadedSettings.graphicsMode = settings::normalizeGraphicsMode(loadedSettings.graphicsMode);
     loadedSettings.themeMode = settings::normalizeThemeMode(loadedSettings.themeMode);
     loadedSettings.noteColorMode = settings::normalizeNoteColorMode(loadedSettings.noteColorMode);
+    loadedSettings.visualEffectsLevel = settings::normalizeVisualEffectLevel(
+        loadedSettings.visualEffectsLevel);
     loadedSettings.soundFontPath = normalizeSoundFontPath(loadedSettings.soundFontPath);
     loadedSettings.backgroundImagePath = normalizeBackgroundImagePath(loadedSettings.backgroundImagePath);
     m_settings = loadedSettings;
@@ -147,6 +150,15 @@ void SettingsService::setVisualEffectsEnabled(bool enabled)
     if (m_settings.visualEffectsEnabled == enabled) return;
     m_settings.visualEffectsEnabled = enabled;
     emit visualEffectsEnabledChanged(enabled);
+    persistSettings();
+}
+
+void SettingsService::setVisualEffectsLevel(settings::VisualEffectLevel level)
+{
+    const auto normalized = settings::normalizeVisualEffectLevel(level);
+    if (m_settings.visualEffectsLevel == normalized) return;
+    m_settings.visualEffectsLevel = normalized;
+    emit visualEffectsLevelChanged(normalized);
     persistSettings();
 }
 

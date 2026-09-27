@@ -12,13 +12,20 @@ std::array<float, 4> rgba(const QColor& c)
 }
 float seconds(qint64 value, qint64 origin) { return float((value - origin) / 1'000'000.0); }
 
-VulkanEffectsProfile effectsProfileFor(midi_play::settings::ThemeMode mode, bool enabled)
+VulkanEffectsProfile effectsProfileFor(midi_play::settings::ThemeMode mode, bool enabled,
+                                       midi_play::settings::VisualEffectLevel level)
 {
     if (!enabled) return {};
     const bool light = mode == midi_play::settings::ThemeMode::Light;
-    return light
-        ? VulkanEffectsProfile {0.20f, 0.58f, 0.34f, 0.20f, 0.34f, 0.52f}
-        : VulkanEffectsProfile {0.34f, 0.82f, 0.52f, 0.32f, 0.58f, 0.80f};
+    const auto base = light
+        ? VulkanEffectsProfile {0.20f, 0.58f, 0.22f, 0.20f, 0.34f, 0.52f}
+        : VulkanEffectsProfile {0.34f, 0.82f, 0.34f, 0.32f, 0.58f, 0.80f};
+    const float scale = level == midi_play::settings::VisualEffectLevel::Low
+        ? 0.58f
+        : level == midi_play::settings::VisualEffectLevel::High ? 1.28f : 1.0f;
+    return {base.noteHaloStrength * scale, base.noteEdgeStrength * scale,
+            base.noteSheenStrength * scale, base.strikeGlowStrength * scale,
+            base.keyGlowStrength * scale, base.particleStrength * scale};
 }
 }
 
@@ -29,11 +36,14 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     const bool chartChanged = m_chart != state.chart;
     const auto mode = midi_play::settings::normalizeThemeMode(state.themeMode);
     const bool themeChanged = m_themeMode != mode;
-    const bool effectsChanged = m_visualEffectsEnabled != state.visualEffectsEnabled;
+    const auto effectLevel = midi_play::settings::normalizeVisualEffectLevel(state.visualEffectsLevel);
+    const bool effectsChanged = m_visualEffectsEnabled != state.visualEffectsEnabled
+        || m_visualEffectsLevel != effectLevel;
     m_themeMode = mode;
     m_theme = theme::themeFor(mode).visualization;
     m_visualEffectsEnabled = state.visualEffectsEnabled;
-    m_effectsProfile = effectsProfileFor(mode, state.visualEffectsEnabled);
+    m_visualEffectsLevel = effectLevel;
+    m_effectsProfile = effectsProfileFor(mode, state.visualEffectsEnabled, effectLevel);
     const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs
         || m_showNotationStrip != state.showNotationStrip;
     const bool backgroundChanged = m_hasBackground != hasBackground

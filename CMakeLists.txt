@@ -123,6 +123,7 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/domain/settings/graphicsmode.h
     src/domain/settings/thememode.h
     src/domain/settings/notecolormode.h
+    src/domain/settings/visualeffectlevel.h
     src/domain/settings/titlebarmode.h
     src/infrastructure/musicxml/musicxmlreader.h
     src/infrastructure/musicxml/musicxmlreader.cpp

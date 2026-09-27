@@ -34,6 +34,7 @@ using app::SettingsService;
 using infrastructure::settings::QSettingsStore;
 using settings::NoteColorMode;
 using settings::ThemeMode;
+using settings::VisualEffectLevel;
 
 void require(bool value, const char* message)
 {
@@ -316,6 +317,7 @@ void testVulkanRevisions(const visualization::VisualChartPtr& chart)
         state.chart = chart;
         state.themeMode = theme;
         state.noteColorMode = NoteColorMode::Normal;
+        state.visualEffectsLevel = VisualEffectLevel::Medium;
         state.transportState = playback::State::Playing;
         state.transportPositionUs = 500'000;
         state.showNotationStrip = notation;
@@ -337,6 +339,17 @@ void testVulkanRevisions(const visualization::VisualChartPtr& chart)
         state.noteColorMode = NoteColorMode::Normal;
         scene.prepare(state, {960, 640}, 1.5, QFont());
         require(scene.notes() == notes && scene.dynamicUi().quads == dynamic, "Vulkan material round trips must be exact");
+        state.visualEffectsLevel = VisualEffectLevel::Low;
+        scene.prepare(state, {960, 640}, 1.5, QFont());
+        const auto lowProfile = scene.effectsProfile();
+        state.visualEffectsLevel = VisualEffectLevel::High;
+        scene.prepare(state, {960, 640}, 1.5, QFont());
+        const auto highProfile = scene.effectsProfile();
+        require(lowProfile.noteHaloStrength < highProfile.noteHaloStrength
+                    && lowProfile.noteSheenStrength < highProfile.noteSheenStrength
+                    && lowProfile.keyGlowStrength < highProfile.keyGlowStrength
+                    && lowProfile.particleStrength < highProfile.particleStrength,
+                "Vulkan intensity levels must scale all visual effect channels");
     }
 }
 #endif

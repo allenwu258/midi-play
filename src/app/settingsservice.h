@@ -28,6 +28,7 @@ public:
     const QString& backgroundImagePath() const noexcept { return m_settings.backgroundImagePath; }
     bool backgroundImageEnabled() const noexcept { return m_settings.backgroundImageEnabled; }
     bool visualEffectsEnabled() const noexcept { return m_settings.visualEffectsEnabled; }
+    settings::VisualEffectLevel visualEffectsLevel() const noexcept { return m_settings.visualEffectsLevel; }
     QString activeBackgroundImagePath() const {
         return m_settings.backgroundImageEnabled ? m_settings.backgroundImagePath : QString();
     }
@@ -45,6 +46,7 @@ public slots:
     void setBackgroundImagePath(const QString& path);
     void setBackgroundImageEnabled(bool enabled);
     void setVisualEffectsEnabled(bool enabled);
+    void setVisualEffectsLevel(settings::VisualEffectLevel level);
 
 signals:
     void visualizationRefreshRateChanged(int refreshRate);
@@ -57,6 +59,7 @@ signals:
     void backgroundImagePathChanged(const QString& path);
     void backgroundImageEnabledChanged(bool enabled);
     void visualEffectsEnabledChanged(bool enabled);
+    void visualEffectsLevelChanged(midi_play::settings::VisualEffectLevel level);
     void settingsLoadWarning(const QString& message);
     void settingsSaveFailed(const QString& message);
 

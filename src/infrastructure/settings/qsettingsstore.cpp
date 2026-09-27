@@ -89,6 +89,16 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         QStringLiteral("Visualization/backgroundImageEnabled"), !result.backgroundImagePath.isEmpty()).toBool();
     result.visualEffectsEnabled = file.value(
         QStringLiteral("Visualization/visualEffectsEnabled"), true).toBool();
+    const bool hasVisualEffectsLevel = file.contains(QStringLiteral("Visualization/visualEffectsLevel"));
+    const QVariant visualEffectsLevelValue = file.value(
+        QStringLiteral("Visualization/visualEffectsLevel"),
+        midi_play::settings::visualEffectLevelPersistentValue(
+            midi_play::settings::kDefaultVisualEffectLevel));
+    bool visualEffectsLevelConversionOk = false;
+    const int configuredVisualEffectsLevel = visualEffectsLevelValue.toInt(&visualEffectsLevelConversionOk);
+    result.visualEffectsLevel = visualEffectsLevelConversionOk
+        ? midi_play::settings::visualEffectLevelFromPersistentValue(configuredVisualEffectsLevel)
+        : midi_play::settings::kDefaultVisualEffectLevel;
 
     const QString readStatus = statusMessage(file.status());
     if (!readStatus.isEmpty() && warning) {
@@ -122,6 +132,13 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         && (!noteColorConversionOk || !midi_play::settings::isValidNoteColorMode(noteColorValue))
         && warning) {
         const auto message = QStringLiteral("设置文件中的音符色彩模式无效，已回退到鲜明模式");
+        *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
+    }
+    if (hasVisualEffectsLevel
+        && (!visualEffectsLevelConversionOk
+            || !midi_play::settings::isValidVisualEffectLevel(configuredVisualEffectsLevel))
+        && warning) {
+        const auto message = QStringLiteral("设置文件中的流光特效强度无效，已回退到中档");
         *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
     }
     return result;
@@ -168,6 +185,8 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
     }
     file.setValue(QStringLiteral("Visualization/backgroundImageEnabled"), settings.backgroundImageEnabled);
     file.setValue(QStringLiteral("Visualization/visualEffectsEnabled"), settings.visualEffectsEnabled);
+    file.setValue(QStringLiteral("Visualization/visualEffectsLevel"),
+                  midi_play::settings::visualEffectLevelPersistentValue(settings.visualEffectsLevel));
     file.sync();
 
     const QString writeStatus = statusMessage(file.status());

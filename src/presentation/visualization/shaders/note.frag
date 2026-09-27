@@ -34,6 +34,10 @@ void main() {
         bool glass = flags.z > 0.5;
         vec2 normalized = clamp(local / shape.xy, 0.0, 1.0);
         if (glass) {
+            // Tails are narrow and tall, so the same halo width reads much
+            // brighter than it does on a note body. Keep their solid color
+            // and fade unchanged while reducing only the glass accents.
+            float effectScale = shape.w == 1.0 ? 0.52 : 1.0;
             float padding = max(1.0, flags.x);
             vec2 coreSize = max(shape.xy - vec2(padding * 2.0), vec2(0.001));
             vec2 coreLocal = local - vec2(padding);
@@ -53,33 +57,34 @@ void main() {
             c.a *= coreMask;
             vec3 haloColor = mix(c.rgb, edge.rgb, 0.40);
             c.rgb = mix(c.rgb, haloColor, outerHalo * 0.72);
-            c.a = min(1.0, c.a + outerHalo * frame.noteHaloStrength);
+            c.a = min(1.0, c.a + outerHalo * frame.noteHaloStrength * effectScale);
 
             float rimWidth = max(1.6 / frame.dpr, 0.75);
             float rim = (1.0 - smoothstep(0.0, rimWidth, -signedDistance)) * coreMask;
             vec3 edgeHighlight = mix(edge.rgb, vec3(1.0), 0.72);
             c.rgb = mix(c.rgb, edgeHighlight,
-                        rim * frame.noteEdgeStrength * (shape.w == 3.0 ? 1.08 : 0.82));
-            c.a = min(1.0, c.a + rim * 0.11 * frame.noteEdgeStrength);
+                        rim * frame.noteEdgeStrength * effectScale
+                            * (shape.w == 3.0 ? 1.08 : 0.82));
+            c.a = min(1.0, c.a + rim * 0.11 * frame.noteEdgeStrength * effectScale);
 
-            // A broad diagonal sheen produces a glass-like reflection rather
-            // than a single hard stripe. Its position remains deterministic
-            // for seeks and dropped frames because it is driven by music time.
-            float sheenCoordinate = normalized.y * 0.84 + normalized.x * 0.16;
-            float sheenCenter = fract(frame.position * 0.24 + flags.w);
-            float sheen = 1.0 - smoothstep(0.0, 0.13,
-                abs(sheenCoordinate - sheenCenter));
-            sheen *= smoothstep(0.03, 0.16, normalized.y)
-                   * smoothstep(0.03, 0.16, 1.0 - normalized.y);
-            c.rgb = mix(c.rgb, vec3(1.0), sheen * frame.noteSheenStrength);
-            c.a = min(1.0, c.a + sheen * 0.12 * frame.noteSheenStrength);
+            // Keep the moving reflection on the leading edge. A full-height
+            // diagonal band reads as a detached white flare, especially on
+            // long notes; this small glint keeps the material alive without
+            // changing coverage or creating a second bright note in the body.
+            float glintCenter = fract(frame.position * 0.12 + flags.w);
+            float glintDistance = abs(fract(normalized.x - glintCenter + 0.5) - 0.5);
+            float glint = 1.0 - smoothstep(0.0, 0.075, glintDistance);
+            glint *= 1.0 - smoothstep(0.0, 0.16, normalized.y);
+            float glintScale = shape.w == 1.0 ? 0.42 : shape.w == 2.0 ? 0.62 : 0.36;
+            c.rgb = mix(c.rgb, edgeHighlight,
+                        glint * frame.noteSheenStrength * glintScale * effectScale);
 
             // Keep a restrained luminous core inside the colored body. This
             // gives narrow lanes a readable center even when the surrounding
             // halo is composited over a bright background.
-            float coreStripe = 1.0 - smoothstep(0.0, 0.44,
-                abs(normalized.x - 0.5));
-            c.rgb = mix(c.rgb, vec3(1.0), coreStripe * 0.12);
+            float coreStripe = 1.0 - smoothstep(0.0, 0.18,
+                abs(normalized.x - 0.28));
+            c.rgb = mix(c.rgb, vec3(1.0), coreStripe * 0.065 * effectScale);
         } else {
             // Independent box coverage preserves the original renderer when
             // enhanced effects are disabled.

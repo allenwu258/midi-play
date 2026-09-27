@@ -107,6 +107,8 @@ private:
     qint64 m_lookAheadUs = 0;
     bool m_showNotationStrip = false;
     bool m_visualEffectsEnabled = true;
+    midi_play::settings::VisualEffectLevel m_visualEffectsLevel =
+        midi_play::settings::kDefaultVisualEffectLevel;
     VulkanEffectsProfile m_effectsProfile;
     bool m_hasBackground = false;
     QSize m_backgroundSize;

@@ -21,6 +21,7 @@ public:
     void setTransportState(midi_play::playback::State state);
     void setShowNotationStrip(bool show);
     void setVisualEffectsEnabled(bool enabled);
+    void setVisualEffectsLevel(midi_play::settings::VisualEffectLevel level);
     void setThemeMode(midi_play::settings::ThemeMode mode);
     void setNoteColorMode(midi_play::settings::NoteColorMode mode);
     void setBackgroundImage(const QImage& image);
@@ -54,6 +55,8 @@ private:
     bool m_loading = false;
     bool m_showNotationStrip = false;
     bool m_visualEffectsEnabled = true;
+    midi_play::settings::VisualEffectLevel m_visualEffectsLevel =
+        midi_play::settings::kDefaultVisualEffectLevel;
     midi_play::settings::ThemeMode m_themeMode = midi_play::settings::kDefaultThemeMode;
     midi_play::settings::NoteColorMode m_noteColorMode = midi_play::settings::kDefaultNoteColorMode;
     QString m_error;

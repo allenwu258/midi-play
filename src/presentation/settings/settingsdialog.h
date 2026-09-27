@@ -5,6 +5,7 @@
 #include "domain/settings/graphicsmode.h"
 #include "domain/settings/thememode.h"
 #include "domain/settings/notecolormode.h"
+#include "domain/settings/visualeffectlevel.h"
 
 class QCheckBox;
 class QComboBox;
@@ -41,6 +42,7 @@ private slots:
     void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
     void updateNotationStripSelection(bool show);
     void updateVisualEffectsSelection(bool enabled);
+    void updateVisualEffectsLevelSelection(midi_play::settings::VisualEffectLevel level);
     void updateThemeSelection(midi_play::settings::ThemeMode mode);
     void updateNoteColorSelection(midi_play::settings::NoteColorMode mode);
     void applyTheme(midi_play::settings::ThemeMode mode);
@@ -52,6 +54,7 @@ private slots:
 
 private:
     void initializeRefreshRateOptions();
+    void updateVisualEffectsLevelEnabled();
 
     app::SettingsService* m_settingsService = nullptr;
     app::PlayerApplicationService* m_playerService = nullptr;
@@ -62,6 +65,7 @@ private:
     QComboBox* m_noteColorCombo = nullptr;
     QCheckBox* m_showNotationStripCheckBox = nullptr;
     QCheckBox* m_visualEffectsCheckBox = nullptr;
+    QComboBox* m_visualEffectsLevelCombo = nullptr;
     QLabel* m_customRefreshRateLabel = nullptr;
     QSpinBox* m_customRefreshRateSpinBox = nullptr;
     QLineEdit* m_soundFontPathEdit = nullptr;

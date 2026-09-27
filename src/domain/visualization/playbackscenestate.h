@@ -3,6 +3,7 @@
 #include "domain/playback/playbacktypes.h"
 #include "domain/settings/thememode.h"
 #include "domain/settings/notecolormode.h"
+#include "domain/settings/visualeffectlevel.h"
 #include "visualchart.h"
 
 #include <span>
@@ -30,6 +31,7 @@ struct PlaybackSceneState {
     bool loading = false;
     bool showNotationStrip = false;
     bool visualEffectsEnabled = true;
+    settings::VisualEffectLevel visualEffectsLevel = settings::kDefaultVisualEffectLevel;
     settings::ThemeMode themeMode = settings::kDefaultThemeMode;
     settings::NoteColorMode noteColorMode = settings::kDefaultNoteColorMode;
     QString errorMessage;

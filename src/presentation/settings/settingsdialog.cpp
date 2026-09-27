@@ -92,6 +92,22 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         "仅在 Vulkan 模式下启用半透明音符、方角边缘流光、击键光晕与星屑；修改立即生效并自动保存。"));
     form->addRow(QStringLiteral("视觉特效"), m_visualEffectsCheckBox);
 
+    m_visualEffectsLevelCombo = new QComboBox(this);
+    m_visualEffectsLevelCombo->setObjectName(QStringLiteral("visualEffectsLevelCombo"));
+    m_visualEffectsLevelCombo->setAccessibleName(QStringLiteral("流光特效强度"));
+    m_visualEffectsLevelCombo->addItem(QStringLiteral("低"),
+        midi_play::settings::visualEffectLevelPersistentValue(
+            midi_play::settings::VisualEffectLevel::Low));
+    m_visualEffectsLevelCombo->addItem(QStringLiteral("中"),
+        midi_play::settings::visualEffectLevelPersistentValue(
+            midi_play::settings::VisualEffectLevel::Medium));
+    m_visualEffectsLevelCombo->addItem(QStringLiteral("高"),
+        midi_play::settings::visualEffectLevelPersistentValue(
+            midi_play::settings::VisualEffectLevel::High));
+    m_visualEffectsLevelCombo->setToolTip(QStringLiteral(
+        "调整 Vulkan 模式下的音符边缘、光晕、判定线、琴键洗光与粒子强度；修改立即生效并自动保存。"));
+    form->addRow(QStringLiteral("流光强度（Vulkan）"), m_visualEffectsLevelCombo);
+
     m_showNotationStripCheckBox = new QCheckBox(QStringLiteral("显示简谱条"), this);
     m_showNotationStripCheckBox->setObjectName(QStringLiteral("showNotationStripCheckBox"));
     m_showNotationStripCheckBox->setChecked(midi_play::settings::kDefaultShowNotationStrip);
@@ -222,6 +238,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         updateTitleBarModeSelection(m_settingsService->titleBarMode());
         updateGraphicsModeSelection(m_settingsService->graphicsMode());
         updateVisualEffectsSelection(m_settingsService->visualEffectsEnabled());
+        updateVisualEffectsLevelSelection(m_settingsService->visualEffectsLevel());
         updateNotationStripSelection(m_settingsService->showNotationStrip());
         connect(m_visualEffectsCheckBox, &QCheckBox::toggled, this, [this](bool enabled) {
             m_errorLabel->hide();
@@ -229,6 +246,14 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         });
         connect(m_settingsService, &app::SettingsService::visualEffectsEnabledChanged,
                 this, &SettingsDialog::updateVisualEffectsSelection);
+        connect(m_visualEffectsLevelCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
+            m_errorLabel->hide();
+            m_settingsService->setVisualEffectsLevel(
+                midi_play::settings::visualEffectLevelFromPersistentValue(
+                    m_visualEffectsLevelCombo->currentData().toInt()));
+        });
+        connect(m_settingsService, &app::SettingsService::visualEffectsLevelChanged,
+                this, &SettingsDialog::updateVisualEffectsLevelSelection);
         connect(m_showNotationStripCheckBox, &QCheckBox::toggled, this, [this](bool show) {
             m_errorLabel->hide();
             m_settingsService->setShowNotationStrip(show);
@@ -282,6 +307,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         m_titleBarModeCombo->setEnabled(false);
         m_graphicsModeCombo->setEnabled(false);
         m_visualEffectsCheckBox->setEnabled(false);
+        m_visualEffectsLevelCombo->setEnabled(false);
         m_showNotationStripCheckBox->setEnabled(false);
         m_backgroundModeCombo->setEnabled(false);
         m_loadBackgroundImageButton->setEnabled(false);
@@ -452,6 +478,15 @@ void SettingsDialog::updateVisualEffectsSelection(bool enabled)
 {
     const QSignalBlocker blocker(m_visualEffectsCheckBox);
     m_visualEffectsCheckBox->setChecked(enabled);
+    if (m_visualEffectsLevelCombo) m_visualEffectsLevelCombo->setEnabled(enabled);
+}
+
+void SettingsDialog::updateVisualEffectsLevelSelection(midi_play::settings::VisualEffectLevel level)
+{
+    if (!m_visualEffectsLevelCombo) return;
+    const QSignalBlocker blocker(m_visualEffectsLevelCombo);
+    m_visualEffectsLevelCombo->setCurrentIndex(m_visualEffectsLevelCombo->findData(
+        midi_play::settings::visualEffectLevelPersistentValue(level)));
 }
 
 void SettingsDialog::updateSoundFontPath(const QString& path)

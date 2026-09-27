@@ -41,6 +41,7 @@ namespace {
 using midi_play::settings::GraphicsMode;
 using midi_play::settings::ThemeMode;
 using midi_play::settings::NoteColorMode;
+using midi_play::settings::VisualEffectLevel;
 using midi_play::playback::State;
 using midi_play::presentation::visualization::FallingNotesView;
 
@@ -168,14 +169,25 @@ void testVisualEffectsPreference()
     auto* view = window.findChild<FallingNotesView*>();
     midi_play::presentation::settings::SettingsDialog dialog(&settings, nullptr);
     auto* control = dialog.findChild<QCheckBox*>(QStringLiteral("visualEffectsCheckBox"));
-    require(view && control && control->isChecked() && view->visualEffectsEnabled(),
+    auto* level = dialog.findChild<QComboBox*>(QStringLiteral("visualEffectsLevelCombo"));
+    require(view && control && level && control->isChecked() && view->visualEffectsEnabled()
+                && level->count() == 3
+                && level->currentData().toInt() == int(VisualEffectLevel::Medium),
             "visual effects must default to enabled and reach the visualization view");
 
     int changes = 0;
+    int levelChanges = 0;
     QObject::connect(&settings, &midi_play::app::SettingsService::visualEffectsEnabledChanged,
                      &dialog, [&](bool) { ++changes; });
+    QObject::connect(&settings, &midi_play::app::SettingsService::visualEffectsLevelChanged,
+                     &dialog, [&](VisualEffectLevel) { ++levelChanges; });
+    level->setCurrentIndex(level->findData(int(VisualEffectLevel::High)));
+    require(levelChanges == 1 && settings.visualEffectsLevel() == VisualEffectLevel::High
+                && view->visualEffectsLevel() == VisualEffectLevel::High,
+            "changing the visual effects level must update the running view exactly once");
     control->click();
-    require(changes == 1 && !settings.visualEffectsEnabled() && !view->visualEffectsEnabled(),
+    require(changes == 1 && !settings.visualEffectsEnabled() && !view->visualEffectsEnabled()
+                && !level->isEnabled(),
             "disabling visual effects must update the running view exactly once");
     settings.setVisualEffectsEnabled(false);
     require(changes == 1, "an unchanged visual effects preference must not emit again");
@@ -183,11 +195,14 @@ void testVisualEffectsPreference()
     midi_play::app::SettingsService restarted(
         std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(path));
     restarted.load();
-    require(!restarted.visualEffectsEnabled(),
-            "the visual effects preference must survive restart");
+    require(!restarted.visualEffectsEnabled() && restarted.visualEffectsLevel() == VisualEffectLevel::High,
+            "the visual effects preferences must survive restart");
     restarted.setVisualEffectsEnabled(true);
     require(restarted.visualEffectsEnabled(),
             "visual effects must be re-enableable after being disabled");
+    restarted.setVisualEffectsLevel(VisualEffectLevel::Low);
+    require(restarted.visualEffectsLevel() == VisualEffectLevel::Low,
+            "visual effects level must be changeable after restart");
 }
 
 void testBackgroundModePreference()
@@ -465,6 +480,9 @@ void testVulkanSwitching()
         require(window->sceneState().showNotationStrip, "backend creation must retain the notation preference");
         require(window->sceneState().visualEffectsEnabled,
                 "a new Vulkan backend must inherit the visual effects preference");
+        view.setVisualEffectsLevel(VisualEffectLevel::High);
+        require(window->sceneState().visualEffectsLevel == VisualEffectLevel::High,
+                "a Vulkan backend must inherit and update the visual effects level");
         view.setVisualEffectsEnabled(false);
         require(!window->sceneState().visualEffectsEnabled,
                 "disabling visual effects must update the existing Vulkan backend");
