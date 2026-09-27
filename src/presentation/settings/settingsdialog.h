@@ -40,6 +40,7 @@ private slots:
     void updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode);
     void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
     void updateNotationStripSelection(bool show);
+    void updateVisualEffectsSelection(bool enabled);
     void updateThemeSelection(midi_play::settings::ThemeMode mode);
     void updateNoteColorSelection(midi_play::settings::NoteColorMode mode);
     void applyTheme(midi_play::settings::ThemeMode mode);
@@ -60,6 +61,7 @@ private:
     QComboBox* m_themeCombo = nullptr;
     QComboBox* m_noteColorCombo = nullptr;
     QCheckBox* m_showNotationStripCheckBox = nullptr;
+    QCheckBox* m_visualEffectsCheckBox = nullptr;
     QLabel* m_customRefreshRateLabel = nullptr;
     QSpinBox* m_customRefreshRateSpinBox = nullptr;
     QLineEdit* m_soundFontPathEdit = nullptr;

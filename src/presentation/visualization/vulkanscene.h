@@ -93,6 +93,7 @@ private:
     QSize m_size;
     qint64 m_lookAheadUs = 0;
     bool m_showNotationStrip = false;
+    bool m_visualEffectsEnabled = true;
     bool m_hasBackground = false;
     QSize m_backgroundSize;
     quint64 m_backgroundRevision = 0;

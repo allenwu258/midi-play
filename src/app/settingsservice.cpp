@@ -142,6 +142,14 @@ void SettingsService::setBackgroundImageEnabled(bool enabled)
     persistSettings();
 }
 
+void SettingsService::setVisualEffectsEnabled(bool enabled)
+{
+    if (m_settings.visualEffectsEnabled == enabled) return;
+    m_settings.visualEffectsEnabled = enabled;
+    emit visualEffectsEnabledChanged(enabled);
+    persistSettings();
+}
+
 QString SettingsService::normalizeSoundFontPath(const QString& path)
 {
     const QString trimmedPath = path.trimmed();

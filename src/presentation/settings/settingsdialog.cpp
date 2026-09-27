@@ -85,6 +85,13 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
 #endif
     form->addRow(QStringLiteral("图形模式"), m_graphicsModeCombo);
 
+    m_visualEffectsCheckBox = new QCheckBox(QStringLiteral("启用流光玻璃特效"), this);
+    m_visualEffectsCheckBox->setObjectName(QStringLiteral("visualEffectsCheckBox"));
+    m_visualEffectsCheckBox->setAccessibleName(QStringLiteral("流光玻璃特效"));
+    m_visualEffectsCheckBox->setToolTip(QStringLiteral(
+        "Vulkan 模式下启用半透明音符、边缘流光、击键光晕与星屑；修改立即生效并自动保存。"));
+    form->addRow(QStringLiteral("视觉特效"), m_visualEffectsCheckBox);
+
     m_showNotationStripCheckBox = new QCheckBox(QStringLiteral("显示简谱条"), this);
     m_showNotationStripCheckBox->setObjectName(QStringLiteral("showNotationStripCheckBox"));
     m_showNotationStripCheckBox->setChecked(midi_play::settings::kDefaultShowNotationStrip);
@@ -214,7 +221,14 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::applyCustomRefreshRateFromUi);
         updateTitleBarModeSelection(m_settingsService->titleBarMode());
         updateGraphicsModeSelection(m_settingsService->graphicsMode());
+        updateVisualEffectsSelection(m_settingsService->visualEffectsEnabled());
         updateNotationStripSelection(m_settingsService->showNotationStrip());
+        connect(m_visualEffectsCheckBox, &QCheckBox::toggled, this, [this](bool enabled) {
+            m_errorLabel->hide();
+            m_settingsService->setVisualEffectsEnabled(enabled);
+        });
+        connect(m_settingsService, &app::SettingsService::visualEffectsEnabledChanged,
+                this, &SettingsDialog::updateVisualEffectsSelection);
         connect(m_showNotationStripCheckBox, &QCheckBox::toggled, this, [this](bool show) {
             m_errorLabel->hide();
             m_settingsService->setShowNotationStrip(show);
@@ -267,6 +281,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         m_refreshRateCombo->setEnabled(false);
         m_titleBarModeCombo->setEnabled(false);
         m_graphicsModeCombo->setEnabled(false);
+        m_visualEffectsCheckBox->setEnabled(false);
         m_showNotationStripCheckBox->setEnabled(false);
         m_backgroundModeCombo->setEnabled(false);
         m_loadBackgroundImageButton->setEnabled(false);
@@ -431,6 +446,12 @@ void SettingsDialog::updateNotationStripSelection(bool show)
 {
     const QSignalBlocker blocker(m_showNotationStripCheckBox);
     m_showNotationStripCheckBox->setChecked(show);
+}
+
+void SettingsDialog::updateVisualEffectsSelection(bool enabled)
+{
+    const QSignalBlocker blocker(m_visualEffectsCheckBox);
+    m_visualEffectsCheckBox->setChecked(enabled);
 }
 
 void SettingsDialog::updateSoundFontPath(const QString& path)

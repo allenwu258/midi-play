@@ -27,6 +27,7 @@ public:
     const QString& soundFontPath() const noexcept { return m_settings.soundFontPath; }
     const QString& backgroundImagePath() const noexcept { return m_settings.backgroundImagePath; }
     bool backgroundImageEnabled() const noexcept { return m_settings.backgroundImageEnabled; }
+    bool visualEffectsEnabled() const noexcept { return m_settings.visualEffectsEnabled; }
     QString activeBackgroundImagePath() const {
         return m_settings.backgroundImageEnabled ? m_settings.backgroundImagePath : QString();
     }
@@ -43,6 +44,7 @@ public slots:
     void setSoundFontPath(const QString& path);
     void setBackgroundImagePath(const QString& path);
     void setBackgroundImageEnabled(bool enabled);
+    void setVisualEffectsEnabled(bool enabled);
 
 signals:
     void visualizationRefreshRateChanged(int refreshRate);
@@ -54,6 +56,7 @@ signals:
     void soundFontPathChanged(const QString& path);
     void backgroundImagePathChanged(const QString& path);
     void backgroundImageEnabledChanged(bool enabled);
+    void visualEffectsEnabledChanged(bool enabled);
     void settingsLoadWarning(const QString& message);
     void settingsSaveFailed(const QString& message);
 

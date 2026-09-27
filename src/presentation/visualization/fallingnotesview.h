@@ -33,6 +33,7 @@ public:
 
     QSize minimumSizeHint() const override { return {640, 440}; }
     bool showNotationStrip() const noexcept { return m_state.showNotationStrip; }
+    bool visualEffectsEnabled() const noexcept { return m_state.visualEffectsEnabled; }
     midi_play::settings::ThemeMode themeMode() const noexcept { return m_state.themeMode; }
     midi_play::settings::NoteColorMode noteColorMode() const noexcept { return m_state.noteColorMode; }
 
@@ -46,6 +47,7 @@ public slots:
     void setGraphicsMode(midi_play::settings::GraphicsMode mode);
     void setBackgroundImagePath(const QString& path);
     void setShowNotationStrip(bool show);
+    void setVisualEffectsEnabled(bool enabled);
     void setThemeMode(midi_play::settings::ThemeMode mode);
     void setNoteColorMode(midi_play::settings::NoteColorMode mode);
     void setLoading(bool loading);

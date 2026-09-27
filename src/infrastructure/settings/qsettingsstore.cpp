@@ -87,6 +87,8 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         file.value(QStringLiteral("Visualization/backgroundImagePath")).toString().trimmed();
     result.backgroundImageEnabled = file.value(
         QStringLiteral("Visualization/backgroundImageEnabled"), !result.backgroundImagePath.isEmpty()).toBool();
+    result.visualEffectsEnabled = file.value(
+        QStringLiteral("Visualization/visualEffectsEnabled"), true).toBool();
 
     const QString readStatus = statusMessage(file.status());
     if (!readStatus.isEmpty() && warning) {
@@ -165,6 +167,7 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
         file.setValue(QStringLiteral("Visualization/backgroundImagePath"), settings.backgroundImagePath);
     }
     file.setValue(QStringLiteral("Visualization/backgroundImageEnabled"), settings.backgroundImageEnabled);
+    file.setValue(QStringLiteral("Visualization/visualEffectsEnabled"), settings.visualEffectsEnabled);
     file.sync();
 
     const QString writeStatus = statusMessage(file.status());

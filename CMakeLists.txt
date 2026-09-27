@@ -325,6 +325,21 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    # Keep the offscreen platform available beside test executables as well as
+    # through CTest's environment. This makes direct test invocations with
+    # `-platform offscreen` behave the same as CTest runs.
+    if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        function(midi_play_deploy_offscreen_plugin target)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:${target}>/platforms"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
+                    "$<TARGET_FILE_DIR:${target}>/platforms"
+                VERBATIM)
+        endfunction()
+    endif()
+
     add_executable(midi_play_audio_export_tests tests/audioexporttests.cpp)
     target_link_libraries(midi_play_audio_export_tests PRIVATE midi_play_core)
     target_compile_definitions(midi_play_audio_export_tests PRIVATE
@@ -332,6 +347,9 @@ if (BUILD_TESTING)
     add_test(NAME audio_export COMMAND midi_play_audio_export_tests)
     add_executable(midi_play_soundfont_setup_tests tests/soundfontsetuptests.cpp)
     target_link_libraries(midi_play_soundfont_setup_tests PRIVATE midi_play_core)
+    if (COMMAND midi_play_deploy_offscreen_plugin)
+        midi_play_deploy_offscreen_plugin(midi_play_soundfont_setup_tests)
+    endif()
     add_test(NAME soundfont_setup COMMAND midi_play_soundfont_setup_tests -platform offscreen
         --fixture "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/deployment.musicxml")
     if (TARGET Qt6::QOffscreenIntegrationPlugin)
@@ -351,6 +369,9 @@ if (BUILD_TESTING)
     endif()
     add_executable(midi_play_note_color_tests tests/notecolortests.cpp)
     target_link_libraries(midi_play_note_color_tests PRIVATE midi_play_core)
+    if (COMMAND midi_play_deploy_offscreen_plugin)
+        midi_play_deploy_offscreen_plugin(midi_play_note_color_tests)
+    endif()
     add_test(NAME note_color_modes COMMAND midi_play_note_color_tests -platform offscreen)
     if (TARGET Qt6::QOffscreenIntegrationPlugin)
         set_tests_properties(note_color_modes PROPERTIES
@@ -358,6 +379,9 @@ if (BUILD_TESTING)
     endif()
     add_executable(midi_play_theme_tests tests/themetests.cpp)
     target_link_libraries(midi_play_theme_tests PRIVATE midi_play_core)
+    if (COMMAND midi_play_deploy_offscreen_plugin)
+        midi_play_deploy_offscreen_plugin(midi_play_theme_tests)
+    endif()
     add_test(NAME theme_persistence_and_runtime COMMAND midi_play_theme_tests -platform offscreen)
     if (TARGET Qt6::QOffscreenIntegrationPlugin)
         set_tests_properties(theme_persistence_and_runtime PROPERTIES
@@ -366,6 +390,9 @@ if (BUILD_TESTING)
     add_executable(midi_play_note_visual_tests tests/notevisualtests.cpp)
     target_link_libraries(midi_play_note_visual_tests PRIVATE midi_play_core)
     target_link_libraries(midi_play_note_visual_tests PRIVATE WebP::webp)
+    if (COMMAND midi_play_deploy_offscreen_plugin)
+        midi_play_deploy_offscreen_plugin(midi_play_note_visual_tests)
+    endif()
     add_test(NAME note_visual_semantics_and_rendering COMMAND midi_play_note_visual_tests -platform offscreen)
     if (TARGET Qt6::QOffscreenIntegrationPlugin)
         set_tests_properties(note_visual_semantics_and_rendering PROPERTIES
@@ -385,6 +412,9 @@ if (BUILD_TESTING)
     endif()
     add_executable(midi_play_presentation_tests tests/presentationtests.cpp)
     target_link_libraries(midi_play_presentation_tests PRIVATE midi_play_core)
+    if (COMMAND midi_play_deploy_offscreen_plugin)
+        midi_play_deploy_offscreen_plugin(midi_play_presentation_tests)
+    endif()
     add_test(NAME presentation_backend_configuration
         COMMAND midi_play_presentation_tests -platform offscreen)
     if (TARGET Qt6::QOffscreenIntegrationPlugin)

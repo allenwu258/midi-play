@@ -36,6 +36,31 @@ void main() {
             float u=clamp(local.x/shape.x,0,1);
             c.a*=u<.32 ? mix(.66,1,u/.32) : mix(1,.78,(u-.32)/.68);
         }
+        if (flags.z > 0.5) {
+            vec2 normalized = clamp(local / shape.xy, 0.0, 1.0);
+            float edgeDistance = min(min(normalized.x, 1.0 - normalized.x),
+                                     min(normalized.y, 1.0 - normalized.y));
+            float rim = 1.0 - smoothstep(0.025, 0.16, edgeDistance);
+            float verticalGlass = smoothstep(0.95, 0.06, normalized.y);
+            vec3 highlight = mix(edge.rgb, vec3(1.0), 0.62);
+            c.rgb = mix(c.rgb, highlight, rim * (shape.w == 3.0 ? 0.68 : 0.46));
+            c.rgb = mix(c.rgb, edge.rgb, verticalGlass * 0.08);
+            c.a = min(1.0, c.a + rim * (shape.w == 3.0 ? 0.16 : 0.10));
+
+            // A narrow specular band travels with musical time. The phase is
+            // derived from the note instance, so it remains deterministic
+            // across dropped frames, seeks, and backend switches.
+            float sheenCenter = fract(frame.position * 0.34 + flags.w);
+            float sheen = 1.0 - smoothstep(0.0, 0.095,
+                abs(normalized.y - sheenCenter));
+            sheen *= smoothstep(0.04, 0.18, normalized.y)
+                   * smoothstep(0.04, 0.18, 1.0 - normalized.y);
+            c.rgb = mix(c.rgb, vec3(1.0), sheen * (shape.w == 3.0 ? 0.34 : 0.23));
+            c.a = min(1.0, c.a + sheen * 0.10);
+        }
+    } else if (shape.w==4) {
+        float distanceToLine=abs(local.y-(6-6*local.x/max(shape.x,1)));
+        if (distanceToLine>.7) discard;
     } else if (flags.z>0) {
         if (flags.z > 1.5) c *= texture(background, texcoord);
         else c.a *= texture(atlas,texcoord).a;
@@ -44,9 +69,6 @@ void main() {
         float radius=length(normalized);
         if (radius>1) discard;
         if (flags.w==2) c.a*=1-radius;
-    } else if (shape.w==4) {
-        float distanceToLine=abs(local.y-(6-6*local.x/max(shape.x,1)));
-        if (distanceToLine>.7) discard;
     } else if (shape.z>0) {
         float nearest=min(min(local.x,shape.x-local.x),min(local.y,shape.y-local.y));
         if (nearest<shape.z) {

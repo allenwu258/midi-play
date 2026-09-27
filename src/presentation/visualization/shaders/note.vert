@@ -35,6 +35,7 @@ void main() {
     color = fill;
     edge = border;
     flags=options;
+    if (kind > 0.0) edge = activeBorder;
     if (kind > 0) {
         float startY = frame.strike - (times.x-frame.position)*frame.scale;
         float keyY = frame.strike - (times.y-frame.position)*frame.scale;

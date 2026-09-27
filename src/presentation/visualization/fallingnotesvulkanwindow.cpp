@@ -706,6 +706,13 @@ void FallingNotesVulkanWindow::setShowNotationStrip(bool show)
     requestUpdate();
 }
 
+void FallingNotesVulkanWindow::setVisualEffectsEnabled(bool enabled)
+{
+    if (m_visualEffectsEnabled == enabled) return;
+    m_visualEffectsEnabled = enabled;
+    requestUpdate();
+}
+
 void FallingNotesVulkanWindow::setThemeMode(midi_play::settings::ThemeMode mode)
 {
     const auto normalized = midi_play::settings::normalizeThemeMode(mode);
@@ -739,6 +746,7 @@ midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneStat
     result.transportState = m_state;
     result.loading = m_loading;
     result.showNotationStrip = m_showNotationStrip;
+    result.visualEffectsEnabled = m_visualEffectsEnabled;
     result.themeMode = m_themeMode;
     result.noteColorMode = m_noteColorMode;
     result.errorMessage = m_error;

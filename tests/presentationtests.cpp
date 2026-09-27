@@ -155,6 +155,41 @@ void testGraphicsModePreference()
             "saving unrelated settings must preserve the Vulkan preference");
 }
 
+void testVisualEffectsPreference()
+{
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary settings directory must be available");
+    const auto path = temporary.filePath(QStringLiteral("settings.ini"));
+    midi_play::app::SettingsService settings(
+        std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(path));
+    settings.load();
+    midi_play::app::PlayerApplicationService player;
+    midi_play::presentation::MainWindow window(&player, &settings);
+    auto* view = window.findChild<FallingNotesView*>();
+    midi_play::presentation::settings::SettingsDialog dialog(&settings, nullptr);
+    auto* control = dialog.findChild<QCheckBox*>(QStringLiteral("visualEffectsCheckBox"));
+    require(view && control && control->isChecked() && view->visualEffectsEnabled(),
+            "visual effects must default to enabled and reach the visualization view");
+
+    int changes = 0;
+    QObject::connect(&settings, &midi_play::app::SettingsService::visualEffectsEnabledChanged,
+                     &dialog, [&](bool) { ++changes; });
+    control->click();
+    require(changes == 1 && !settings.visualEffectsEnabled() && !view->visualEffectsEnabled(),
+            "disabling visual effects must update the running view exactly once");
+    settings.setVisualEffectsEnabled(false);
+    require(changes == 1, "an unchanged visual effects preference must not emit again");
+
+    midi_play::app::SettingsService restarted(
+        std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(path));
+    restarted.load();
+    require(!restarted.visualEffectsEnabled(),
+            "the visual effects preference must survive restart");
+    restarted.setVisualEffectsEnabled(true);
+    require(restarted.visualEffectsEnabled(),
+            "visual effects must be re-enableable after being disabled");
+}
+
 void testBackgroundModePreference()
 {
     QTemporaryDir temporary;
@@ -424,6 +459,14 @@ void testVulkanSwitching()
         require(window->sceneState().noteColorMode == NoteColorMode::Normal,
                 "a new backend must inherit a non-default note color mode");
         require(window->sceneState().showNotationStrip, "backend creation must retain the notation preference");
+        require(window->sceneState().visualEffectsEnabled,
+                "a new Vulkan backend must inherit the visual effects preference");
+        view.setVisualEffectsEnabled(false);
+        require(!window->sceneState().visualEffectsEnabled,
+                "disabling visual effects must update the existing Vulkan backend");
+        view.setVisualEffectsEnabled(true);
+        require(window->sceneState().visualEffectsEnabled,
+                "re-enabling visual effects must update the existing Vulkan backend");
         int frames = 0;
         bool failed = false;
         QObject::connect(window, &FallingNotesVulkanWindow::frameRendered, &view, [&] { ++frames; });
@@ -503,6 +546,7 @@ int main(int argc, char* argv[])
     testTraditionalViewUpdates(ThemeMode::Dark);
     testTraditionalViewUpdates(ThemeMode::Light);
     testGraphicsModePreference();
+    testVisualEffectsPreference();
     testBackgroundModePreference();
     testNotationStripPreference();
     testPlaybackRateInteraction();

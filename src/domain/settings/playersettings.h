@@ -19,7 +19,7 @@ inline constexpr int kMaximumPlaybackRatePercent = 200;
 inline constexpr int kMinimumVisualizationRefreshRate = 1;
 inline constexpr int kMaximumVisualizationRefreshRate = 1000;
 inline constexpr bool kDefaultShowNotationStrip = false;
-inline constexpr int kSettingsSchemaVersion = 8;
+inline constexpr int kSettingsSchemaVersion = 9;
 
 struct PlayerSettings {
     int schemaVersion = kSettingsSchemaVersion;
@@ -37,6 +37,8 @@ struct PlayerSettings {
     bool backgroundImageEnabled = false;
     // Retained when the image background is disabled.
     QString backgroundImagePath;
+    // Enhanced flowing-glass effects are rendered by the Vulkan backend.
+    bool visualEffectsEnabled = true;
 };
 
 bool isValidVisualizationRefreshRate(int refreshRate) noexcept;

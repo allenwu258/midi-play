@@ -20,8 +20,10 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     const bool chartChanged = m_chart != state.chart;
     const auto mode = midi_play::settings::normalizeThemeMode(state.themeMode);
     const bool themeChanged = m_themeMode != mode;
+    const bool effectsChanged = m_visualEffectsEnabled != state.visualEffectsEnabled;
     m_themeMode = mode;
     m_theme = theme::themeFor(mode).visualization;
+    m_visualEffectsEnabled = state.visualEffectsEnabled;
     const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs
         || m_showNotationStrip != state.showNotationStrip;
     const bool backgroundChanged = m_hasBackground != hasBackground
@@ -61,7 +63,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     const bool candidatesChanged = m_window.ensure(m_index,
         state.transportPositionUs - state.afterglowUs,
         state.transportPositionUs + state.lookAheadUs, state.visibilityGuardUs);
-    if (candidatesChanged || layoutChanged || materialsChanged) {
+    if (candidatesChanged || layoutChanged || materialsChanged || effectsChanged) {
         rebuildNotes(state);
         m_consumedMaterialRevision = m_cache.materialRevision();
     }
@@ -95,7 +97,9 @@ void VulkanScene::rebuildNotes(const midi_play::visualization::PlaybackSceneStat
             quad.color = rgba(kind == 4 ? m_theme.tremolo
                 : kind == 1 ? style->material.tail : style->material.body);
             quad.activeBorder = rgba(style->material.head);
-            quad.options = {1, (note->flags & midi_play::visualization::GhostNote) ? 1.f : 0.f, 0, 0};
+            const float phase = float((note->instanceId % 4096u) * 0.000244140625);
+            quad.options = {1, (note->flags & midi_play::visualization::GhostNote) ? 1.f : 0.f,
+                            state.visualEffectsEnabled ? 1.f : 0.f, phase};
             m_notes.push_back(quad);
         }
     }
@@ -236,6 +240,13 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     }
     m_dynamicUi.beginLayer(VulkanUiLayer::Strike);
     if (!g.notationStripRect.isEmpty()) {
+        if (state.visualEffectsEnabled) {
+            const qreal pulse = 0.5 + 0.5 * std::sin(
+                qreal(state.transportPositionUs) * 0.0000075);
+            QColor ambient = m_theme.strikeGlow;
+            ambient.setAlphaF(0.06 + 0.05 * pulse);
+            rect(output, {left, g.strikeLineY - 8.0, right - left, 16.0}, ambient);
+        }
         rect(output, {left,g.strikeLineY-3,right-left,6}, m_theme.strikeGlow);
         QColor strike = m_theme.strikeLine;
         strike.setAlpha(145);
@@ -244,6 +255,33 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     for (const auto& glow : m_noteFrame.glows()) {
         rect(output, glow.rect, glow.color);
         output.back().options[3] = 2;
+    }
+    if (state.visualEffectsEnabled
+        && state.transportState == midi_play::playback::State::Playing) {
+        int particleCount = 0;
+        const auto addParticles = [&](const KeyIllumination& light, qreal centerX) {
+            if (light.noteIndex < 0 || light.attack <= 0.04 || particleCount >= 48) return;
+            const auto* style = m_cache.styleForNote(light.noteIndex);
+            if (!style) return;
+            QColor particle = style->material.glow;
+            particle.setAlphaF(std::min<qreal>(0.34, light.attack * 0.42));
+            const qreal travel = (1.0 - std::sqrt(light.attack)) * 18.0;
+            for (const int direction : {-1, 1}) {
+                if (particleCount >= 48) break;
+                const qreal x = centerX + direction * travel * 0.42;
+                const qreal y = g.strikeLineY - 5.0 - travel;
+                rect(output, {x - 2.0, y - 2.0, 4.0, 4.0}, particle,
+                     Qt::transparent, 0, true);
+                output.back().options[3] = 2;
+                ++particleCount;
+            }
+        };
+        for (const auto& slot : g.pitches) {
+            if (!slot.valid) continue;
+            addParticles(m_noteFrame.key(slot.pitch), slot.centerX);
+        }
+        for (const auto& slot : g.drumSlots)
+            addParticles(m_noteFrame.drum(slot.lane), slot.centerX);
     }
     if (m_chart && !g.notationStripRect.isEmpty()) {
         QFont labelFont(font); labelFont.setPointSizeF(10); labelFont.setWeight(QFont::DemiBold);
@@ -278,6 +316,13 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
             top.setAlphaF(light.strength);
             rect(output, {slot.keyRect.left() + (black ? 0.5 : 0), slot.keyRect.top(),
                 slot.keyRect.width() - (black ? 1 : 0.5), black ? 4.0 : 5.0}, top);
+            if (state.visualEffectsEnabled) {
+                QColor reflection = illuminatedKeyColor(style->material.keyTop,
+                                                        QColor(255, 255, 255), 0.38);
+                reflection.setAlphaF(light.strength * (black ? 0.28 : 0.22));
+                rect(output, {slot.keyRect.left() + (black ? 0.5 : 0), slot.keyRect.top(),
+                     slot.keyRect.width() - (black ? 1 : 0.5), black ? 1.2 : 1.5}, reflection);
+            }
         }
         if (!black) for (const auto& slot : g.drumSlots) {
             const auto& light = m_noteFrame.drum(slot.lane);

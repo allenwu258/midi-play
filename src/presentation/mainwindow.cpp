@@ -182,9 +182,12 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         m_visualization->setGraphicsMode(m_settingsService->graphicsMode());
         m_visualization->setBackgroundImagePath(m_settingsService->activeBackgroundImagePath());
         m_visualization->setShowNotationStrip(m_settingsService->showNotationStrip());
+        m_visualization->setVisualEffectsEnabled(m_settingsService->visualEffectsEnabled());
         m_visualization->setNoteColorMode(m_settingsService->noteColorMode());
         connect(m_settingsService, &app::SettingsService::showNotationStripChanged,
                 m_visualization, &visualization::FallingNotesView::setShowNotationStrip);
+        connect(m_settingsService, &app::SettingsService::visualEffectsEnabledChanged,
+                m_visualization, &visualization::FallingNotesView::setVisualEffectsEnabled);
         connect(m_settingsService, &app::SettingsService::noteColorModeChanged,
                 m_visualization, &visualization::FallingNotesView::setNoteColorMode);
         connect(m_settingsService, &app::SettingsService::graphicsModeChanged,

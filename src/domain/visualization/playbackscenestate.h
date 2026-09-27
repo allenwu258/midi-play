@@ -29,6 +29,7 @@ struct PlaybackSceneState {
     std::span<const int> candidateNoteIndices;
     bool loading = false;
     bool showNotationStrip = false;
+    bool visualEffectsEnabled = true;
     settings::ThemeMode themeMode = settings::kDefaultThemeMode;
     settings::NoteColorMode noteColorMode = settings::kDefaultNoteColorMode;
     QString errorMessage;

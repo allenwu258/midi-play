@@ -101,6 +101,16 @@ void FallingNotesView::setShowNotationStrip(bool show)
     update();
 }
 
+void FallingNotesView::setVisualEffectsEnabled(bool enabled)
+{
+    if (m_state.visualEffectsEnabled == enabled) return;
+    m_state.visualEffectsEnabled = enabled;
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setVisualEffectsEnabled(enabled);
+#endif
+    update();
+}
+
 void FallingNotesView::setThemeMode(midi_play::settings::ThemeMode mode)
 {
     const auto normalized = midi_play::settings::normalizeThemeMode(mode);
@@ -264,6 +274,7 @@ bool FallingNotesView::createVulkanView()
             }, Qt::QueuedConnection);
     m_vulkanWindow->setSceneFont(font());
     m_vulkanWindow->setShowNotationStrip(m_state.showNotationStrip);
+    m_vulkanWindow->setVisualEffectsEnabled(m_state.visualEffectsEnabled);
     m_vulkanWindow->setThemeMode(m_state.themeMode);
     m_vulkanWindow->setNoteColorMode(m_state.noteColorMode);
     m_vulkanWindow->setChart(m_state.chart);
