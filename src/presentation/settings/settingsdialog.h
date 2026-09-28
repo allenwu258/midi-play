@@ -34,6 +34,7 @@ private slots:
     void applyCustomRefreshRateFromUi();
     void applyTitleBarModeFromUi();
     void applyGraphicsModeFromUi();
+    void applyVisualEffectsFromUi();
     void chooseSoundFont();
     void chooseBackgroundImage();
     void applyBackgroundModeFromUi();
@@ -41,8 +42,6 @@ private slots:
     void updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode);
     void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
     void updateNotationStripSelection(bool show);
-    void updateVisualEffectsSelection(bool enabled);
-    void updateVisualEffectsLevelSelection(midi_play::settings::VisualEffectLevel level);
     void updateThemeSelection(midi_play::settings::ThemeMode mode);
     void updateNoteColorSelection(midi_play::settings::NoteColorMode mode);
     void applyTheme(midi_play::settings::ThemeMode mode);
@@ -54,7 +53,8 @@ private slots:
 
 private:
     void initializeRefreshRateOptions();
-    void updateVisualEffectsLevelEnabled();
+    void rebuildVisualEffectsOptions(bool vulkan);
+    void updateVisualEffectsControl(midi_play::settings::GraphicsMode mode);
 
     app::SettingsService* m_settingsService = nullptr;
     app::PlayerApplicationService* m_playerService = nullptr;
@@ -64,8 +64,7 @@ private:
     QComboBox* m_themeCombo = nullptr;
     QComboBox* m_noteColorCombo = nullptr;
     QCheckBox* m_showNotationStripCheckBox = nullptr;
-    QCheckBox* m_visualEffectsCheckBox = nullptr;
-    QComboBox* m_visualEffectsLevelCombo = nullptr;
+    QComboBox* m_visualEffectsCombo = nullptr;
     QLabel* m_customRefreshRateLabel = nullptr;
     QSpinBox* m_customRefreshRateSpinBox = nullptr;
     QLineEdit* m_soundFontPathEdit = nullptr;

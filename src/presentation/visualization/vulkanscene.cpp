@@ -21,8 +21,8 @@ VulkanEffectsProfile effectsProfileFor(midi_play::settings::ThemeMode mode, bool
         ? VulkanEffectsProfile {0.20f, 0.58f, 0.22f, 0.20f, 0.34f, 0.52f}
         : VulkanEffectsProfile {0.34f, 0.82f, 0.34f, 0.32f, 0.58f, 0.80f};
     const float scale = level == midi_play::settings::VisualEffectLevel::Low
-        ? 0.58f
-        : level == midi_play::settings::VisualEffectLevel::High ? 1.28f : 1.0f;
+        ? 0.50f
+        : level == midi_play::settings::VisualEffectLevel::Medium ? 0.75f : 1.0f;
     return {base.noteHaloStrength * scale, base.noteEdgeStrength * scale,
             base.noteSheenStrength * scale, base.strikeGlowStrength * scale,
             base.keyGlowStrength * scale, base.particleStrength * scale};
@@ -305,9 +305,11 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
             rect(output, {left,g.strikeLineY-0.5,right-left,1}, strike);
         }
     }
-    for (const auto& glow : m_noteFrame.glows()) {
-        rect(output, glow.rect, glow.color);
-        output.back().options[3] = 2;
+    if (state.visualEffectsEnabled) {
+        for (const auto& glow : m_noteFrame.glows()) {
+            rect(output, glow.rect, glow.color);
+            output.back().options[3] = 2;
+        }
     }
     if (state.visualEffectsEnabled
         && state.transportState == midi_play::playback::State::Playing) {

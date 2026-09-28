@@ -35,6 +35,8 @@ void SettingsService::load()
     loadedSettings.noteColorMode = settings::normalizeNoteColorMode(loadedSettings.noteColorMode);
     loadedSettings.visualEffectsLevel = settings::normalizeVisualEffectLevel(
         loadedSettings.visualEffectsLevel);
+    if (loadedSettings.graphicsMode == settings::GraphicsMode::Traditional)
+        loadedSettings.visualEffectsEnabled = false;
     loadedSettings.soundFontPath = normalizeSoundFontPath(loadedSettings.soundFontPath);
     loadedSettings.backgroundImagePath = normalizeBackgroundImagePath(loadedSettings.backgroundImagePath);
     m_settings = loadedSettings;
@@ -61,13 +63,20 @@ void SettingsService::setGraphicsMode(settings::GraphicsMode mode)
 {
     const auto normalizedMode = settings::normalizeGraphicsMode(mode);
     const bool modeChanged = m_settings.graphicsMode != normalizedMode;
-    if (!modeChanged && m_settings.graphicsModeConfigured) {
+    const bool modeNeedsResolution = !m_settings.graphicsModeConfigured;
+    const bool effectsChanged = normalizedMode == settings::GraphicsMode::Traditional
+        && m_settings.visualEffectsEnabled;
+    if (!modeChanged && !effectsChanged && !modeNeedsResolution) {
         return;
     }
 
     m_settings.graphicsMode = normalizedMode;
     m_settings.graphicsModeConfigured = true;
-    emit graphicsModeChanged(normalizedMode);
+    if (modeChanged || modeNeedsResolution) emit graphicsModeChanged(normalizedMode);
+    if (effectsChanged) {
+        m_settings.visualEffectsEnabled = false;
+        emit visualEffectsEnabledChanged(false);
+    }
     persistSettings();
 }
 
@@ -147,6 +156,8 @@ void SettingsService::setBackgroundImageEnabled(bool enabled)
 
 void SettingsService::setVisualEffectsEnabled(bool enabled)
 {
+    if (enabled && m_settings.graphicsMode == settings::GraphicsMode::Traditional)
+        enabled = false;
     if (m_settings.visualEffectsEnabled == enabled) return;
     m_settings.visualEffectsEnabled = enabled;
     emit visualEffectsEnabledChanged(enabled);

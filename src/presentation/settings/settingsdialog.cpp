@@ -23,6 +23,11 @@
 #include <QVBoxLayout>
 
 namespace midi_play::presentation::settings {
+namespace {
+
+constexpr int kVisualEffectsDisabledUiValue = -1;
+
+} // namespace
 
 SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                                app::PlayerApplicationService* playerService,
@@ -85,28 +90,12 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
 #endif
     form->addRow(QStringLiteral("图形模式"), m_graphicsModeCombo);
 
-    m_visualEffectsCheckBox = new QCheckBox(QStringLiteral("启用流光玻璃特效（Vulkan）"), this);
-    m_visualEffectsCheckBox->setObjectName(QStringLiteral("visualEffectsCheckBox"));
-    m_visualEffectsCheckBox->setAccessibleName(QStringLiteral("流光玻璃特效"));
-    m_visualEffectsCheckBox->setToolTip(QStringLiteral(
-        "仅在 Vulkan 模式下启用半透明音符、方角边缘流光、击键光晕与星屑；修改立即生效并自动保存。"));
-    form->addRow(QStringLiteral("视觉特效"), m_visualEffectsCheckBox);
-
-    m_visualEffectsLevelCombo = new QComboBox(this);
-    m_visualEffectsLevelCombo->setObjectName(QStringLiteral("visualEffectsLevelCombo"));
-    m_visualEffectsLevelCombo->setAccessibleName(QStringLiteral("流光特效强度"));
-    m_visualEffectsLevelCombo->addItem(QStringLiteral("低"),
-        midi_play::settings::visualEffectLevelPersistentValue(
-            midi_play::settings::VisualEffectLevel::Low));
-    m_visualEffectsLevelCombo->addItem(QStringLiteral("中"),
-        midi_play::settings::visualEffectLevelPersistentValue(
-            midi_play::settings::VisualEffectLevel::Medium));
-    m_visualEffectsLevelCombo->addItem(QStringLiteral("高"),
-        midi_play::settings::visualEffectLevelPersistentValue(
-            midi_play::settings::VisualEffectLevel::High));
-    m_visualEffectsLevelCombo->setToolTip(QStringLiteral(
-        "调整 Vulkan 模式下的音符边缘、光晕、判定线、琴键洗光与粒子强度；修改立即生效并自动保存。"));
-    form->addRow(QStringLiteral("流光强度（Vulkan）"), m_visualEffectsLevelCombo);
+    m_visualEffectsCombo = new QComboBox(this);
+    m_visualEffectsCombo->setObjectName(QStringLiteral("visualEffectsCombo"));
+    m_visualEffectsCombo->setAccessibleName(QStringLiteral("流光特效"));
+    m_visualEffectsCombo->addItem(QStringLiteral("无特效（特效需开启 Vulkan）"),
+                                  kVisualEffectsDisabledUiValue);
+    form->addRow(QStringLiteral("流光特效"), m_visualEffectsCombo);
 
     m_showNotationStripCheckBox = new QCheckBox(QStringLiteral("显示简谱条"), this);
     m_showNotationStripCheckBox->setObjectName(QStringLiteral("showNotationStripCheckBox"));
@@ -237,23 +226,19 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::applyCustomRefreshRateFromUi);
         updateTitleBarModeSelection(m_settingsService->titleBarMode());
         updateGraphicsModeSelection(m_settingsService->graphicsMode());
-        updateVisualEffectsSelection(m_settingsService->visualEffectsEnabled());
-        updateVisualEffectsLevelSelection(m_settingsService->visualEffectsLevel());
+        updateVisualEffectsControl(m_settingsService->graphicsMode());
         updateNotationStripSelection(m_settingsService->showNotationStrip());
-        connect(m_visualEffectsCheckBox, &QCheckBox::toggled, this, [this](bool enabled) {
-            m_errorLabel->hide();
-            m_settingsService->setVisualEffectsEnabled(enabled);
-        });
+        connect(m_visualEffectsCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &SettingsDialog::applyVisualEffectsFromUi);
         connect(m_settingsService, &app::SettingsService::visualEffectsEnabledChanged,
-                this, &SettingsDialog::updateVisualEffectsSelection);
-        connect(m_visualEffectsLevelCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
+                this, [this](bool) {
             m_errorLabel->hide();
-            m_settingsService->setVisualEffectsLevel(
-                midi_play::settings::visualEffectLevelFromPersistentValue(
-                    m_visualEffectsLevelCombo->currentData().toInt()));
+            updateVisualEffectsControl(m_settingsService->graphicsMode());
         });
         connect(m_settingsService, &app::SettingsService::visualEffectsLevelChanged,
-                this, &SettingsDialog::updateVisualEffectsLevelSelection);
+                this, [this](midi_play::settings::VisualEffectLevel) {
+            updateVisualEffectsControl(m_settingsService->graphicsMode());
+        });
         connect(m_showNotationStripCheckBox, &QCheckBox::toggled, this, [this](bool show) {
             m_errorLabel->hide();
             m_settingsService->setShowNotationStrip(show);
@@ -278,7 +263,10 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
                 this, &SettingsDialog::updateTitleBarModeSelection);
         connect(m_settingsService, &app::SettingsService::graphicsModeChanged,
-                this, &SettingsDialog::updateGraphicsModeSelection);
+                this, [this](midi_play::settings::GraphicsMode mode) {
+            updateGraphicsModeSelection(mode);
+            updateVisualEffectsControl(mode);
+        });
         connect(m_settingsService, &app::SettingsService::soundFontPathChanged,
                 this, &SettingsDialog::updateSoundFontPath);
         connect(m_settingsService, &app::SettingsService::backgroundImagePathChanged,
@@ -306,8 +294,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         m_refreshRateCombo->setEnabled(false);
         m_titleBarModeCombo->setEnabled(false);
         m_graphicsModeCombo->setEnabled(false);
-        m_visualEffectsCheckBox->setEnabled(false);
-        m_visualEffectsLevelCombo->setEnabled(false);
+        m_visualEffectsCombo->setEnabled(false);
         m_showNotationStripCheckBox->setEnabled(false);
         m_backgroundModeCombo->setEnabled(false);
         m_loadBackgroundImageButton->setEnabled(false);
@@ -368,6 +355,20 @@ void SettingsDialog::applyGraphicsModeFromUi()
         m_graphicsModeCombo->currentData().toInt());
     m_errorLabel->hide();
     m_settingsService->setGraphicsMode(mode);
+}
+
+void SettingsDialog::applyVisualEffectsFromUi()
+{
+    if (!m_settingsService || !m_visualEffectsCombo) return;
+    m_errorLabel->hide();
+    const int value = m_visualEffectsCombo->currentData().toInt();
+    if (value == kVisualEffectsDisabledUiValue) {
+        m_settingsService->setVisualEffectsEnabled(false);
+        return;
+    }
+    m_settingsService->setVisualEffectsLevel(
+        midi_play::settings::visualEffectLevelFromPersistentValue(value));
+    m_settingsService->setVisualEffectsEnabled(true);
 }
 
 void SettingsDialog::chooseSoundFont()
@@ -448,6 +449,60 @@ void SettingsDialog::updateGraphicsModeSelection(midi_play::settings::GraphicsMo
     m_graphicsModeCombo->setCurrentIndex(index);
 }
 
+void SettingsDialog::rebuildVisualEffectsOptions(bool vulkan)
+{
+    if (!m_visualEffectsCombo) return;
+
+    const QSignalBlocker blocker(m_visualEffectsCombo);
+    m_visualEffectsCombo->clear();
+    if (!vulkan) {
+        m_visualEffectsCombo->addItem(QStringLiteral("无特效（特效需开启 Vulkan）"),
+                                      kVisualEffectsDisabledUiValue);
+        return;
+    }
+
+    m_visualEffectsCombo->addItem(QStringLiteral("无特效"), kVisualEffectsDisabledUiValue);
+    m_visualEffectsCombo->addItem(QStringLiteral("流光玻璃（低）"),
+        midi_play::settings::visualEffectLevelPersistentValue(
+            midi_play::settings::VisualEffectLevel::Low));
+    m_visualEffectsCombo->addItem(QStringLiteral("流光玻璃（中）"),
+        midi_play::settings::visualEffectLevelPersistentValue(
+            midi_play::settings::VisualEffectLevel::Medium));
+    m_visualEffectsCombo->addItem(QStringLiteral("流光玻璃（高）"),
+        midi_play::settings::visualEffectLevelPersistentValue(
+            midi_play::settings::VisualEffectLevel::High));
+}
+
+void SettingsDialog::updateVisualEffectsControl(midi_play::settings::GraphicsMode mode)
+{
+    if (!m_visualEffectsCombo) return;
+
+#if MIDI_PLAY_HAS_VULKAN
+    const bool vulkan = midi_play::settings::normalizeGraphicsMode(mode)
+        == midi_play::settings::GraphicsMode::VulkanExperimental;
+#else
+    Q_UNUSED(mode)
+    const bool vulkan = false;
+#endif
+
+    if (!vulkan && m_settingsService && m_settingsService->visualEffectsEnabled())
+        m_settingsService->setVisualEffectsEnabled(false);
+    rebuildVisualEffectsOptions(vulkan);
+    const bool enabled = vulkan && m_settingsService && m_settingsService->visualEffectsEnabled();
+    const int target = enabled
+        ? m_visualEffectsCombo->findData(
+            midi_play::settings::visualEffectLevelPersistentValue(
+                m_settingsService->visualEffectsLevel()))
+        : m_visualEffectsCombo->findData(kVisualEffectsDisabledUiValue);
+    if (target >= 0 && target != m_visualEffectsCombo->currentIndex()) {
+        const QSignalBlocker blocker(m_visualEffectsCombo);
+        m_visualEffectsCombo->setCurrentIndex(target);
+    }
+    m_visualEffectsCombo->setToolTip(vulkan
+        ? QString()
+        : QStringLiteral("需要启用 Vulkan 才能使用流光特效"));
+}
+
 void SettingsDialog::applyTheme(midi_play::settings::ThemeMode mode)
 {
     const auto& current = theme::themeFor(mode);
@@ -472,21 +527,6 @@ void SettingsDialog::updateNotationStripSelection(bool show)
 {
     const QSignalBlocker blocker(m_showNotationStripCheckBox);
     m_showNotationStripCheckBox->setChecked(show);
-}
-
-void SettingsDialog::updateVisualEffectsSelection(bool enabled)
-{
-    const QSignalBlocker blocker(m_visualEffectsCheckBox);
-    m_visualEffectsCheckBox->setChecked(enabled);
-    if (m_visualEffectsLevelCombo) m_visualEffectsLevelCombo->setEnabled(enabled);
-}
-
-void SettingsDialog::updateVisualEffectsLevelSelection(midi_play::settings::VisualEffectLevel level)
-{
-    if (!m_visualEffectsLevelCombo) return;
-    const QSignalBlocker blocker(m_visualEffectsLevelCombo);
-    m_visualEffectsLevelCombo->setCurrentIndex(m_visualEffectsLevelCombo->findData(
-        midi_play::settings::visualEffectLevelPersistentValue(level)));
 }
 
 void SettingsDialog::updateSoundFontPath(const QString& path)

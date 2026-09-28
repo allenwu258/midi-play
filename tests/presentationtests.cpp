@@ -168,12 +168,24 @@ void testVisualEffectsPreference()
     midi_play::presentation::MainWindow window(&player, &settings);
     auto* view = window.findChild<FallingNotesView*>();
     midi_play::presentation::settings::SettingsDialog dialog(&settings, nullptr);
-    auto* control = dialog.findChild<QCheckBox*>(QStringLiteral("visualEffectsCheckBox"));
-    auto* level = dialog.findChild<QComboBox*>(QStringLiteral("visualEffectsLevelCombo"));
-    require(view && control && level && control->isChecked() && view->visualEffectsEnabled()
-                && level->count() == 3
-                && level->currentData().toInt() == int(VisualEffectLevel::Medium),
-            "visual effects must default to enabled and reach the visualization view");
+    auto* effects = dialog.findChild<QComboBox*>(QStringLiteral("visualEffectsCombo"));
+    const bool effectsAvailable =
+#if MIDI_PLAY_HAS_VULKAN
+        settings.graphicsMode() == GraphicsMode::VulkanExperimental;
+#else
+        false;
+#endif
+    require(view && effects && view->visualEffectsEnabled() == effectsAvailable
+                && effects->count() == (effectsAvailable ? 4 : 1)
+                && effects->itemText(0) == (effectsAvailable
+                    ? QStringLiteral("无特效")
+                    : QStringLiteral("无特效（特效需开启 Vulkan）"))
+                && (!effectsAvailable
+                    || (effects->itemText(1) == QStringLiteral("流光玻璃（低）")
+                        && effects->itemText(2) == QStringLiteral("流光玻璃（中）")
+                        && effects->itemText(3) == QStringLiteral("流光玻璃（高）")))
+                && effects->currentData().toInt() == (effectsAvailable ? int(VisualEffectLevel::Medium) : -1),
+            "visual effects must default to medium and reach the visualization view");
 
     int changes = 0;
     int levelChanges = 0;
@@ -181,16 +193,46 @@ void testVisualEffectsPreference()
                      &dialog, [&](bool) { ++changes; });
     QObject::connect(&settings, &midi_play::app::SettingsService::visualEffectsLevelChanged,
                      &dialog, [&](VisualEffectLevel) { ++levelChanges; });
-    level->setCurrentIndex(level->findData(int(VisualEffectLevel::High)));
+#if MIDI_PLAY_HAS_VULKAN
+    settings.setGraphicsMode(GraphicsMode::VulkanExperimental);
+    effects->setCurrentIndex(effects->findData(int(VisualEffectLevel::High)));
     require(levelChanges == 1 && settings.visualEffectsLevel() == VisualEffectLevel::High
                 && view->visualEffectsLevel() == VisualEffectLevel::High,
             "changing the visual effects level must update the running view exactly once");
-    control->click();
+    changes = 0;
+    effects->setCurrentIndex(effects->findData(-1));
     require(changes == 1 && !settings.visualEffectsEnabled() && !view->visualEffectsEnabled()
-                && !level->isEnabled(),
-            "disabling visual effects must update the running view exactly once");
+                && effects->currentData().toInt() == -1,
+            "selecting no effects must update the running view exactly once");
+#else
+    require(!settings.visualEffectsEnabled() && levelChanges == 0 && changes == 0,
+            "traditional-only builds must keep visual effects disabled");
+#endif
     settings.setVisualEffectsEnabled(false);
+#if MIDI_PLAY_HAS_VULKAN
     require(changes == 1, "an unchanged visual effects preference must not emit again");
+#else
+    require(changes == 0, "an unchanged visual effects preference must not emit again");
+#endif
+
+    settings.setGraphicsMode(GraphicsMode::Traditional);
+    require(effects->count() == 1
+                && effects->currentData().toInt() == -1
+                && effects->itemText(0) == QStringLiteral("无特效（特效需开启 Vulkan）"),
+            "traditional Qt must only show no effects with the Vulkan requirement");
+#if MIDI_PLAY_HAS_VULKAN
+    settings.setGraphicsMode(GraphicsMode::VulkanExperimental);
+    require(effects->count() == 4
+                && effects->itemText(0) == QStringLiteral("无特效")
+                && effects->itemText(1) == QStringLiteral("流光玻璃（低）")
+                && effects->itemText(2) == QStringLiteral("流光玻璃（中）")
+                && effects->itemText(3) == QStringLiteral("流光玻璃（高）"),
+            "Vulkan must show all flowing glass effect levels");
+#else
+    require(effects->count() == 1
+                && effects->itemText(0) == QStringLiteral("无特效（特效需开启 Vulkan）"),
+            "traditional-only builds must hide effect levels");
+#endif
 
     midi_play::app::SettingsService restarted(
         std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(path));
@@ -198,8 +240,13 @@ void testVisualEffectsPreference()
     require(!restarted.visualEffectsEnabled() && restarted.visualEffectsLevel() == VisualEffectLevel::High,
             "the visual effects preferences must survive restart");
     restarted.setVisualEffectsEnabled(true);
+#if MIDI_PLAY_HAS_VULKAN
     require(restarted.visualEffectsEnabled(),
             "visual effects must be re-enableable after being disabled");
+#else
+    require(!restarted.visualEffectsEnabled(),
+            "traditional-only builds must keep visual effects disabled");
+#endif
     restarted.setVisualEffectsLevel(VisualEffectLevel::Low);
     require(restarted.visualEffectsLevel() == VisualEffectLevel::Low,
             "visual effects level must be changeable after restart");

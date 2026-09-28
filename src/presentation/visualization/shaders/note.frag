@@ -37,7 +37,7 @@ void main() {
             // Tails are narrow and tall, so the same halo width reads much
             // brighter than it does on a note body. Keep their solid color
             // and fade unchanged while reducing only the glass accents.
-            float effectScale = shape.w == 1.0 ? 0.52 : 1.0;
+            float effectScale = shape.w == 1.0 ? 0.5 : 1.0;
             float padding = max(1.0, flags.x);
             vec2 coreSize = max(shape.xy - vec2(padding * 2.0), vec2(0.001));
             vec2 coreLocal = local - vec2(padding);
