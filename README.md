@@ -10,9 +10,7 @@ MIDI Play 是一款开源桌面音乐播放器，提供实时钢琴键盘、深�
 
 [下载 Windows x64 发行版](https://github.com/allenwu258/midi-play/releases/latest) · [快速开始](#快速开始) · [从源码构建](#源码构建) · [反馈问题](https://github.com/allenwu258/midi-play/issues)
 
-当前发布版本：[v0.4.0](https://github.com/allenwu258/midi-play/releases/tag/v0.4.0)，首次提供完整 Windows x64 便携发行包。此前版本通过 Git Tag 记录开发进展。
-
-本开发分支新增的音频导出尚未包含在 v0.4.0 发行包中，试用该功能需从本分支构建。
+当前稳定发布版本：[v0.4.2](https://github.com/allenwu258/midi-play/releases/tag/v0.4.2)，提供完整 Windows x64 便携发行包和 MP3/WAV 音频导出。当前 `main` 还包含 v0.4.2 之后加入的 Vulkan 流光玻璃特效，相关内容会在下一次正式发布时进入发行包。
 
 > 播放前需自行准备本地 SF2 / SF3 音源。程序不附带乐曲音源，也不会自动下载；可以跳过首次配置，先打开并查看乐曲。
 
@@ -58,6 +56,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **SoundFont**：不内置乐曲音源，启动时检查用户已配置的 SF2/SF3；未配置或加载失败时引导选择，允许暂时跳过。支持播放中事务化切换，SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
 - **双渲染模式**：默认优先使用 Vulkan 绘制，传统 Qt 绘制作为兼容和故障回退模式；两者共享音符布局、主题、色彩和单图片背景设置，也可在设置中手动选择。
+- **流光玻璃特效**：Vulkan 模式提供可关闭的音符边缘流光、局部泛光、击键反馈和粒子点缀，并支持低、中、高三档强度；传统 Qt 模式不渲染这些 Vulkan 专属特效。
 - **单图片背景**：可为下落音符区域选择本地 PNG、JPEG、静态 WebP 或 BMP 图片；WebP 由随程序部署的解码库读取，不依赖 Qt WebP 插件。图片异步加载、按区域比例裁剪并带可读性遮罩，Vulkan 与传统 Qt 绘制共享配置。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：原生标题栏为默认值；Windows 提供“自定义标题栏（实验）”，macOS/Linux 当前仅使用原生标题栏。
@@ -82,7 +81,7 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 
 ## 快速开始
 
-1. 前往 [Releases](https://github.com/allenwu258/midi-play/releases/latest)，下载附件 `midi-play-v0.4.0-windows-x64.zip`。GitHub 自动提供的 `Source code` 是源码包。
+1. 前往 [Releases](https://github.com/allenwu258/midi-play/releases/latest)，下载最新的 Windows x64 便携发行包（当前稳定版本为 v0.4.2）。GitHub 自动提供的 `Source code` 是源码包。
 2. 完整解压 ZIP，运行其中的 `midi_play.exe`，保留同目录 DLL、插件和许可证文件。
 3. 在启动引导中选择本地 `.sf2` 或 `.sf3` 音源。多轨 MIDI 建议使用覆盖完整 General MIDI（GM）乐器的音源；选择成功后会尝试自动保存路径。
 4. 点击“打开乐曲”，选择 `.mid`、`.midi`、`.kar`、`.xml` 或 `.musicxml` 文件，再点击播放。
@@ -214,7 +213,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -E
 $buildEnvironment = Import-PowerShellDataFile ./build.env.psd1
 $env:QT_ROOT = $buildEnvironment.QtRoot
 $env:VULKAN_SDK = $buildEnvironment.VulkanSdk
-cmake --preset windows-msvc-debug -DFLUIDSYNTH_DLL="$PWD/build/dependencies/vcpkg_installed/x64-windows/bin/libfluidsynth-3.dll" -DWebP_DIR="$PWD/build/dependencies/vcpkg_installed/x64-windows/share/WebP"
+cmake --preset windows-msvc-debug -DFLUIDSYNTH_DLL="$PWD/build/dependencies/vcpkg_installed/x64-windows/bin/libfluidsynth-3.dll" -DWebP_DIR="$PWD/build/dependencies/vcpkg_installed/x64-windows/share/WebP" -Dmp3lame_DIR="$PWD/build/dependencies/vcpkg_installed/x64-windows/share/mp3lame"
 cmake --build --preset windows-msvc-debug
 ~~~
 
@@ -243,6 +242,7 @@ cmake --build --preset windows-msvc-debug
 - **音符色彩**：鲜明（默认）或普通，与界面主题独立。鲜明按轨道色系、音高及打击乐类别提供稳定的协调配色，普通保留 v0.3.3 的视觉效果；修改立即生效并自动保存；
 - **视觉刷新率**：30 FPS、60 FPS、120 FPS 或“自定义”；
 - **图形模式**：Vulkan（推荐）或传统 Qt 绘制（兼容）；新用户首次启动优先尝试 Vulkan，成功后保存 Vulkan，失败后自动保存传统 Qt；未包含 Vulkan 的构建只提供传统模式；
+- **流光特效**：Vulkan 模式显示“无特效”“流光玻璃（低）”“流光玻璃（中）”“流光玻璃（高）”；默认启用“流光玻璃（中）”。传统 Qt 模式只显示“无特效（特效需开启 Vulkan）”，切换回 Vulkan 后可重新选择特效等级；
 - **下落背景**：选择“无背景”或“图片背景（实验）”；选择图片背景后显示图片选择项。图片只覆盖下落音符区域，不覆盖钢琴键和播放控制栏；无法读取的图片不会被应用。
 - **显示简谱条**：默认关闭。关闭时移除琴键上方的简谱条及黄色判定线，音符在琴键顶部判定；开启后恢复简谱条和黄线。修改立即生效并自动保存，两种图形模式行为一致；
 - **标题栏样式**：Windows 可选择原生或自定义实验模式，macOS/Linux 只显示原生模式；
@@ -272,20 +272,22 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 
 | 配置键 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| General/schemaVersion | int | 8 | 设置结构版本 |
+| General/schemaVersion | int | 10 | 设置结构版本 |
 | General/themeMode | int | 0 | 0 为深色；1 为浅色；旧配置缺失或无效时回退深色 |
 | General/noteColorMode | int | 1 | 0 为普通；1 为鲜明；缺失或无效时回退鲜明，不重置其他偏好 |
 | General/visualizationRefreshRate | int | 60 | 有效范围 1..1000，界面提供常用预设和自定义输入 |
 | General/graphicsMode | int | 未配置时优先 Vulkan | 持久化值 0 为传统 Qt 绘制；1 为 Vulkan；首次解析成功后保存实际使用的后端 |
 | Visualization/backgroundImagePath | string | 空 | 单图片背景的绝对路径；空值表示未选择图片，文件只在本地引用，不复制到程序目录 |
 | Visualization/backgroundImageEnabled | bool | false | 是否启用图片背景；关闭时保留已选路径，旧配置有图片路径且缺少本项时默认启用 |
+| Visualization/visualEffectsEnabled | bool | true（传统 Qt 运行时为 false） | 是否启用 Vulkan 流光玻璃特效；传统 Qt 模式强制关闭 |
+| Visualization/visualEffectsLevel | int | 1（中） | `0` 为低（0.5 倍），`1` 为中（0.75 倍），`2` 为高（1 倍）；拖尾特效在各档继续按半强度处理 |
 | General/showNotationStrip | bool | false | 是否显示简谱条；缺少此配置键的旧版配置也默认隐藏 |
 | General/titleBarMode | int | 0 | 0 为原生；Windows 上 1 为自定义实验模式 |
 | Audio/soundFontPath | string | 空 | 用户音源的绝对路径；空值表示尚未配置 |
 
 刷新率使用整数保存，便于高级用户直接编辑配置文件。无效值会回退到默认值，并通过设置加载警告提示。
 
-升级后，旧配置缺少音符色彩项时默认使用鲜明；希望沿用原有外观可在设置中选择普通。读取其他设置的默认值不会主动写入配置；图形模式是例外，新用户首次完成渲染后会保存实际成功的后端，已有 `General/graphicsMode` 配置则保持原选择。背景图片路径只在用户选择后保存；切换到“无背景”时保留路径供重新启用，启动时仅对已启用的图片异步读取，文件缺失或损坏时保留配置但回退主题背景。保存失败会在设置窗口提示，当前会话保留所选外观，重启时仍以实际保存的配置为准。
+升级后，旧配置缺少音符色彩项时默认使用鲜明；希望沿用原有外观可在设置中选择普通。旧配置缺少流光特效项时，Vulkan 使用默认的中档特效，传统 Qt 仍强制关闭特效。读取其他设置的默认值不会主动写入配置；图形模式是例外，新用户首次完成渲染后会保存实际成功的后端，已有 `General/graphicsMode` 配置则保持原选择。背景图片路径只在用户选择后保存；切换到“无背景”时保留路径供重新启用，启动时仅对已启用的图片异步读取，文件缺失或损坏时保留配置但回退主题背景。保存失败会在设置窗口提示，当前会话保留所选外观，重启时仍以实际保存的配置为准。
 
 自定义音源的行为：
 
@@ -377,6 +379,7 @@ flowchart LR
     M --> N[FallingNotesView]
     N --> O[Qt Widgets / QPainter]
     N --> P[QVulkanWindow / Vulkan]
+    P --> Q[Note shader / flowing-glass effects]
 ~~~
 
 ### 分层职责
@@ -392,7 +395,9 @@ flowchart LR
 | Infrastructure / Audio | 动态解析 FluidSynth API，隔离音频后端类型 | FluidSynthEngine、FluidSynthAudioService、ThreadedPlaybackAudioService |
 | Infrastructure / Settings | 使用 Qt QSettings 读写用户级 INI | QSettingsStore |
 
-UI 不直接解析 XML/MIDI，也不直接调用 FluidSynth；播放域不依赖 Qt Widgets，音频后端类型不会泄漏到音乐领域模型。后续可以注册新的 reader、替换音频后端或增加独立谱面视图，而不改变已有输入和播放契约。
+UI 不直接解析 XML/MIDI，也不直接调用 FluidSynth；播放域不依赖 Qt Widgets，音频后端类型不会泄漏到音乐领域模型。流光特效设置由 `SettingsService` 持久化，经 `FallingNotesView` 传入 Vulkan 场景，再由音符 shader 和动态 UI 批次应用；传统 Qt 后端会隐藏这些等级选项并强制关闭特效。后续可以注册新的 reader、替换音频后端或增加独立谱面视图，而不改变已有输入和播放契约。
+
+Vulkan 交换链图像、UI 批次和 GPU 资源的生命周期约束见 [Vulkan 渲染说明](docs/vulkan-rendering.md)。
 
 ## 关键数据结构与算法
 
@@ -434,7 +439,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 
 当前测试目标包括：
 
-- presentation_backend_configuration：真实呈现层的后端编译边界、状态更新、传统渲染及模式设置；另覆盖新用户默认 Vulkan、已有图形模式配置保留及图形模式解析结果持久化；
+- presentation_backend_configuration：真实呈现层的后端编译边界、状态更新、传统渲染及模式设置；另覆盖新用户默认 Vulkan、已有图形模式配置保留、图形模式解析结果持久化，以及 Vulkan/传统 Qt 下流光特效选项的动态显示和联动；
 - 单图片背景：设置路径持久化、异步加载、裁剪填充、可读性遮罩、Vulkan 纹理上传和传统 Qt 回退绘制；
 - theme_persistence_and_runtime：主题默认值与旧配置兼容、保存失败、运行时窗口状态保持及高 DPI 图标；
 - note_color_modes：默认鲜明、旧配置迁移、损坏值与保存失败、设置联动、音级/打击乐映射、材质缓存失效及双后端版本传播；
@@ -462,7 +467,8 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | SoundFont | 无有效配置时启动引导可跳过；缺少音源时播放仅内联报错；SF2/SF3 可配置和切换，失败时保留原有选择 |
 | 节拍器 | 小节首拍重音、变速同步，暂停和停止无声，关闭不截断钢琴音，切换音源后仍能发声 |
 | 简谱条显隐 | 默认隐藏简谱条和黄线，音符在琴键顶部判定；播放和暂停时切换立即生效，切换图形模式后保持选择 |
-| 设置持久化 | 重启后主题、音符色彩、刷新率、图形模式、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
+| 流光特效 | Vulkan 下显示无特效及低/中/高三档，默认中特效；传统 Qt 只显示“无特效（特效需开启 Vulkan）”，不出现灰色特效等级 |
+| 设置持久化 | 重启后主题、音符色彩、刷新率、图形模式、流光特效等级、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
 | Release 部署 | exe、Qt 平台插件、FluidSynth 与 LAME DLL 完整，发行包不含外部 SF2/SF3 音源 |
 
 自动测试不替代人工听音验收；音频设备、系统音量和 FluidSynth 驱动初始化仍需在目标机器上确认。
@@ -517,7 +523,7 @@ build.env.sample.psd1                  环境配置模板（本地实际配置�
 cmake/                                DLL 部署与发行目录依赖检查
 CMakeLists.txt                        构建目标、资源复制和安装规则
 CMakePresets.json                     Windows MSVC / Ninja 预设
-vcpkg.json                            锁定基线的 FluidSynth / SF3 依赖清单
+vcpkg.json                            锁定基线的 FluidSynth、WebP 和 LAME 依赖清单
 ~~~
 
 ## 参与开发
