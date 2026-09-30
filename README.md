@@ -10,7 +10,7 @@ MIDI Play 是一款开源桌面音乐播放器，提供实时钢琴键盘、深�
 
 [下载 Windows x64 发行版](https://github.com/allenwu258/midi-play/releases/latest) · [快速开始](#快速开始) · [从源码构建](#源码构建) · [反馈问题](https://github.com/allenwu258/midi-play/issues)
 
-当前稳定发布版本：[v0.4.3](https://github.com/allenwu258/midi-play/releases/tag/v0.4.3)，提供完整 Windows x64 便携发行包、MP3/WAV 音频导出和可配置的 Vulkan 流光玻璃特效。
+当前稳定发布版本：[v0.4.4](https://github.com/allenwu258/midi-play/releases/tag/v0.4.4)，提供完整 Windows x64 便携发行包、MP3/WAV 音频导出、可配置的 Vulkan 流光玻璃特效和图片背景布局控制。
 
 > 播放前需自行准备本地 SF2 / SF3 音源。程序不附带乐曲音源，也不会自动下载；可以跳过首次配置，先打开并查看乐曲。
 
@@ -81,7 +81,7 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 
 ## 快速开始
 
-1. 前往 [Releases](https://github.com/allenwu258/midi-play/releases/latest)，下载最新的 Windows x64 便携发行包（当前稳定版本为 v0.4.3）。GitHub 自动提供的 `Source code` 是源码包。
+1. 前往 [Releases](https://github.com/allenwu258/midi-play/releases/latest)，下载最新的 Windows x64 便携发行包（当前稳定版本为 v0.4.4）。GitHub 自动提供的 `Source code` 是源码包。
 2. 完整解压 ZIP，运行其中的 `midi_play.exe`，保留同目录 DLL、插件和许可证文件。
 3. 在启动引导中选择本地 `.sf2` 或 `.sf3` 音源。多轨 MIDI 建议使用覆盖完整 General MIDI（GM）乐器的音源；选择成功后会尝试自动保存路径。
 4. 点击“打开乐曲”，选择 `.mid`、`.midi`、`.kar`、`.xml` 或 `.musicxml` 文件，再点击播放。
