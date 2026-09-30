@@ -7,6 +7,7 @@
 #include <QVariant>
 
 #include <utility>
+#include <algorithm>
 
 namespace midi_play::infrastructure::settings {
 namespace {
@@ -87,6 +88,25 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         file.value(QStringLiteral("Visualization/backgroundImagePath")).toString().trimmed();
     result.backgroundImageEnabled = file.value(
         QStringLiteral("Visualization/backgroundImageEnabled"), !result.backgroundImagePath.isEmpty()).toBool();
+    const bool hasBackgroundAlignment = file.contains(QStringLiteral("Visualization/backgroundImageAlignment"));
+    const QVariant backgroundAlignmentValue = file.value(
+        QStringLiteral("Visualization/backgroundImageAlignment"),
+        midi_play::settings::backgroundImageAlignmentPersistentValue(
+            midi_play::settings::kDefaultBackgroundImageAlignment));
+    bool backgroundAlignmentConversionOk = false;
+    const int configuredBackgroundAlignment = backgroundAlignmentValue.toInt(&backgroundAlignmentConversionOk);
+    result.backgroundImageAlignment = backgroundAlignmentConversionOk
+        ? midi_play::settings::backgroundImageAlignmentFromPersistentValue(configuredBackgroundAlignment)
+        : midi_play::settings::kDefaultBackgroundImageAlignment;
+    const bool hasBackgroundOpacity = file.contains(QStringLiteral("Visualization/backgroundImageOpacity"));
+    const QVariant backgroundOpacityValue = file.value(
+        QStringLiteral("Visualization/backgroundImageOpacity"),
+        midi_play::settings::kDefaultBackgroundImageOpacity);
+    bool backgroundOpacityConversionOk = false;
+    const int configuredBackgroundOpacity = backgroundOpacityValue.toInt(&backgroundOpacityConversionOk);
+    result.backgroundImageOpacity = backgroundOpacityConversionOk
+        ? std::clamp(configuredBackgroundOpacity, 0, 100)
+        : midi_play::settings::kDefaultBackgroundImageOpacity;
     result.visualEffectsEnabled = file.value(
         QStringLiteral("Visualization/visualEffectsEnabled"), true).toBool();
     const bool hasVisualEffectsLevel = file.contains(QStringLiteral("Visualization/visualEffectsLevel"));
@@ -141,6 +161,19 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         const auto message = QStringLiteral("设置文件中的流光特效强度无效，已回退到中档");
         *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
     }
+    if (hasBackgroundAlignment
+        && (!backgroundAlignmentConversionOk
+            || !midi_play::settings::isValidBackgroundImageAlignment(configuredBackgroundAlignment))
+        && warning) {
+        const auto message = QStringLiteral("设置文件中的背景适配方式无效，已回退到裁剪铺满");
+        *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
+    }
+    if (hasBackgroundOpacity
+        && (!backgroundOpacityConversionOk || configuredBackgroundOpacity < 0 || configuredBackgroundOpacity > 100)
+        && warning) {
+        const auto message = QStringLiteral("设置文件中的背景不透明度无效，已限制到 0%–100% 范围");
+        *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
+    }
     return result;
 }
 
@@ -184,6 +217,10 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
         file.setValue(QStringLiteral("Visualization/backgroundImagePath"), settings.backgroundImagePath);
     }
     file.setValue(QStringLiteral("Visualization/backgroundImageEnabled"), settings.backgroundImageEnabled);
+    file.setValue(QStringLiteral("Visualization/backgroundImageAlignment"),
+                  midi_play::settings::backgroundImageAlignmentPersistentValue(settings.backgroundImageAlignment));
+    file.setValue(QStringLiteral("Visualization/backgroundImageOpacity"),
+                  std::clamp(settings.backgroundImageOpacity, 0, 100));
     file.setValue(QStringLiteral("Visualization/visualEffectsEnabled"), settings.visualEffectsEnabled);
     file.setValue(QStringLiteral("Visualization/visualEffectsLevel"),
                   midi_play::settings::visualEffectLevelPersistentValue(settings.visualEffectsLevel));

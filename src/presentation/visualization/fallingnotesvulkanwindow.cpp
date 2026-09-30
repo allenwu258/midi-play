@@ -753,6 +753,23 @@ void FallingNotesVulkanWindow::setBackgroundImage(const QImage& image)
     requestUpdate();
 }
 
+void FallingNotesVulkanWindow::setBackgroundImageAlignment(
+    midi_play::settings::BackgroundImageAlignment alignment)
+{
+    const auto normalized = midi_play::settings::normalizeBackgroundImageAlignment(alignment);
+    if (m_backgroundAlignment == normalized) return;
+    m_backgroundAlignment = normalized;
+    requestUpdate();
+}
+
+void FallingNotesVulkanWindow::setBackgroundImageOpacity(int opacity)
+{
+    const int normalized = std::clamp(opacity, 0, 100);
+    if (m_backgroundOpacity == normalized) return;
+    m_backgroundOpacity = normalized;
+    requestUpdate();
+}
+
 midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneState() const
 {
     midi_play::visualization::PlaybackSceneState result;
@@ -767,6 +784,8 @@ midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneStat
     result.visualEffectsLevel = m_visualEffectsLevel;
     result.themeMode = m_themeMode;
     result.noteColorMode = m_noteColorMode;
+    result.backgroundImageAlignment = m_backgroundAlignment;
+    result.backgroundImageOpacity = m_backgroundOpacity;
     result.errorMessage = m_error;
     result.updateVisibleWindow();
     return result;

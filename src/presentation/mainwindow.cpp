@@ -181,6 +181,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         }
         m_visualization->setGraphicsMode(m_settingsService->graphicsMode());
         m_visualization->setBackgroundImagePath(m_settingsService->activeBackgroundImagePath());
+        m_visualization->setBackgroundImageAlignment(m_settingsService->backgroundImageAlignment());
+        m_visualization->setBackgroundImageOpacity(m_settingsService->backgroundImageOpacity());
         m_visualization->setShowNotationStrip(m_settingsService->showNotationStrip());
         m_visualization->setVisualEffectsEnabled(m_settingsService->visualEffectsEnabled());
         m_visualization->setVisualEffectsLevel(m_settingsService->visualEffectsLevel());
@@ -202,6 +204,10 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_visualization, updateBackground);
         connect(m_settingsService, &app::SettingsService::backgroundImageEnabledChanged,
                 m_visualization, updateBackground);
+        connect(m_settingsService, &app::SettingsService::backgroundImageAlignmentChanged,
+                m_visualization, &visualization::FallingNotesView::setBackgroundImageAlignment);
+        connect(m_settingsService, &app::SettingsService::backgroundImageOpacityChanged,
+                m_visualization, &visualization::FallingNotesView::setBackgroundImageOpacity);
     }
 
     auto* transport = new QWidget(central);

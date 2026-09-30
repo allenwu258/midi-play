@@ -27,6 +27,9 @@ public:
     const QString& soundFontPath() const noexcept { return m_settings.soundFontPath; }
     const QString& backgroundImagePath() const noexcept { return m_settings.backgroundImagePath; }
     bool backgroundImageEnabled() const noexcept { return m_settings.backgroundImageEnabled; }
+    settings::BackgroundImageAlignment backgroundImageAlignment() const noexcept
+    { return m_settings.backgroundImageAlignment; }
+    int backgroundImageOpacity() const noexcept { return m_settings.backgroundImageOpacity; }
     bool visualEffectsEnabled() const noexcept { return m_settings.visualEffectsEnabled; }
     settings::VisualEffectLevel visualEffectsLevel() const noexcept { return m_settings.visualEffectsLevel; }
     QString activeBackgroundImagePath() const {
@@ -45,6 +48,8 @@ public slots:
     void setSoundFontPath(const QString& path);
     void setBackgroundImagePath(const QString& path);
     void setBackgroundImageEnabled(bool enabled);
+    void setBackgroundImageAlignment(settings::BackgroundImageAlignment alignment);
+    void setBackgroundImageOpacity(int opacity);
     void setVisualEffectsEnabled(bool enabled);
     void setVisualEffectsLevel(settings::VisualEffectLevel level);
 
@@ -58,6 +63,8 @@ signals:
     void soundFontPathChanged(const QString& path);
     void backgroundImagePathChanged(const QString& path);
     void backgroundImageEnabledChanged(bool enabled);
+    void backgroundImageAlignmentChanged(midi_play::settings::BackgroundImageAlignment alignment);
+    void backgroundImageOpacityChanged(int opacity);
     void visualEffectsEnabledChanged(bool enabled);
     void visualEffectsLevelChanged(midi_play::settings::VisualEffectLevel level);
     void settingsLoadWarning(const QString& message);

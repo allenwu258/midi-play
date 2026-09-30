@@ -6,6 +6,7 @@
 #include "domain/settings/thememode.h"
 #include "domain/settings/notecolormode.h"
 #include "domain/settings/visualeffectlevel.h"
+#include "domain/settings/backgroundimagealignment.h"
 
 class QCheckBox;
 class QComboBox;
@@ -14,6 +15,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
+class QSlider;
 
 namespace midi_play::app { class SettingsService; }
 namespace midi_play::app { class PlayerApplicationService; }
@@ -38,6 +40,8 @@ private slots:
     void chooseSoundFont();
     void chooseBackgroundImage();
     void applyBackgroundModeFromUi();
+    void applyBackgroundAlignmentFromUi();
+    void applyBackgroundOpacityFromUi(int value);
     void updateRefreshRateSelection(int refreshRate);
     void updateTitleBarModeSelection(midi_play::settings::TitleBarMode mode);
     void updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode);
@@ -48,6 +52,8 @@ private slots:
     void updateSoundFontPath(const QString& path);
     void updateBackgroundImagePath(const QString& path);
     void updateBackgroundModeSelection(bool enabled);
+    void updateBackgroundAlignmentSelection(midi_play::settings::BackgroundImageAlignment alignment);
+    void updateBackgroundOpacitySelection(int opacity);
     void setSoundFontLoading(bool loading);
     void showSaveError(const QString& message);
 
@@ -72,6 +78,10 @@ private:
     QLineEdit* m_backgroundImagePathEdit = nullptr;
     QPushButton* m_loadBackgroundImageButton = nullptr;
     QComboBox* m_backgroundModeCombo = nullptr;
+    QComboBox* m_backgroundAlignmentCombo = nullptr;
+    QSlider* m_backgroundOpacitySlider = nullptr;
+    QLabel* m_backgroundOpacityLabel = nullptr;
+    QWidget* m_backgroundOpacityEditor = nullptr;
     QFormLayout* m_formLayout = nullptr;
     QWidget* m_backgroundImageEditor = nullptr;
     QLabel* m_errorLabel = nullptr;

@@ -4,6 +4,7 @@
 #include "domain/visualization/visualchart.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "visualplaybackclock.h"
+#include "domain/settings/backgroundimagealignment.h"
 
 #include <QVulkanWindow>
 #include <QFont>
@@ -25,11 +26,16 @@ public:
     void setThemeMode(midi_play::settings::ThemeMode mode);
     void setNoteColorMode(midi_play::settings::NoteColorMode mode);
     void setBackgroundImage(const QImage& image);
+    void setBackgroundImageAlignment(midi_play::settings::BackgroundImageAlignment alignment);
+    void setBackgroundImageOpacity(int opacity);
     midi_play::visualization::VisualChartPtr chart() const { return m_chart; }
     qint64 positionUs() const noexcept { return m_positionUs; }
     qint64 durationUs() const noexcept { return m_durationUs; }
     const QImage& backgroundImage() const noexcept { return m_backgroundImage; }
     quint64 backgroundRevision() const noexcept { return m_backgroundRevision; }
+    midi_play::settings::BackgroundImageAlignment backgroundImageAlignment() const noexcept
+    { return m_backgroundAlignment; }
+    int backgroundImageOpacity() const noexcept { return m_backgroundOpacity; }
     midi_play::playback::State transportState() const noexcept { return m_state; }
     midi_play::visualization::PlaybackSceneState sceneState() const;
     QFont sceneFont() const { return m_font; }
@@ -64,6 +70,9 @@ private:
     const VisualPlaybackClock* m_visualClock = nullptr;
     qint64 m_effectsStartUs = 0;
     QImage m_backgroundImage;
+    midi_play::settings::BackgroundImageAlignment m_backgroundAlignment =
+        midi_play::settings::kDefaultBackgroundImageAlignment;
+    int m_backgroundOpacity = midi_play::settings::kDefaultBackgroundImageOpacity;
     quint64 m_backgroundRevision = 1;
 };
 

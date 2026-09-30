@@ -207,6 +207,9 @@ void testVisualEffectsPreference()
 #else
     require(!settings.visualEffectsEnabled() && levelChanges == 0 && changes == 0,
             "traditional-only builds must keep visual effects disabled");
+    // The level remains a portable preference even when this build cannot
+    // render it; set it explicitly before checking restart persistence.
+    settings.setVisualEffectsLevel(VisualEffectLevel::High);
 #endif
     settings.setVisualEffectsEnabled(false);
 #if MIDI_PLAY_HAS_VULKAN
@@ -264,9 +267,11 @@ void testBackgroundModePreference()
     auto* mode = dialog.findChild<QComboBox*>(QStringLiteral("backgroundModeCombo"));
     auto* imagePath = dialog.findChild<QLineEdit*>(QStringLiteral("backgroundImagePathEdit"));
     auto* choose = dialog.findChild<QPushButton*>(QStringLiteral("loadBackgroundImageButton"));
-    require(mode && imagePath && choose && !dialog.findChild<QPushButton*>(
+    auto* alignment = dialog.findChild<QComboBox*>(QStringLiteral("backgroundAlignmentCombo"));
+    auto* opacity = dialog.findChild<QSlider*>(QStringLiteral("backgroundOpacitySlider"));
+    require(mode && imagePath && choose && alignment && opacity && !dialog.findChild<QPushButton*>(
                 QStringLiteral("clearBackgroundImageButton")),
-            "background settings must expose a mode and image chooser without a clear button");
+            "background settings must expose mode, image, alignment and opacity controls");
     require(mode->count() == 2 && mode->itemText(0) == QStringLiteral("无背景")
                 && mode->itemText(1) == QStringLiteral("图片背景（实验）")
                 && !mode->currentData().toBool() && imagePath->parentWidget()->isHidden(),
@@ -275,6 +280,14 @@ void testBackgroundModePreference()
     mode->setCurrentIndex(1);
     require(service.backgroundImageEnabled() && !imagePath->parentWidget()->isHidden(),
             "selecting image mode must reveal the image row and persist the mode");
+    require(alignment->count() == 6 && alignment->currentText() == QStringLiteral("裁剪铺满")
+                && opacity->value() == 100,
+            "background controls must use cover and full opacity by default");
+    alignment->setCurrentIndex(alignment->findText(QStringLiteral("完整显示")));
+    opacity->setValue(60);
+    require(service.backgroundImageAlignment() == midi_play::settings::BackgroundImageAlignment::Contain
+                && service.backgroundImageOpacity() == 60,
+            "background alignment and opacity changes must update the settings service");
     const QString selectedPath = temporary.filePath(QStringLiteral("background.png"));
     service.setBackgroundImagePath(selectedPath);
     require(imagePath->text() == selectedPath,
@@ -289,6 +302,9 @@ void testBackgroundModePreference()
     restarted.load();
     require(!restarted.backgroundImageEnabled() && restarted.backgroundImagePath() == selectedPath,
             "background mode and image selection must survive restart independently");
+    require(restarted.backgroundImageAlignment() == midi_play::settings::BackgroundImageAlignment::Contain
+                && restarted.backgroundImageOpacity() == 60,
+            "background alignment and opacity must survive restart");
     restarted.setBackgroundImageEnabled(true);
     require(restarted.activeBackgroundImagePath() == selectedPath,
             "re-enabling image mode must restore the previous selection");

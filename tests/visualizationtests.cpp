@@ -9,6 +9,7 @@
 #include "presentation/visualization/noterendercache.h"
 #include "presentation/visualization/scenelayoutengine.h"
 #include "presentation/visualization/textlayoutcache.h"
+#include "presentation/visualization/backgroundimageplacement.h"
 
 #include <QDebug>
 #include <QGuiApplication>
@@ -32,6 +33,7 @@ using midi_play::presentation::visualization::RasterRenderPolicy;
 using midi_play::presentation::visualization::PlaybackOverlayTimeline;
 using midi_play::presentation::visualization::TextLayoutCache;
 using midi_play::presentation::visualization::TextLayoutRole;
+using midi_play::presentation::visualization::calculateBackgroundImagePlacement;
 using midi_play::presentation::PlaybackMetadataPresenter;
 using midi_play::presentation::PlaybackMetadataTimeline;
 using midi_play::visualization::PlaybackVisualizationProjector;
@@ -406,6 +408,42 @@ void testSceneGeometry()
     const qreal expected = (geometry.strikeLineY - geometry.fallingRect.top()) / 5'000'000.0;
     require(std::abs(geometry.pixelsPerMicrosecond - expected) < 1e-12,
             "time scale must derive from look-ahead and available height");
+    require(!geometry.leftKeyboardExtensionRect.isEmpty()
+                && geometry.leftKeyboardExtensionRect.left() == 0.0
+                && geometry.leftKeyboardExtensionRect.right() <= geometry.pianoRect.left() + 0.001,
+            "keyboard must extend continuously to the viewport's left edge");
+    require(!geometry.leftKeyboardExtensionPitches.isEmpty(),
+            "left keyboard extension must contain complete visual key units");
+    int extensionWhites = 0;
+    for (const auto& slot : geometry.leftKeyboardExtensionPitches) {
+        if (!slot.blackKey) ++extensionWhites;
+    }
+    require(extensionWhites == static_cast<int>(geometry.leftKeyboardExtensionPitches.size())
+                && geometry.leftKeyboardExtensionRect.width() >= 50.0,
+            "left keyboard extension must contain only whole white keys");
+}
+
+void testBackgroundImagePlacement()
+{
+    using midi_play::settings::BackgroundImageAlignment;
+    const QRectF target(10.0, 20.0, 100.0, 100.0);
+    const auto cover = calculateBackgroundImagePlacement({100.0, 200.0}, target,
+                                                          BackgroundImageAlignment::Cover);
+    const auto top = calculateBackgroundImagePlacement({100.0, 200.0}, target,
+                                                        BackgroundImageAlignment::Top);
+    const auto bottom = calculateBackgroundImagePlacement({100.0, 200.0}, target,
+                                                           BackgroundImageAlignment::Bottom);
+    const auto contain = calculateBackgroundImagePlacement({100.0, 200.0}, target,
+                                                            BackgroundImageAlignment::Contain);
+    require(cover.destination == target && cover.sourceUv.height() < 1.0,
+            "cover placement must fill the target and crop a tall image");
+    require(top.sourceUv.top() == 0.0 && bottom.sourceUv.bottom() == 1.0
+                && bottom.sourceUv.top() > top.sourceUv.top(),
+            "top and bottom alignment must anchor the cropped source");
+    require(contain.sourceUv == QRectF(0.0, 0.0, 1.0, 1.0)
+                && contain.destination.width() < target.width()
+                && contain.destination.center() == target.center(),
+            "contain placement must preserve the full image with centered letterboxing");
 }
 
 void testPlaybackMetadataPresentation()
@@ -659,6 +697,7 @@ int main(int argc, char* argv[])
     testRasterRenderPolicy();
     testRasterRenderPolicyIsScopedByPainterState();
     testSceneGeometry();
+    testBackgroundImagePlacement();
     testPlaybackMetadataPresentation();
     testMetadataTimelineMergesEquivalentDisplaySegments();
     testPlaybackOverlayTimeline();

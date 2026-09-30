@@ -1,4 +1,5 @@
 #include "vulkanscene.h"
+#include "backgroundimageplacement.h"
 
 #include <QPainter>
 #include <algorithm>
@@ -48,10 +49,16 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         || m_showNotationStrip != state.showNotationStrip;
     const bool backgroundChanged = m_hasBackground != hasBackground
         || (hasBackground && m_backgroundSize != backgroundSize)
-        || (hasBackground && m_backgroundRevision != backgroundRevision);
+        || (hasBackground && m_backgroundRevision != backgroundRevision)
+        || m_backgroundAlignment != midi_play::settings::normalizeBackgroundImageAlignment(
+            state.backgroundImageAlignment)
+        || m_backgroundOpacity != std::clamp(state.backgroundImageOpacity, 0, 100);
     m_hasBackground = hasBackground;
     m_backgroundSize = backgroundSize;
     m_backgroundRevision = backgroundRevision;
+    m_backgroundAlignment = midi_play::settings::normalizeBackgroundImageAlignment(
+        state.backgroundImageAlignment);
+    m_backgroundOpacity = std::clamp(state.backgroundImageOpacity, 0, 100);
     if (chartChanged) {
         m_chart = state.chart;
         m_index = {};
@@ -199,20 +206,15 @@ void VulkanScene::rebuildStaticUi()
     const auto& g = m_geometry;
     m_staticUi.beginLayer(VulkanUiLayer::Background);
     if (m_hasBackground) {
-        rect(output, g.fallingRect, Qt::white);
+        const auto placement = calculateBackgroundImagePlacement(
+            m_backgroundSize, g.fallingRect, m_backgroundAlignment);
+        const qreal alpha = m_backgroundOpacity / 100.0;
+        rect(output, placement.destination, QColor(255, 255, 255, qRound(255.0 * alpha)));
         auto& background = output.back();
         background.options[2] = 2;
-        const qreal imageAspect = m_backgroundSize.width() > 0 && m_backgroundSize.height() > 0
-            ? qreal(m_backgroundSize.width()) / m_backgroundSize.height() : 1.0;
-        const qreal areaAspect = g.fallingRect.width() / std::max<qreal>(1.0, g.fallingRect.height());
-        if (imageAspect > areaAspect) {
-            const qreal width = areaAspect / imageAspect;
-            background.uv = {float((1.0 - width) / 2.0), 0, float(width), 1};
-        } else {
-            const qreal height = imageAspect / std::max<qreal>(0.001, areaAspect);
-            background.uv = {0, float((1.0 - height) / 2.0), 1, float(height)};
-        }
-        rect(output, g.fallingRect, QColor(0, 0, 0, 85));
+        background.uv = {float(placement.sourceUv.left()), float(placement.sourceUv.top()),
+                         float(placement.sourceUv.width()), float(placement.sourceUv.height())};
+        rect(output, placement.destination, QColor(0, 0, 0, qRound(85.0 * alpha)));
     }
     for (const auto& pitch : g.pitches) {
         if (pitch.valid && pitch.blackKey)
@@ -223,6 +225,11 @@ void VulkanScene::rebuildStaticUi()
     rect(output, g.keyboardRect, m_theme.keyboardBackground);
     for (bool black : {false, true}) {
         if (black) m_staticUi.beginLayer(VulkanUiLayer::BlackKeys);
+        if (!black) for (const auto& slot : g.leftKeyboardExtensionPitches) {
+            if (!slot.valid) continue;
+            rect(output, slot.keyRect.adjusted(0, 0, -.5, -.5),
+                 m_theme.whiteKey, m_theme.whiteKeyBorder, 1);
+        }
         for (const auto& slot : g.pitches) {
             if (!slot.valid || slot.blackKey != black) continue;
             rect(output, slot.keyRect.adjusted(black ? .5 : 0, 0, -.5, black ? -1 : -.5),
@@ -244,14 +251,13 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     const auto& g = m_geometry;
     m_dynamicUi.beginLayer(VulkanUiLayer::Background);
     const qreal left = g.pianoRect.left();
+    const qreal effectLeft = g.strikeLineLeft();
     const qreal right = g.drumRect.isEmpty() ? g.pianoRect.right() : g.drumRect.right();
     if (state.visualEffectsEnabled && !g.fallingRect.isEmpty()) {
         QColor atmosphere = m_theme.strikeLine;
         atmosphere.setAlphaF(0.045);
-        rect(output, g.fallingRect.adjusted(g.fallingRect.width() * 0.08,
-                                             g.fallingRect.height() * 0.04,
-                                             -g.fallingRect.width() * 0.08,
-                                             -g.fallingRect.height() * 0.06),
+        rect(output, QRectF(effectLeft, g.fallingRect.top() + g.fallingRect.height() * 0.04,
+                            right - effectLeft, g.fallingRect.height() * 0.90),
              atmosphere, Qt::transparent, 0, true);
         output.back().options[3] = 2;
     }
@@ -263,7 +269,7 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
         for (; it != lines.cend() && it->timeUs <= state.transportPositionUs + state.lookAheadUs; ++it) {
             const qreal y = g.strikeLineY - (it->timeUs - state.transportPositionUs) * g.pixelsPerMicrosecond;
             if (y < g.fallingRect.top() || y >= g.fallingRect.bottom()) continue;
-            rect(output, {left,y,right-left,it->measureStart ? 2.0 : 1.0}, it->measureStart ? m_theme.measureLine : m_theme.beatLine);
+            rect(output, {effectLeft,y,right-effectLeft,it->measureStart ? 2.0 : 1.0}, it->measureStart ? m_theme.measureLine : m_theme.beatLine);
             // Use a dedicated primitive kind for moving horizontal lines.
             // The negative kind is independent from the ellipse/texture flags
             // in options and is rasterized with analytic edge coverage.
@@ -274,18 +280,20 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     m_dynamicUi.beginLayer(VulkanUiLayer::Strike);
     const bool showStrikeLine = !g.notationStripRect.isEmpty() || state.visualEffectsEnabled;
     if (showStrikeLine) {
+        const qreal strikeLeft = g.strikeLineLeft();
+        const qreal strikeWidth = right - strikeLeft;
         if (state.visualEffectsEnabled) {
             const qreal pulse = 0.5 + 0.5 * std::sin(
                 qreal(state.transportPositionUs) * 0.0000075);
             QColor ambient = m_theme.strikeGlow;
             ambient.setAlphaF(0.075 + 0.09 * pulse * m_effectsProfile.strikeGlowStrength);
-            rect(output, {left, g.strikeLineY - 13.0, right - left, 26.0}, ambient);
+            rect(output, {strikeLeft, g.strikeLineY - 13.0, strikeWidth, 26.0}, ambient);
             QColor beam = m_theme.strikeGlow;
             beam.setAlphaF(0.16 + 0.20 * m_effectsProfile.strikeGlowStrength);
-            rect(output, {left, g.strikeLineY - 4.0, right - left, 8.0}, beam);
+            rect(output, {strikeLeft, g.strikeLineY - 4.0, strikeWidth, 8.0}, beam);
             QColor strike = m_theme.strikeLine;
             strike.setAlphaF(0.70 + 0.18 * pulse);
-            rect(output, {left, g.strikeLineY - 0.9, right - left, 1.8}, strike);
+            rect(output, {strikeLeft, g.strikeLineY - 0.9, strikeWidth, 1.8}, strike);
             for (const auto& slot : g.pitches) {
                 if (!slot.valid) continue;
                 const auto& light = m_noteFrame.key(slot.pitch);
@@ -299,10 +307,10 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
                               g.strikeLineY - 2.4, slot.noteWidth * 1.9, 4.8}, segment);
             }
         } else {
-            rect(output, {left,g.strikeLineY-3,right-left,6}, m_theme.strikeGlow);
+            rect(output, {strikeLeft,g.strikeLineY-3,strikeWidth,6}, m_theme.strikeGlow);
             QColor strike = m_theme.strikeLine;
             strike.setAlpha(145);
-            rect(output, {left,g.strikeLineY-0.5,right-left,1}, strike);
+            rect(output, {strikeLeft,g.strikeLineY-0.5,strikeWidth,1}, strike);
         }
     }
     if (state.visualEffectsEnabled) {

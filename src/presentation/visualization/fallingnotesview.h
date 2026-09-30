@@ -3,6 +3,7 @@
 #include "domain/playback/playbacktypes.h"
 #include "domain/settings/graphicsmode.h"
 #include "domain/settings/visualeffectlevel.h"
+#include "domain/settings/backgroundimagealignment.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "domain/visualization/visiblenoteindex.h"
 #include "domain/visualization/visiblenotewindowcache.h"
@@ -49,6 +50,8 @@ public slots:
     void setTransportState(midi_play::playback::State state);
     void setGraphicsMode(midi_play::settings::GraphicsMode mode);
     void setBackgroundImagePath(const QString& path);
+    void setBackgroundImageAlignment(midi_play::settings::BackgroundImageAlignment alignment);
+    void setBackgroundImageOpacity(int opacity);
     void setShowNotationStrip(bool show);
     void setVisualEffectsEnabled(bool enabled);
     void setVisualEffectsLevel(midi_play::settings::VisualEffectLevel level);

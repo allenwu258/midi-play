@@ -68,14 +68,9 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
             drumWidth = std::max<qreal>(1.0, width - measureGutter);
         }
     }
-    const qreal pitchWidth = hasMelodicNotes || drumCount == 0
-        ? std::max<qreal>(80.0, width - measureGutter - drumWidth - gap) : 0.0;
-    geometry.pianoRect = QRectF(measureGutter, geometry.keyboardRect.top(), pitchWidth, keyboardHeight);
-    if (drumCount > 0) {
-        geometry.drumRect = QRectF(geometry.pianoRect.right() + gap, geometry.keyboardRect.top(),
-                                   std::max<qreal>(1.0, width - geometry.pianoRect.right() - gap), keyboardHeight);
-    }
-
+    const qreal melodicRight = width - drumWidth - gap;
+    const bool showPiano = hasMelodicNotes || drumCount == 0;
+    const qreal melodicWidth = showPiano ? std::max<qreal>(80.0, melodicRight) : 0.0;
     const auto range = chart ? chart->pitchRange() : midi_play::visualization::PitchRange {};
     const int minimumPitch = std::clamp(range.minimum, 0, 127);
     const int maximumPitch = std::clamp(range.maximum, minimumPitch, 127);
@@ -84,7 +79,32 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
         if (!isBlackKey(pitch)) ++whiteCount;
     }
     whiteCount = std::max(1, whiteCount);
-    const qreal whiteWidth = geometry.pianoRect.width() / whiteCount;
+
+    // Solve for the smallest number of complete white keys that covers the
+    // old measure-label gutter. The real piano starts after that extension;
+    // its right edge and the strike-line/time coordinates stay unchanged.
+    int extraWhiteKeys = 0;
+    qreal whiteWidth = showPiano ? melodicWidth / whiteCount : 0.0;
+    if (showPiano) {
+        while (extraWhiteKeys < whiteCount + 128) {
+            whiteWidth = melodicWidth / qreal(whiteCount + extraWhiteKeys);
+            if (extraWhiteKeys * whiteWidth + 0.001 >= measureGutter) break;
+            ++extraWhiteKeys;
+        }
+    }
+    const qreal extensionWidth = extraWhiteKeys * whiteWidth;
+    const qreal pitchWidth = showPiano ? std::max<qreal>(1.0, melodicWidth - extensionWidth) : 0.0;
+    geometry.leftKeyboardExtensionRect = QRectF(0.0, geometry.keyboardRect.top(),
+                                                extensionWidth, keyboardHeight);
+    geometry.pianoRect = showPiano
+        ? QRectF(extensionWidth, geometry.keyboardRect.top(), pitchWidth, keyboardHeight)
+        : QRectF(measureGutter, geometry.keyboardRect.top(), 0.0, keyboardHeight);
+    if (drumCount > 0) {
+        geometry.drumRect = QRectF(geometry.pianoRect.right() + gap, geometry.keyboardRect.top(),
+                                   std::max<qreal>(1.0, width - geometry.pianoRect.right() - gap), keyboardHeight);
+    }
+
+    whiteWidth = showPiano ? geometry.pianoRect.width() / whiteCount : 0.0;
     geometry.pitches.resize(128);
     int whiteOrdinal = 0;
     for (int pitch = minimumPitch; pitch <= maximumPitch; ++pitch) {
@@ -105,6 +125,44 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
                                   blackWidth, keyboardHeight * 0.62);
             slot.centerX = center;
             slot.noteWidth = std::max<qreal>(1.0, whiteWidth * 0.42);
+        }
+    }
+
+    // Build a visual-only continuation of the white-key run. These slots do
+    // not enter the MIDI-indexed array and therefore can never receive notes
+    // or active-key highlights. The continuation intentionally omits black
+    // keys: it is only a left-edge fill used to cover the measure-label
+    // gutter, and carrying the pitch pattern into that area creates a
+    // visually detached partial octave.
+    if (extraWhiteKeys > 0 && !geometry.leftKeyboardExtensionRect.isEmpty()) {
+        QVector<int> preceding;
+        int pitch = minimumPitch - 1;
+        int whites = 0;
+        bool reachedWhiteBoundary = false;
+        while (pitch > -256) {
+            if (reachedWhiteBoundary && !isBlackKey(pitch)) break;
+            preceding.push_back(pitch);
+            if (!isBlackKey(pitch)) {
+                ++whites;
+                reachedWhiteBoundary = whites >= extraWhiteKeys;
+            }
+            --pitch;
+        }
+        std::reverse(preceding.begin(), preceding.end());
+        for (const int virtualPitch : preceding) {
+            if (isBlackKey(virtualPitch)) continue;
+            PitchSlotGeometry slot;
+            slot.pitch = virtualPitch;
+            slot.blackKey = false;
+            slot.valid = true;
+            int whiteOffset = 0;
+            for (int probe = virtualPitch; probe < minimumPitch; ++probe)
+                if (!isBlackKey(probe)) ++whiteOffset;
+            const qreal boundary = geometry.pianoRect.left() - whiteOffset * whiteWidth;
+            slot.keyRect = QRectF(boundary, geometry.keyboardRect.top(), whiteWidth, keyboardHeight);
+            slot.centerX = boundary + whiteWidth * 0.5;
+            slot.noteWidth = std::max<qreal>(1.0, whiteWidth * 0.46);
+            geometry.leftKeyboardExtensionPitches.push_back(slot);
         }
     }
 

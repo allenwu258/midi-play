@@ -1,4 +1,5 @@
 #include "fallingnotesrenderer.h"
+#include "backgroundimageplacement.h"
 #include "rasterrenderpolicy.h"
 
 #include <QPainter>
@@ -76,15 +77,21 @@ void FallingNotesRenderer::renderStaticBackgroundLayer(
     if (!background.isNull() && !geometry.fallingRect.isEmpty()) {
         painter.save();
         painter.setClipRect(geometry.fallingRect);
-        const QSizeF sourceSize = background.size();
-        const QSizeF targetSize = geometry.fallingRect.size();
-        const qreal scale = std::max(targetSize.width() / sourceSize.width(),
-                                     targetSize.height() / sourceSize.height());
-        const QSizeF fitted = sourceSize * scale;
-        const QRectF target(geometry.fallingRect.center() - QPointF(fitted.width(), fitted.height()) / 2,
-                            fitted);
-        painter.drawImage(target, background);
-        painter.fillRect(geometry.fallingRect, QColor(0, 0, 0, 85));
+        const auto placement = calculateBackgroundImagePlacement(
+            background.size(), geometry.fallingRect, state.backgroundImageAlignment);
+        if (!placement.destination.isEmpty()) {
+            const int opacity = std::clamp(state.backgroundImageOpacity, 0, 100);
+            const qreal alpha = opacity / 100.0;
+            painter.setOpacity(alpha);
+            painter.drawImage(placement.destination, background, QRectF(
+                placement.sourceUv.left() * background.width(),
+                placement.sourceUv.top() * background.height(),
+                placement.sourceUv.width() * background.width(),
+                placement.sourceUv.height() * background.height()));
+            QColor mask(0, 0, 0, qRound(85.0 * alpha));
+            painter.setOpacity(1.0);
+            painter.fillRect(placement.destination, mask);
+        }
         painter.restore();
     }
     drawPitchBands(painter, geometry);
@@ -162,7 +169,8 @@ void FallingNotesRenderer::drawTimeGrid(QPainter& painter, const PlaybackSceneGe
 {
     painter.save();
     painter.setClipRect(geometry.fallingRect);
-    const qreal gridLeft = geometry.pianoRect.left();
+    const qreal gridLeft = geometry.strikeLineLeft();
+    const qreal labelRight = geometry.pianoRect.left();
     const qreal gridRight = geometry.drumRect.isEmpty() ? geometry.pianoRect.right() : geometry.drumRect.right();
     if (!state.chart) {
         painter.restore();
@@ -188,7 +196,8 @@ void FallingNotesRenderer::drawTimeGrid(QPainter& painter, const PlaybackSceneGe
             const auto& text = m_textLayoutCache.layout(
                 TextLayoutRole::Measure, it->measureLabel,
                 labelFont, -1.0, painterDevicePixelRatio(painter));
-            drawPreparedText(painter, text, QRectF(4.0, y - 10.0, gridLeft - 9.0, 20.0),
+            drawPreparedText(painter, text, QRectF(4.0, y - 10.0,
+                                                    std::max<qreal>(0.0, labelRight - 9.0), 20.0),
                              Qt::AlignRight | Qt::AlignVCenter);
         }
     }
@@ -243,12 +252,13 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     painter.save();
     painter.setClipRect(geometry.fallingRect);
     if (!geometry.notationStripRect.isEmpty()) {
+        const qreal strikeLeft = geometry.strikeLineLeft();
         const QColor glow = m_theme.strikeGlow;
-        painter.fillRect(QRectF(left, geometry.strikeLineY - 3.0, right - left, 6.0), glow);
+        painter.fillRect(QRectF(strikeLeft, geometry.strikeLineY - 3.0, right - strikeLeft, 6.0), glow);
         QColor line = m_theme.strikeLine;
         line.setAlpha(145);
         painter.setPen(QPen(line, 1));
-        painter.drawLine(QPointF(left, geometry.strikeLineY), QPointF(right, geometry.strikeLineY));
+        painter.drawLine(QPointF(strikeLeft, geometry.strikeLineY), QPointF(right, geometry.strikeLineY));
     }
 
     painter.setPen(Qt::NoPen);
@@ -308,6 +318,10 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
 
     painter.setPen(QPen(m_theme.whiteKeyBorder, 1));
     painter.setBrush(m_theme.whiteKey);
+    for (const auto& slot : geometry.leftKeyboardExtensionPitches) {
+        if (!slot.blackKey)
+            painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
+    }
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || slot.blackKey) continue;
         painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));

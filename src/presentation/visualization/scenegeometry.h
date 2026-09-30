@@ -26,12 +26,21 @@ struct PlaybackSceneGeometry {
     QRectF fallingRect;
     QRectF keyboardRect;
     QRectF pianoRect;
+    QRectF leftKeyboardExtensionRect;
     QRectF drumRect;
     QRectF notationStripRect; // Empty when the strike line is aligned with the keyboard.
     qreal strikeLineY = 0.0;
     qreal pixelsPerMicrosecond = 0.0;
     QVector<PitchSlotGeometry> pitches;
+    QVector<PitchSlotGeometry> leftKeyboardExtensionPitches;
     QVector<DrumSlotGeometry> drumSlots;
+
+    // The decorative strike line also spans the visual-only keyboard extension.
+    qreal strikeLineLeft() const
+    {
+        return leftKeyboardExtensionRect.isEmpty()
+            ? pianoRect.left() : leftKeyboardExtensionRect.left();
+    }
 
     const PitchSlotGeometry* pitchSlot(int pitch) const
     {

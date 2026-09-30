@@ -476,6 +476,8 @@ void testQSettingsStorePersistsUserRefreshRate()
     saved.soundFontPath = QStringLiteral("C:/SoundFonts/custom.sf2");
     saved.backgroundImagePath = QStringLiteral("C:/Pictures/falling-notes.png");
     saved.backgroundImageEnabled = true;
+    saved.backgroundImageAlignment = midi_play::settings::BackgroundImageAlignment::Right;
+    saved.backgroundImageOpacity = 60;
     QString error;
     require(store.save(saved, &error), "settings store must save a valid refresh rate");
     require(error.isEmpty(), "successful settings save must not report an error");
@@ -489,6 +491,9 @@ void testQSettingsStorePersistsUserRefreshRate()
             "settings store must reload the custom background image");
     require(loaded.backgroundImageEnabled,
             "settings store must reload image background mode");
+    require(loaded.backgroundImageAlignment == midi_play::settings::BackgroundImageAlignment::Right
+                && loaded.backgroundImageOpacity == 60,
+            "settings store must reload background placement and opacity");
     {
         QSettings legacy(settingsPath, QSettings::IniFormat);
         legacy.remove(QStringLiteral("Visualization/backgroundImageEnabled"));

@@ -452,6 +452,22 @@ void testVulkanThemes(const visualization::VisualChartPtr& chart)
         const auto darkKeys = scene.staticUi().quads;
         const auto darkNotes = scene.notes();
         const auto darkDecorations = scene.dynamicUi().quads;
+        if (state.visualEffectsEnabled) {
+            const auto& geometry = scene.geometry();
+            const auto range = scene.dynamicUi().range(VulkanUiLayer::Background);
+            bool atmosphereCoversExtension = false;
+            for (uint32_t i = range.first; i < range.first + range.count; ++i) {
+                const auto& quad = scene.dynamicUi().quads[i];
+                if (quad.options[3] == 2.0f
+                    && quad.rect[0] <= float(geometry.strikeLineLeft()) + 0.01f
+                    && quad.rect[0] + quad.rect[2] >= float(geometry.pianoRect.right()) - 0.01f) {
+                    atmosphereCoversExtension = true;
+                    break;
+                }
+            }
+            require(atmosphereCoversExtension,
+                    "Vulkan atmosphere must continue across the left keyboard extension");
+        }
         const auto atlasRevision = scene.atlasRevision();
         const auto strikeY = scene.geometry().strikeLineY;
         const auto staticRevision = scene.staticUiRevision();
@@ -497,6 +513,15 @@ void testVulkanSingleImageBackground(const visualization::VisualChartPtr& chart)
     const auto& image = scene.staticUi().quads[range.first];
     require(image.options[2] == 2 && (image.uv[2] < 1.0f || image.uv[3] < 1.0f),
             "Vulkan background must use a dedicated texture with cover cropping");
+    const auto defaultUv = image.uv;
+    state.backgroundImageAlignment = midi_play::settings::BackgroundImageAlignment::Bottom;
+    state.backgroundImageOpacity = 60;
+    scene.prepare(state, {1280, 720}, 1, QFont(), true, {1920, 1080}, 1);
+    const auto& bottomImage = scene.staticUi().quads[
+        scene.staticUi().range(VulkanUiLayer::Background).first];
+    require(bottomImage.uv[1] >= defaultUv[1]
+                && bottomImage.color[3] > 0.59f && bottomImage.color[3] < 0.61f,
+            "Vulkan background alignment and opacity must update the static quad");
     const auto revision = scene.staticUiRevision();
     scene.prepare(state, {1280, 720}, 1, QFont(), true, {1920, 1080}, 1);
     require(scene.staticUiRevision() == revision,

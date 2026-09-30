@@ -244,6 +244,28 @@ void FallingNotesView::setBackgroundImagePath(const QString& path)
     watcher->setFuture(QtConcurrent::run(&loadBackgroundImage, m_backgroundImagePath));
 }
 
+void FallingNotesView::setBackgroundImageAlignment(midi_play::settings::BackgroundImageAlignment alignment)
+{
+    const auto normalized = midi_play::settings::normalizeBackgroundImageAlignment(alignment);
+    if (m_state.backgroundImageAlignment == normalized) return;
+    m_state.backgroundImageAlignment = normalized;
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setBackgroundImageAlignment(normalized);
+#endif
+    update();
+}
+
+void FallingNotesView::setBackgroundImageOpacity(int opacity)
+{
+    const int normalized = std::clamp(opacity, 0, 100);
+    if (m_state.backgroundImageOpacity == normalized) return;
+    m_state.backgroundImageOpacity = normalized;
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setBackgroundImageOpacity(normalized);
+#endif
+    update();
+}
+
 #if MIDI_PLAY_HAS_VULKAN
 bool FallingNotesView::createVulkanView()
 {
@@ -295,6 +317,8 @@ bool FallingNotesView::createVulkanView()
     m_vulkanWindow->setErrorMessage(m_state.errorMessage);
     m_vulkanWindow->setLoading(m_state.loading);
     m_vulkanWindow->setBackgroundImage(m_backgroundImage);
+    m_vulkanWindow->setBackgroundImageAlignment(m_state.backgroundImageAlignment);
+    m_vulkanWindow->setBackgroundImageOpacity(m_state.backgroundImageOpacity);
     m_vulkanWindow->show();
     return true;
 }

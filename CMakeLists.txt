@@ -124,6 +124,7 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/domain/settings/thememode.h
     src/domain/settings/notecolormode.h
     src/domain/settings/visualeffectlevel.h
+    src/domain/settings/backgroundimagealignment.h
     src/domain/settings/titlebarmode.h
     src/infrastructure/musicxml/musicxmlreader.h
     src/infrastructure/musicxml/musicxmlreader.cpp
@@ -204,6 +205,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/visualization/fallingnotesview.cpp
     src/presentation/visualization/backgroundimageloader.h
     src/presentation/visualization/backgroundimageloader.cpp
+    src/presentation/visualization/backgroundimageplacement.h
+    src/presentation/visualization/backgroundimageplacement.cpp
 )
 if (MIDI_PLAY_HAS_VULKAN)
     list(APPEND MIDI_PLAY_COMMON_SOURCES
@@ -457,6 +460,8 @@ if (BUILD_TESTING)
         src/presentation/visualization/scenegeometry.h
         src/presentation/visualization/scenelayoutengine.h
         src/presentation/visualization/scenelayoutengine.cpp
+        src/presentation/visualization/backgroundimageplacement.h
+        src/presentation/visualization/backgroundimageplacement.cpp
         src/presentation/visualization/rasterrenderpolicy.h
         src/presentation/visualization/rasterrenderpolicy.cpp
         src/presentation/visualization/noterendercache.h

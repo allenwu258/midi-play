@@ -19,8 +19,11 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QSpinBox>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace midi_play::presentation::settings {
 namespace {
@@ -176,9 +179,48 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     backgroundLayout->addLayout(backgroundActions);
     form->addRow(QStringLiteral("背景图片"), backgroundEditor);
     form->setRowVisible(backgroundEditor, false);
+
+    m_backgroundAlignmentCombo = new QComboBox(this);
+    m_backgroundAlignmentCombo->setObjectName(QStringLiteral("backgroundAlignmentCombo"));
+    m_backgroundAlignmentCombo->setAccessibleName(QStringLiteral("背景适配"));
+    m_backgroundAlignmentCombo->setToolTip(QStringLiteral(
+        "顶部、底部、左侧和右侧对齐会锚定裁剪位置；裁剪铺满居中裁剪，完整显示保留整张图片。"));
+    m_backgroundAlignmentCombo->addItem(QStringLiteral("顶部对齐"),
+        int(midi_play::settings::BackgroundImageAlignment::Top));
+    m_backgroundAlignmentCombo->addItem(QStringLiteral("底部对齐"),
+        int(midi_play::settings::BackgroundImageAlignment::Bottom));
+    m_backgroundAlignmentCombo->addItem(QStringLiteral("左侧对齐"),
+        int(midi_play::settings::BackgroundImageAlignment::Left));
+    m_backgroundAlignmentCombo->addItem(QStringLiteral("右侧对齐"),
+        int(midi_play::settings::BackgroundImageAlignment::Right));
+    m_backgroundAlignmentCombo->addItem(QStringLiteral("裁剪铺满"),
+        int(midi_play::settings::BackgroundImageAlignment::Cover));
+    m_backgroundAlignmentCombo->addItem(QStringLiteral("完整显示"),
+        int(midi_play::settings::BackgroundImageAlignment::Contain));
+    form->addRow(QStringLiteral("背景适配"), m_backgroundAlignmentCombo);
+
+    m_backgroundOpacityEditor = new QWidget(this);
+    auto* opacityLayout = new QHBoxLayout(m_backgroundOpacityEditor);
+    opacityLayout->setContentsMargins(0, 0, 0, 0);
+    opacityLayout->setSpacing(8);
+    m_backgroundOpacitySlider = new QSlider(Qt::Horizontal, m_backgroundOpacityEditor);
+    m_backgroundOpacitySlider->setObjectName(QStringLiteral("backgroundOpacitySlider"));
+    m_backgroundOpacitySlider->setRange(0, 100);
+    m_backgroundOpacitySlider->setSingleStep(5);
+    m_backgroundOpacitySlider->setPageStep(10);
+    m_backgroundOpacitySlider->setAccessibleName(QStringLiteral("背景不透明度"));
+    m_backgroundOpacityLabel = new QLabel(QStringLiteral("100%"), m_backgroundOpacityEditor);
+    m_backgroundOpacityLabel->setObjectName(QStringLiteral("backgroundOpacityLabel"));
+    m_backgroundOpacityLabel->setMinimumWidth(42);
+    m_backgroundOpacityLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    opacityLayout->addWidget(m_backgroundOpacitySlider, 1);
+    opacityLayout->addWidget(m_backgroundOpacityLabel);
+    form->addRow(QStringLiteral("背景不透明度"), m_backgroundOpacityEditor);
+    form->setRowVisible(m_backgroundAlignmentCombo, false);
+    form->setRowVisible(m_backgroundOpacityEditor, false);
     root->addLayout(form);
 
-    auto* hint = new QLabel(QStringLiteral("视觉刷新率仅影响下落音符和界面刷新，不影响音频播放精度；背景图片只覆盖下落音符区域。"), this);
+    auto* hint = new QLabel(QStringLiteral("视觉刷新率仅影响下落音符和界面刷新，不影响音频播放精度；背景图片只覆盖下落音符区域，底部键盘会连续延伸到左侧。"), this);
     hint->setObjectName(QStringLiteral("settingsHint"));
     hint->setWordWrap(true);
     root->addWidget(hint);
@@ -248,6 +290,8 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         updateSoundFontPath(m_settingsService->soundFontPath());
         updateBackgroundImagePath(m_settingsService->backgroundImagePath());
         updateBackgroundModeSelection(m_settingsService->backgroundImageEnabled());
+        updateBackgroundAlignmentSelection(m_settingsService->backgroundImageAlignment());
+        updateBackgroundOpacitySelection(m_settingsService->backgroundImageOpacity());
         connect(m_titleBarModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyTitleBarModeFromUi);
         connect(m_graphicsModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -258,6 +302,10 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::chooseBackgroundImage);
         connect(m_backgroundModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyBackgroundModeFromUi);
+        connect(m_backgroundAlignmentCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &SettingsDialog::applyBackgroundAlignmentFromUi);
+        connect(m_backgroundOpacitySlider, &QSlider::valueChanged,
+                this, &SettingsDialog::applyBackgroundOpacityFromUi);
         connect(m_settingsService, &app::SettingsService::visualizationRefreshRateChanged,
                 this, &SettingsDialog::updateRefreshRateSelection);
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
@@ -273,6 +321,10 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::updateBackgroundImagePath);
         connect(m_settingsService, &app::SettingsService::backgroundImageEnabledChanged,
                 this, &SettingsDialog::updateBackgroundModeSelection);
+        connect(m_settingsService, &app::SettingsService::backgroundImageAlignmentChanged,
+                this, &SettingsDialog::updateBackgroundAlignmentSelection);
+        connect(m_settingsService, &app::SettingsService::backgroundImageOpacityChanged,
+                this, &SettingsDialog::updateBackgroundOpacitySelection);
         connect(m_settingsService, &app::SettingsService::settingsSaveFailed,
                 this, &SettingsDialog::showSaveError);
         connect(m_settingsService, &app::SettingsService::settingsLoadWarning,
@@ -298,6 +350,8 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         m_showNotationStripCheckBox->setEnabled(false);
         m_backgroundModeCombo->setEnabled(false);
         m_loadBackgroundImageButton->setEnabled(false);
+        m_backgroundAlignmentCombo->setEnabled(false);
+        m_backgroundOpacitySlider->setEnabled(false);
         showSaveError(QStringLiteral("设置服务不可用"));
     }
     if (!m_settingsService || !m_playerService) {
@@ -397,6 +451,22 @@ void SettingsDialog::applyBackgroundModeFromUi()
     if (!m_settingsService) return;
     m_errorLabel->hide();
     m_settingsService->setBackgroundImageEnabled(m_backgroundModeCombo->currentData().toBool());
+}
+
+void SettingsDialog::applyBackgroundAlignmentFromUi()
+{
+    if (!m_settingsService) return;
+    m_errorLabel->hide();
+    m_settingsService->setBackgroundImageAlignment(
+        midi_play::settings::backgroundImageAlignmentFromPersistentValue(
+            m_backgroundAlignmentCombo->currentData().toInt()));
+}
+
+void SettingsDialog::applyBackgroundOpacityFromUi(int value)
+{
+    if (!m_settingsService) return;
+    m_errorLabel->hide();
+    m_settingsService->setBackgroundImageOpacity(value);
 }
 
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
@@ -551,7 +621,28 @@ void SettingsDialog::updateBackgroundModeSelection(bool enabled)
     const QSignalBlocker blocker(m_backgroundModeCombo);
     m_backgroundModeCombo->setCurrentIndex(m_backgroundModeCombo->findData(enabled));
     m_formLayout->setRowVisible(m_backgroundImageEditor, enabled);
+    m_formLayout->setRowVisible(m_backgroundAlignmentCombo, enabled);
+    m_formLayout->setRowVisible(m_backgroundOpacityEditor, enabled);
     if (isVisible()) resize(width(), sizeHint().height());
+}
+
+void SettingsDialog::updateBackgroundAlignmentSelection(
+    midi_play::settings::BackgroundImageAlignment alignment)
+{
+    if (!m_backgroundAlignmentCombo) return;
+    const QSignalBlocker blocker(m_backgroundAlignmentCombo);
+    m_backgroundAlignmentCombo->setCurrentIndex(m_backgroundAlignmentCombo->findData(
+        midi_play::settings::backgroundImageAlignmentPersistentValue(alignment)));
+}
+
+void SettingsDialog::updateBackgroundOpacitySelection(int opacity)
+{
+    if (!m_backgroundOpacitySlider) return;
+    const int normalized = std::clamp(opacity, 0, 100);
+    const QSignalBlocker blocker(m_backgroundOpacitySlider);
+    m_backgroundOpacitySlider->setValue(normalized);
+    m_backgroundOpacityLabel->setText(QStringLiteral("%1%").arg(normalized));
+    m_backgroundOpacitySlider->setToolTip(QStringLiteral("100% 为完全显示，修改立即生效并自动保存。"));
 }
 
 void SettingsDialog::setSoundFontLoading(bool loading)

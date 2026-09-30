@@ -5,6 +5,7 @@
 #include "thememode.h"
 #include "notecolormode.h"
 #include "visualeffectlevel.h"
+#include "backgroundimagealignment.h"
 
 #include <QString>
 #include <QtGlobal>
@@ -20,7 +21,7 @@ inline constexpr int kMaximumPlaybackRatePercent = 200;
 inline constexpr int kMinimumVisualizationRefreshRate = 1;
 inline constexpr int kMaximumVisualizationRefreshRate = 1000;
 inline constexpr bool kDefaultShowNotationStrip = false;
-inline constexpr int kSettingsSchemaVersion = 10;
+inline constexpr int kSettingsSchemaVersion = 11;
 
 struct PlayerSettings {
     int schemaVersion = kSettingsSchemaVersion;
@@ -38,6 +39,8 @@ struct PlayerSettings {
     bool backgroundImageEnabled = false;
     // Retained when the image background is disabled.
     QString backgroundImagePath;
+    BackgroundImageAlignment backgroundImageAlignment = kDefaultBackgroundImageAlignment;
+    int backgroundImageOpacity = kDefaultBackgroundImageOpacity;
     // Enhanced flowing-glass effects are rendered by the Vulkan backend.
     bool visualEffectsEnabled = true;
     VisualEffectLevel visualEffectsLevel = kDefaultVisualEffectLevel;

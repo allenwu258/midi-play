@@ -6,6 +6,7 @@
 #include <QFileInfo>
 
 #include <utility>
+#include <algorithm>
 
 namespace midi_play::app {
 
@@ -17,6 +18,7 @@ SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store, QObject*
     qRegisterMetaType<midi_play::settings::ThemeMode>();
     qRegisterMetaType<midi_play::settings::NoteColorMode>();
     qRegisterMetaType<midi_play::settings::VisualEffectLevel>();
+    qRegisterMetaType<midi_play::settings::BackgroundImageAlignment>();
 }
 
 void SettingsService::load()
@@ -37,8 +39,18 @@ void SettingsService::load()
         loadedSettings.visualEffectsLevel);
     if (loadedSettings.graphicsMode == settings::GraphicsMode::Traditional)
         loadedSettings.visualEffectsEnabled = false;
+#if !MIDI_PLAY_HAS_VULKAN
+    // A traditional-only build may still read a settings file created by a
+    // Vulkan build. Keep the preference for a future Vulkan build, but never
+    // expose an enabled effect state to the current renderer.
+    loadedSettings.visualEffectsEnabled = false;
+#endif
     loadedSettings.soundFontPath = normalizeSoundFontPath(loadedSettings.soundFontPath);
     loadedSettings.backgroundImagePath = normalizeBackgroundImagePath(loadedSettings.backgroundImagePath);
+    loadedSettings.backgroundImageAlignment = settings::normalizeBackgroundImageAlignment(
+        loadedSettings.backgroundImageAlignment);
+    loadedSettings.backgroundImageOpacity = std::clamp(
+        loadedSettings.backgroundImageOpacity, 0, 100);
     m_settings = loadedSettings;
     m_lastLoadWarning = warning;
     if (!warning.isEmpty()) {
@@ -154,10 +166,32 @@ void SettingsService::setBackgroundImageEnabled(bool enabled)
     persistSettings();
 }
 
+void SettingsService::setBackgroundImageAlignment(settings::BackgroundImageAlignment alignment)
+{
+    const auto normalized = settings::normalizeBackgroundImageAlignment(alignment);
+    if (m_settings.backgroundImageAlignment == normalized) return;
+    m_settings.backgroundImageAlignment = normalized;
+    emit backgroundImageAlignmentChanged(normalized);
+    persistSettings();
+}
+
+void SettingsService::setBackgroundImageOpacity(int opacity)
+{
+    const int normalized = std::clamp(opacity, 0, 100);
+    if (m_settings.backgroundImageOpacity == normalized) return;
+    m_settings.backgroundImageOpacity = normalized;
+    emit backgroundImageOpacityChanged(normalized);
+    persistSettings();
+}
+
 void SettingsService::setVisualEffectsEnabled(bool enabled)
 {
+#if !MIDI_PLAY_HAS_VULKAN
+    enabled = false;
+#else
     if (enabled && m_settings.graphicsMode == settings::GraphicsMode::Traditional)
         enabled = false;
+#endif
     if (m_settings.visualEffectsEnabled == enabled) return;
     m_settings.visualEffectsEnabled = enabled;
     emit visualEffectsEnabledChanged(enabled);

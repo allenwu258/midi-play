@@ -9,6 +9,7 @@
 #include "playbackoverlaytimeline.h"
 #include "textlayoutcache.h"
 #include "scenelayoutengine.h"
+#include "domain/settings/backgroundimagealignment.h"
 
 #include <QHash>
 #include <QImage>
@@ -112,6 +113,9 @@ private:
     VulkanEffectsProfile m_effectsProfile;
     bool m_hasBackground = false;
     QSize m_backgroundSize;
+    midi_play::settings::BackgroundImageAlignment m_backgroundAlignment =
+        midi_play::settings::kDefaultBackgroundImageAlignment;
+    int m_backgroundOpacity = midi_play::settings::kDefaultBackgroundImageOpacity;
     quint64 m_backgroundRevision = 0;
     qreal m_dpr = 1;
     QImage m_atlas;
