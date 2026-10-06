@@ -9,11 +9,11 @@
 #include "presentation/mainwindow.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
-#include <QToolButton>
 
 #include <atomic>
 #include <algorithm>
@@ -119,7 +119,7 @@ void testFfmpegSettings()
             "manual FFmpeg directory is persisted as an absolute path");
 }
 
-void testTraditionalVideoButton()
+void testTraditionalVideoAction()
 {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary UI settings directory is available");
@@ -130,10 +130,10 @@ void testTraditionalVideoButton()
     service.setGraphicsMode(midi_play::settings::GraphicsMode::Traditional);
     midi_play::app::PlayerApplicationService player;
     midi_play::presentation::MainWindow window(&player, &service);
-    const auto* button = window.findChild<QToolButton*>(QStringLiteral("videoExportButton"));
-    require(button != nullptr, "main window exposes the video export button");
-    require(!button->isEnabled(), "traditional mode disables video export");
-    require(button->toolTip().contains(QStringLiteral("Vulkan")),
+    const auto* action = window.findChild<QAction*>(QStringLiteral("videoExportAction"));
+    require(action != nullptr, "main window exposes the video export menu action");
+    require(!action->isEnabled(), "traditional mode disables video export");
+    require(action->toolTip().contains(QStringLiteral("Vulkan")),
             "disabled video export explains the Vulkan requirement");
 }
 
@@ -302,7 +302,7 @@ int main(int argc, char** argv)
     testExportTimeline();
     testFfmpegProbe();
     testFfmpegSettings();
-    testTraditionalVideoButton();
+    testTraditionalVideoAction();
     if (app.arguments().contains(QStringLiteral("--integration"))) testVideoIntegration();
     return 0;
 }
