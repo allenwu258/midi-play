@@ -99,6 +99,7 @@ QString mainWindowStyle(const AppTheme& theme)
         QLabel#timeLabel { color: @timeText@; font-family: Consolas, monospace; font-size: 11px; }
         QFrame#toolbarSeparator { color: @separator@; max-height: 26px; }
         QToolButton { color: @buttonText@; border: 1px solid transparent; padding: 6px 8px; }
+        QToolButton#windowSystemMenuButton { padding: 0px; }
         QToolButton:hover { background: @hover@; border-color: @border@; }
         QToolButton:pressed { background: @pressed@; }
         QToolButton:disabled { color: @disabledText@; }

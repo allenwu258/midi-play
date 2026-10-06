@@ -123,9 +123,11 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     m_systemMenuButton = new QToolButton(topBar);
     m_systemMenuButton->setObjectName(QStringLiteral("windowSystemMenuButton"));
     m_systemMenuButton->setAutoRaise(true);
-    m_systemMenuButton->setFixedSize(24, 28);
+    // Keep the system-menu hit target generous while giving the bundled icon
+    // enough pixels to remain legible at normal and fractional DPI scales.
+    m_systemMenuButton->setFixedSize(32, 32);
     m_systemMenuButton->setIcon(windowIcon());
-    m_systemMenuButton->setIconSize(QSize(20, 20));
+    m_systemMenuButton->setIconSize(QSize(28, 28));
     m_systemMenuButton->setAccessibleName(QStringLiteral("窗口系统菜单"));
     m_systemMenuButton->setToolTip(QStringLiteral("窗口系统菜单（Alt+Space）"));
     m_systemMenuButton->hide();
