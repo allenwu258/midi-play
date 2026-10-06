@@ -6,6 +6,7 @@
 
 #include <QEvent>
 #include <QGuiApplication>
+#include <QPalette>
 #include <QResizeEvent>
 #include <QStyle>
 #include <QTimer>
@@ -107,9 +108,38 @@ struct WindowChromeController::NativeFrame {
         }
     }
 
+    void refreshTitleBarStyle()
+    {
+        if (!owner.m_titleBar) return;
+        owner.m_titleBar->style()->unpolish(owner.m_titleBar);
+        owner.m_titleBar->style()->polish(owner.m_titleBar);
+        for (auto* widget : owner.m_titleBar->findChildren<QWidget*>()) {
+            widget->style()->unpolish(widget);
+            widget->style()->polish(widget);
+            widget->update();
+        }
+        owner.m_titleBar->update();
+    }
+
+    void resetQtAppearance()
+    {
+        if (owner.m_captionButtons) {
+            owner.m_captionButtons->setSystemColors(false, {}, {}, {}, {});
+        }
+        if (!owner.m_titleBar) return;
+
+        const bool hadHighContrast = owner.m_titleBar->property("nativeHighContrast").isValid();
+        owner.m_titleBar->setProperty("nativeHighContrast", QVariant());
+        // An empty palette removes the widget-local override and restores the
+        // palette inherited from the window/application.
+        owner.m_titleBar->setPalette(QPalette());
+        if (hadHighContrast) refreshTitleBarStyle();
+    }
+
     void restoreAttributes()
     {
         clearCaptionInput();
+        resetQtAppearance();
         if (!customApplied || !IsWindow(hwnd)) return;
         const MARGINS margins {};
         DwmExtendFrameIntoClientArea(hwnd, &margins);
@@ -138,8 +168,8 @@ struct WindowChromeController::NativeFrame {
                 systemColor(COLOR_WINDOW), systemColor(COLOR_HIGHLIGHT), systemColor(COLOR_HIGHLIGHTTEXT));
         }
         if (owner.m_titleBar) {
-            QPalette palette = owner.m_window->palette();
             if (highContrast) {
+                QPalette palette = owner.m_window->palette();
                 const auto systemColor = [](int index) {
                     const COLORREF color = GetSysColor(index);
                     return QColor(GetRValue(color), GetGValue(color), GetBValue(color));
@@ -149,17 +179,14 @@ struct WindowChromeController::NativeFrame {
                 palette.setColor(QPalette::ButtonText, systemColor(COLOR_BTNTEXT));
                 palette.setColor(QPalette::Highlight, systemColor(COLOR_HIGHLIGHT));
                 palette.setColor(QPalette::HighlightedText, systemColor(COLOR_HIGHLIGHTTEXT));
+                owner.m_titleBar->setPalette(palette);
+            } else {
+                owner.m_titleBar->setPalette(QPalette());
             }
-            owner.m_titleBar->setPalette(palette);
             if (owner.m_titleBar->property("nativeHighContrast").toBool() != highContrast) {
-                owner.m_titleBar->setProperty("nativeHighContrast", highContrast);
-                owner.m_titleBar->style()->unpolish(owner.m_titleBar);
-                owner.m_titleBar->style()->polish(owner.m_titleBar);
-                for (auto* widget : owner.m_titleBar->findChildren<QWidget*>()) {
-                    widget->style()->unpolish(widget);
-                    widget->style()->polish(widget);
-                    widget->update();
-                }
+                if (highContrast) owner.m_titleBar->setProperty("nativeHighContrast", true);
+                else owner.m_titleBar->setProperty("nativeHighContrast", QVariant());
+                refreshTitleBarStyle();
             }
         }
         const BOOL dark = !highContrast && owner.m_theme == midi_play::settings::ThemeMode::Dark;
