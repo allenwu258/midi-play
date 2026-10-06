@@ -52,7 +52,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **演奏语义**：支持反复段、ending、D.C.、D.S.、Segno、Coda、Fine 的基础播放展开，以及 tie、staccato、accent、tenuto、ghost、dynamic、hairpin 和 pedal 等播放相关语义。
 - **实时播放控制**：播放、暂停、停止、拖动进度、20%～200% 播放变速，以及 seek 后的音色/控制器/延音状态重建。
 - **节拍器**：独立点击音源与合成器，和歌曲分开管理复音、通过同一音频设备混音输出；跟随乐曲拍号、速度变化和重复段落，并随 20%～200% 播放倍率同步变速。
-- **音频导出**：使用独立 FluidSynth 实例将展开后的播放事件离线合成为 MP3 或 16-bit PCM WAV；可选采样率、MP3 码率、节拍器和尾音，支持进度、取消及安全覆盖。
+- **统一导出页面**：顶部“导出”入口提供“音频”和“视频”两个 Tab。音频使用独立 FluidSynth 实例将展开后的播放事件离线合成为 MP3 或 16-bit PCM WAV；可选采样率、MP3 码率、节拍器和尾音，支持进度、取消及安全覆盖。视频使用 Vulkan 离屏渲染和外部 FFmpeg 生成 MP4，可配置分辨率、帧率、画质、播放速度、音乐、节拍器和尾音，并提供画面预览。
 - **SoundFont**：不内置乐曲音源，启动时检查用户已配置的 SF2/SF3；未配置或加载失败时引导选择，允许暂时跳过。支持播放中事务化切换，SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
 - **双渲染模式**：默认优先使用 Vulkan 绘制，传统 Qt 绘制作为兼容和故障回退模式；两者共享音符布局、主题、色彩和单图片背景设置，也可在设置中手动选择。
@@ -229,6 +229,7 @@ cmake --build --preset windows-msvc-debug
 6. 悬停底部播放键右侧的百分比按钮，拖动滑块调节播放速度，范围 **20%～200%**，步进 1%。也可点击按钮，在滑块右侧输入百分比，按回车或移开焦点生效；Esc 取消尚未确认的输入并关闭面板。
 7. 点击播放键右侧的“节拍器”按钮开关节拍器。开启后按曲目的拍号、速度和反复展开实时点击，暂停、seek、停止和调速均保持同步。
 8. 点击顶部“设置”打开独立设置窗口。
+9. 点击顶部“导出”打开统一导出页面，在“音频”或“视频” Tab 中配置并开始导出。视频导出需要 Vulkan 图形模式和可用的 FFmpeg；FFmpeg 可在设置中使用 PATH 自动探测或手动选择目录。
 
 播放速度默认 **100%**。播放中变速不重启音频会话、不改变音高，音符、踏板、控制器事件和下落画面共用调整后的播放时钟。暂停、停止、拖动进度、换曲和切换音源保留本次选择的倍率，重启程序恢复 100%。进度、总时长和顶部 BPM 均按原曲音乐时间显示；例如 200% 播放时，原曲进度每秒推进约两秒。
 
@@ -248,7 +249,7 @@ cmake --build --preset windows-msvc-debug
 - **标题栏样式**：Windows 可选择原生或自定义实验模式，macOS/Linux 只显示原生模式；
 - **音源**：选择或更换本地 .sf2/.sf3，成功加载后自动保存选择；加载失败会显示内联错误。
 
-主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。加载乐曲和有效音源后，点击顶部“导出音频”可选择 MP3/WAV、采样率、码率、节拍器、尾音及目标文件。导出在后台进行，可取消；导出期间可以继续查看或播放乐曲，当前导出始终使用开始时的乐曲和音源。MP3 默认为 44.1 kHz、192 kbps、立体声，尾音 500 ms；不会自动归一化或限制动态。
+主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。加载乐曲后，点击顶部“导出”打开统一导出页面：音频 Tab 可选择 MP3/WAV、采样率、码率、节拍器、尾音及目标文件；视频 Tab 可选择 MP4 的分辨率、帧率、画质、播放速度、音乐、节拍器、尾音及目标文件，并提供 Vulkan 画面预览。导出在后台进行，可取消；导出期间可以继续查看或播放乐曲，当前导出始终使用开始时的乐曲和音源。音频 MP3 默认为 44.1 kHz、192 kbps、立体声，尾音 500 ms；视频导出使用外部 FFmpeg，传统 Qt 图形模式不可用；不会自动归一化或限制动态。
 
 ## 配置与音源
 
@@ -388,7 +389,7 @@ flowchart LR
 
 | 层次 | 主要职责 | 关键对象 |
 | --- | --- | --- |
-| Presentation | 窗口、启动音源引导、设置、进度条、双后端绘制和用户输入 | MainWindow、SoundFontSetup、SettingsDialog、FallingNotesView、FallingNotesVulkanWindow |
+| Presentation | 窗口、启动音源引导、设置、统一导出页面、进度条、双后端绘制和用户输入 | MainWindow、SoundFontSetup、SettingsDialog、ExportDialog、AudioExportPage、VideoExportPage、FallingNotesView、FallingNotesVulkanWindow |
 | Application | 编排 reader、异步加载、播放会话和设置持久化 | PlayerApplicationService、SettingsService |
 | Domain / Music | 与文件格式无关的音乐事实和时间语义 | MusicDocument、Track、NoteEvent、tempo map |
 | Domain / Playback | 轨道事件、播放状态、seek、重复展开和状态恢复 | PlaybackModel、PlaybackSession、PlaybackController |

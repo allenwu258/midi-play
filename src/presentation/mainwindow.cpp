@@ -5,6 +5,7 @@
 #include "app/settingsservice.h"
 #include "app/ffmpegservice.h"
 #include "app/videoexportservice.h"
+#include "presentation/exportdialog.h"
 #include "playbackmetadatapresenter.h"
 #include "presentation/settings/settingsdialog.h"
 #include "presentation/transport/playbackratecontrol.h"
@@ -12,35 +13,25 @@
 #include "presentation/windowchrome/windowchromecontroller.h"
 #include "presentation/windowchrome/captionbuttons.h"
 #include "presentation/visualization/fallingnotesview.h"
-#include "presentation/videoexportdialog.h"
 
 #include "presentation/theme/widgetstyles.h"
 #include "presentation/theme/themeicons.h"
 #include "presentation/theme/themecontroller.h"
 
 #include <QFileDialog>
-#include <QAction>
-#include <QCheckBox>
-#include <QComboBox>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QEvent>
-#include <QFormLayout>
 #include <QFrame>
 #include <QFutureWatcher>
 #include <QHelpEvent>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMessageBox>
-#include <QMenu>
 #include <QPainter>
 #include <QPixmap>
 #include <QProgressDialog>
-#include <QPushButton>
 #include <QResizeEvent>
 #include <QSlider>
-#include <QSpinBox>
 #include <QStyle>
 #include <QTimer>
 #include <QToolButton>
@@ -165,17 +156,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     m_openButton = toolButton(topBar, QIcon(),
                                  QStringLiteral("打开乐曲"), QStringLiteral("打开 MusicXML 或 MIDI 文件"));
     m_exportButton = toolButton(topBar, QIcon(),
-                                QStringLiteral("导出"), QStringLiteral("选择音频或视频导出"));
+                                QStringLiteral("导出"), QStringLiteral("打开音频或视频导出页面"));
     m_exportButton->setObjectName(QStringLiteral("exportButton"));
-    m_exportMenu = new QMenu(m_exportButton);
-    m_audioExportAction = m_exportMenu->addAction(QStringLiteral("音频导出"));
-    m_audioExportAction->setObjectName(QStringLiteral("audioExportAction"));
-    m_audioExportAction->setToolTip(QStringLiteral("将当前乐曲导出为 MP3 或 WAV"));
-    m_videoExportAction = m_exportMenu->addAction(QStringLiteral("视频导出"));
-    m_videoExportAction->setObjectName(QStringLiteral("videoExportAction"));
-    m_videoExportAction->setToolTip(QStringLiteral("仅支持 Vulkan 画面和有效 FFmpeg 时可用"));
-    m_exportButton->setMenu(m_exportMenu);
-    m_exportButton->setPopupMode(QToolButton::InstantPopup);
     m_settingsButton = toolButton(topBar, QIcon(),
                                       QStringLiteral("设置"), QStringLiteral("打开播放器设置"));
     topLayout->addWidget(m_openButton);
@@ -322,8 +304,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     }
 
     connect(m_openButton, &QToolButton::clicked, this, &MainWindow::openMusicFile);
-    connect(m_audioExportAction, &QAction::triggered, this, &MainWindow::exportAudio);
-    connect(m_videoExportAction, &QAction::triggered, this, &MainWindow::exportVideo);
+    connect(m_exportButton, &QToolButton::clicked, this, &MainWindow::openExportDialog);
     connect(m_settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
     connect(m_windowChrome, &windowchrome::WindowChromeController::nativeIntegrationFailed,
             this, [this](const QString& reason) {
@@ -340,11 +321,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
                 this, &MainWindow::applyTitleBarMode);
     }
-    if (m_ffmpegService)
-        connect(m_ffmpegService, &app::FfmpegService::changed, this, &MainWindow::updateExportAvailability);
-    connect(m_visualization, &visualization::FallingNotesView::graphicsModeResolved,
-            this, [this](midi_play::settings::GraphicsMode) { updateExportAvailability(); });
-    updateExportAvailability();
+    updateExportButtonState();
     connect(m_playButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::play);
     connect(m_pauseButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::pause);
     connect(m_stopButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::stop);
@@ -392,7 +369,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_positionSlider->setEnabled(duration > 0);
                 m_statusLabel->setText(QStringLiteral("曲目已加载"));
                 updateTransportControls();
-                updateExportAvailability();
+                updateExportButtonState();
             });
     connect(m_service, &app::PlayerApplicationService::visualizationReady, this,
             [this](midi_play::visualization::VisualChartPtr chart) {
@@ -535,106 +512,51 @@ MainWindow::~MainWindow()
     if (m_exportCancel) m_exportCancel->store(true);
 }
 
-void MainWindow::exportAudio()
+void MainWindow::openExportDialog()
 {
-    const auto document = m_service->document();
+    const auto document = m_service ? m_service->document() : nullptr;
     if (!document || m_exporting) return;
-    const QString soundFont = m_service->soundFontPath();
-    if (soundFont.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("导出音频"),
-                             QStringLiteral("请先在设置中选择 SF2/SF3 音源。"));
-        return;
-    }
+    const bool vulkan = m_visualization && m_visualization->vulkanReady();
+    const bool ffmpeg = m_ffmpegService && m_ffmpegService->result().valid;
+    const bool videoAvailable = vulkan && ffmpeg;
+    QString videoUnavailableReason;
+    if (!vulkan) videoUnavailableReason = QStringLiteral("视频导出仅支持 Vulkan 图形模式");
+    else if (m_ffmpegService && m_ffmpegService->checking())
+        videoUnavailableReason = QStringLiteral("正在检查 FFmpeg");
+    else if (!ffmpeg && m_ffmpegService)
+        videoUnavailableReason = m_ffmpegService->unavailableReason();
+    else videoUnavailableReason = QStringLiteral("视频导出服务不可用");
 
-    QDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("导出音频"));
-    dialog.setMinimumWidth(470);
-    auto* form = new QFormLayout(&dialog);
-    auto* song = new QLabel(QFileInfo(m_service->fileName()).fileName(), &dialog);
-    auto* font = new QLabel(QFileInfo(soundFont).fileName(), &dialog);
-    song->setToolTip(m_service->fileName());
-    font->setToolTip(soundFont);
-    form->addRow(QStringLiteral("乐曲"), song);
-    form->addRow(QStringLiteral("音源"), font);
-    auto* format = new QComboBox(&dialog);
-    format->addItem(QStringLiteral("MP3"));
-    format->addItem(QStringLiteral("WAV (16-bit PCM)"));
-    form->addRow(QStringLiteral("格式"), format);
-    auto* bitrate = new QComboBox(&dialog);
-    for (int value : {128, 160, 192, 256, 320})
-        bitrate->addItem(QStringLiteral("%1 kbps").arg(value), value);
-    bitrate->setCurrentIndex(2);
-    form->addRow(QStringLiteral("MP3 码率"), bitrate);
-    connect(format, &QComboBox::currentIndexChanged, bitrate,
-            [bitrate](int index) { bitrate->setEnabled(index == 0); });
-    auto* sampleRate = new QComboBox(&dialog);
-    sampleRate->addItem(QStringLiteral("44.1 kHz"), 44100);
-    sampleRate->addItem(QStringLiteral("48 kHz"), 48000);
-    form->addRow(QStringLiteral("采样率"), sampleRate);
-    auto* metronome = new QCheckBox(QStringLiteral("包含节拍器"), &dialog);
-    form->addRow(QString(), metronome);
-    auto* tail = new QSpinBox(&dialog);
-    tail->setRange(0, 5000);
-    tail->setSingleStep(250);
-    tail->setSuffix(QStringLiteral(" ms"));
-    tail->setValue(500);
-    form->addRow(QStringLiteral("尾音"), tail);
-    auto* pathRow = new QWidget(&dialog);
-    auto* pathLayout = new QHBoxLayout(pathRow);
-    pathLayout->setContentsMargins(0, 0, 0, 0);
-    auto* path = new QLineEdit(pathRow);
-    path->setText(QFileInfo(m_service->fileName()).absolutePath() + QLatin1Char('/')
-                  + QFileInfo(m_service->fileName()).completeBaseName() + QStringLiteral(".mp3"));
-    auto* browse = new QPushButton(QStringLiteral("浏览…"), pathRow);
-    pathLayout->addWidget(path, 1);
-    pathLayout->addWidget(browse);
-    form->addRow(QStringLiteral("输出文件"), pathRow);
-    connect(format, &QComboBox::currentIndexChanged, path, [path](int index) {
-        const QFileInfo current(path->text());
-        if (current.suffix().compare(QStringLiteral("mp3"), Qt::CaseInsensitive) == 0
-            || current.suffix().compare(QStringLiteral("wav"), Qt::CaseInsensitive) == 0) {
-            path->setText(current.absolutePath() + QLatin1Char('/') + current.completeBaseName()
-                          + (index == 0 ? QStringLiteral(".mp3") : QStringLiteral(".wav")));
-        }
-    });
-    connect(browse, &QPushButton::clicked, &dialog, [&] {
-        const QString selected = QFileDialog::getSaveFileName(
-            &dialog, QStringLiteral("导出音频"), path->text(),
-            format->currentIndex() == 0 ? QStringLiteral("MP3 音频 (*.mp3)")
-                                        : QStringLiteral("WAV 音频 (*.wav)"));
-        if (!selected.isEmpty()) path->setText(selected);
-    });
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("开始导出"));
-    form->addRow(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    app::VideoExportOptions videoDefaults;
+    videoDefaults.ffmpegExecutable = m_ffmpegService ? m_ffmpegService->result().executablePath : QString();
+    videoDefaults.sourcePath = m_service->fileName();
+    videoDefaults.soundFontPath = m_service->soundFontPath();
+    videoDefaults.scene.state = m_visualization->exportState();
+    videoDefaults.scene.logicalSize = QSize(1280, 720);
+    videoDefaults.scene.outputSize = QSize(1920, 1080);
+    videoDefaults.scene.font = m_visualization->font();
+    videoDefaults.scene.background = m_visualization->exportBackground();
+    videoDefaults.outputPath = QFileInfo(m_service->fileName()).absolutePath() + QLatin1Char('/')
+        + QFileInfo(m_service->fileName()).completeBaseName() + QStringLiteral(".mp4");
+
+    ExportDialog dialog(m_service->fileName(), m_service->soundFontPath(), videoDefaults,
+                        m_positionUs, videoAvailable, videoUnavailableReason, this);
     if (dialog.exec() != QDialog::Accepted) return;
-
-    app::AudioExportOptions options;
-    options.format = format->currentIndex() == 0
-        ? encoding::AudioFileFormat::Mp3 : encoding::AudioFileFormat::Wav;
-    options.sampleRate = sampleRate->currentData().toInt();
-    options.bitrateKbps = bitrate->currentData().toInt();
-    options.includeMetronome = metronome->isChecked();
-    options.tailMilliseconds = tail->value();
-    options.soundFontPath = soundFont;
-    options.outputPath = QFileInfo(path->text().trimmed()).absoluteFilePath();
-    const QString expectedSuffix = options.format == encoding::AudioFileFormat::Mp3
-        ? QStringLiteral("mp3") : QStringLiteral("wav");
-    if (path->text().trimmed().isEmpty()
-        || QFileInfo(options.outputPath).suffix().compare(expectedSuffix, Qt::CaseInsensitive) != 0) {
-        QMessageBox::warning(this, QStringLiteral("导出音频"),
-                             QStringLiteral("输出文件扩展名需要与所选格式一致。"));
+    if (dialog.exportType() == ExportDialog::ExportType::Audio) {
+        startAudioExport(dialog.audioOptions());
         return;
     }
-    if (QFileInfo::exists(options.outputPath)
-        && QMessageBox::question(this, QStringLiteral("覆盖文件"),
-            QStringLiteral("目标文件已存在，确定覆盖吗？\n%1").arg(options.outputPath))
-            != QMessageBox::Yes) return;
+    auto options = dialog.videoOptions();
+    options.ffmpegExecutable = videoDefaults.ffmpegExecutable;
+    startVideoExport(options);
+}
 
+void MainWindow::startAudioExport(const app::AudioExportOptions& options)
+{
+    const auto document = m_service ? m_service->document() : nullptr;
+    if (!document || m_exporting) return;
     m_exporting = true;
-    updateExportAvailability();
+    updateExportButtonState();
     m_exportCancel = std::make_shared<std::atomic_bool>(false);
     auto* progress = new QProgressDialog(QStringLiteral("正在导出音频"), QStringLiteral("取消"),
                                          0, 100, this);
@@ -668,7 +590,7 @@ void MainWindow::exportAudio()
         m_exportCancel.reset();
         m_exporting = false;
         updateTransportControls();
-        updateExportAvailability();
+        updateExportButtonState();
         if (result.status == app::AudioExportStatus::Success) {
             m_statusLabel->setText(result.clippedSamples
                 ? QStringLiteral("音频已导出（检测到削波）: %1").arg(options.outputPath)
@@ -686,66 +608,24 @@ void MainWindow::exportAudio()
     }));
 }
 
-void MainWindow::updateExportAvailability()
+void MainWindow::updateExportButtonState()
 {
-    if (!m_exportButton || !m_audioExportAction || !m_videoExportAction) return;
-    const bool document = m_service && m_service->document();
-    const bool vulkan = m_visualization && m_visualization->vulkanReady();
-    const bool ffmpeg = m_ffmpegService && m_ffmpegService->result().valid;
-    const bool audioAvailable = document && !m_exporting;
-    const bool videoAvailable = document && vulkan && ffmpeg && !m_exporting;
-    m_audioExportAction->setEnabled(audioAvailable);
-    m_videoExportAction->setEnabled(videoAvailable);
-    m_exportButton->setEnabled(audioAvailable || videoAvailable);
+    if (!m_exportButton) return;
+    const bool available = m_service && m_service->document() && !m_exporting;
+    m_exportButton->setEnabled(available);
     m_exportButton->setToolTip(m_exporting
         ? QStringLiteral("正在导出，请稍候")
-        : document ? QStringLiteral("选择音频或视频导出") : QStringLiteral("请先打开乐曲"));
-    if (videoAvailable) {
-        m_videoExportAction->setToolTip(QStringLiteral("导出 Vulkan 流光画面为 MP4"));
-    } else if (!vulkan) {
-        m_videoExportAction->setToolTip(QStringLiteral("视频导出仅支持 Vulkan 图形模式"));
-    } else if (m_ffmpegService && m_ffmpegService->checking()) {
-        m_videoExportAction->setToolTip(QStringLiteral("正在检查 FFmpeg"));
-    } else if (!ffmpeg && m_ffmpegService) {
-        m_videoExportAction->setToolTip(m_ffmpegService->unavailableReason());
-    } else if (!document) {
-        m_videoExportAction->setToolTip(QStringLiteral("请先打开乐曲"));
-    } else if (m_exporting) {
-        m_videoExportAction->setToolTip(QStringLiteral("正在导出，请稍候"));
-    } else {
-        m_videoExportAction->setToolTip(QStringLiteral("视频导出服务不可用"));
-    }
+        : available ? QStringLiteral("打开音频或视频导出页面") : QStringLiteral("请先打开乐曲"));
 }
 
-void MainWindow::exportVideo()
+void MainWindow::startVideoExport(const app::VideoExportOptions& options)
 {
 #if !MIDI_PLAY_HAS_VULKAN
+    Q_UNUSED(options)
     return;
 #else
     const auto document = m_service ? m_service->document() : nullptr;
-    if (!document || m_exporting || !m_ffmpegService || !m_ffmpegService->result().valid
-        || !m_visualization->vulkanReady()) return;
-    app::VideoExportOptions defaults;
-    defaults.ffmpegExecutable = m_ffmpegService->result().executablePath;
-    defaults.sourcePath = m_service->fileName();
-    defaults.soundFontPath = m_service->soundFontPath();
-    defaults.scene.state = m_visualization->exportState();
-    defaults.scene.logicalSize = QSize(1280, 720);
-    defaults.scene.outputSize = QSize(1920, 1080);
-    defaults.scene.font = m_visualization->font();
-    defaults.scene.background = m_visualization->exportBackground();
-    defaults.outputPath = QFileInfo(m_service->fileName()).absolutePath() + QLatin1Char('/')
-        + QFileInfo(m_service->fileName()).completeBaseName() + QStringLiteral(".mp4");
-    VideoExportDialog dialog(defaults, m_positionUs, this);
-    if (dialog.exec() != QDialog::Accepted) return;
-    auto options = dialog.options();
-    options.ffmpegExecutable = m_ffmpegService->result().executablePath;
-    if (options.outputPath.trimmed().isEmpty() || QFileInfo(options.outputPath).suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0) {
-        QMessageBox::warning(this, QStringLiteral("导出视频"), QStringLiteral("输出文件扩展名需要为 .mp4。"));
-        return;
-    }
-    if (QFileInfo::exists(options.outputPath)
-        && QMessageBox::question(this, QStringLiteral("覆盖文件"), QStringLiteral("目标文件已存在，确定覆盖吗？\n%1").arg(options.outputPath)) != QMessageBox::Yes) return;
+    if (!document || m_exporting) return;
     m_exporting = true;
     m_exportCancel = std::make_shared<std::atomic_bool>(false);
     auto* progress = new QProgressDialog(QStringLiteral("正在导出视频"), QStringLiteral("取消"), 0, 100, this);
@@ -757,11 +637,11 @@ void MainWindow::exportVideo()
     auto* timer = new QTimer(this); timer->setInterval(80);
     connect(timer, &QTimer::timeout, this, [this, stage] { if (m_exportProgress) m_exportProgress->setValue(stage->load()); });
     connect(progress, &QProgressDialog::canceled, this, [cancel] { cancel->store(true); });
-    progress->show(); timer->start(); updateExportAvailability();
+    progress->show(); timer->start(); updateExportButtonState();
     connect(watcher, &QFutureWatcher<app::VideoExportResult>::finished, this, [this, watcher, timer, options] {
         const auto result = watcher->result(); watcher->deleteLater(); timer->stop(); timer->deleteLater();
         if (m_exportProgress) m_exportProgress->deleteLater(); m_exportProgress = nullptr;
-        m_exportCancel.reset(); m_exporting = false; updateTransportControls(); updateExportAvailability();
+        m_exportCancel.reset(); m_exporting = false; updateTransportControls(); updateExportButtonState();
         if (result.status == app::VideoExportStatus::Success) m_statusLabel->setText(QStringLiteral("视频已导出: %1").arg(options.outputPath));
         else if (result.status == app::VideoExportStatus::Canceled) m_statusLabel->setText(QStringLiteral("已取消视频导出"));
         else { m_statusLabel->setText(QStringLiteral("视频导出失败")); QMessageBox::warning(this, QStringLiteral("视频导出失败"), result.error); }
@@ -881,7 +761,7 @@ void MainWindow::updateTransportControls()
     m_pauseButton->setEnabled(m_playbackState == playback::State::Playing);
     m_stopButton->setEnabled(hasDocument && m_playbackState != playback::State::Stopped);
     m_positionSlider->setEnabled(hasDocument);
-    updateExportAvailability();
+    updateExportButtonState();
 }
 
 } // namespace midi_play::presentation

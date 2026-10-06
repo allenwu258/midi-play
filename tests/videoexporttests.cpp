@@ -6,13 +6,14 @@
 #include "domain/music/musicdocument.h"
 #include "infrastructure/encoding/ffmpegprobe.h"
 #include "infrastructure/settings/qsettingsstore.h"
+#include "presentation/exportdialog.h"
 #include "presentation/mainwindow.h"
 
 #include <QApplication>
-#include <QAction>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTabWidget>
 #include <QTemporaryDir>
 
 #include <atomic>
@@ -119,22 +120,25 @@ void testFfmpegSettings()
             "manual FFmpeg directory is persisted as an absolute path");
 }
 
-void testTraditionalVideoAction()
+void testUnifiedExportDialogTabs()
 {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary UI settings directory is available");
-    midi_play::app::SettingsService service(
-        std::make_unique<midi_play::infrastructure::settings::QSettingsStore>(
-            directory.filePath(QStringLiteral("settings.ini"))));
-    service.load();
-    service.setGraphicsMode(midi_play::settings::GraphicsMode::Traditional);
-    midi_play::app::PlayerApplicationService player;
-    midi_play::presentation::MainWindow window(&player, &service);
-    const auto* action = window.findChild<QAction*>(QStringLiteral("videoExportAction"));
-    require(action != nullptr, "main window exposes the video export menu action");
-    require(!action->isEnabled(), "traditional mode disables video export");
-    require(action->toolTip().contains(QStringLiteral("Vulkan")),
-            "disabled video export explains the Vulkan requirement");
+    midi_play::app::VideoExportOptions defaults;
+    defaults.outputPath = directory.filePath(QStringLiteral("score.mp4"));
+    midi_play::presentation::ExportDialog dialog(
+        directory.filePath(QStringLiteral("score.mid")), {}, defaults, 0, false,
+        QStringLiteral("视频导出仅支持 Vulkan 图形模式"));
+    auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("exportTabs"));
+    require(tabs != nullptr, "unified export dialog exposes its mode tabs");
+    require(tabs->count() == 2 && tabs->tabText(0) == QStringLiteral("音频")
+                && tabs->tabText(1) == QStringLiteral("视频"),
+            "unified export dialog exposes audio and video tabs");
+    require(dialog.exportType() == midi_play::presentation::ExportDialog::ExportType::Audio,
+            "unified export dialog opens on the audio tab");
+    tabs->setCurrentIndex(1);
+    require(dialog.exportType() == midi_play::presentation::ExportDialog::ExportType::Video,
+            "unified export dialog switches to the video tab");
 }
 
 std::shared_ptr<midi_play::music::MusicDocument> integrationDocument(bool repeat)
@@ -302,7 +306,7 @@ int main(int argc, char** argv)
     testExportTimeline();
     testFfmpegProbe();
     testFfmpegSettings();
-    testTraditionalVideoAction();
+    testUnifiedExportDialogTabs();
     if (app.arguments().contains(QStringLiteral("--integration"))) testVideoIntegration();
     return 0;
 }

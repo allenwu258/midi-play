@@ -172,8 +172,12 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/infrastructure/midi/mididocumentbuilder.cpp
     src/presentation/mainwindow.h
     src/presentation/mainwindow.cpp
-    src/presentation/videoexportdialog.h
-    src/presentation/videoexportdialog.cpp
+    src/presentation/exportdialog.h
+    src/presentation/exportdialog.cpp
+    src/presentation/audioexportpage.h
+    src/presentation/audioexportpage.cpp
+    src/presentation/videoexportpage.h
+    src/presentation/videoexportpage.cpp
     src/presentation/transport/playbackratecontrol.h
     src/presentation/transport/playbackratecontrol.cpp
     src/presentation/playbackmetadatapresenter.h

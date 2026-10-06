@@ -12,9 +12,7 @@
 #include <memory>
 
 class QLabel;
-class QAction;
 class QFrame;
-class QMenu;
 class QSlider;
 class QToolButton;
 class QResizeEvent;
@@ -24,6 +22,8 @@ class QProgressDialog;
 namespace midi_play::app { class PlayerApplicationService; }
 namespace midi_play::app { class SettingsService; }
 namespace midi_play::app { class FfmpegService; }
+namespace midi_play::app { struct AudioExportOptions; }
+namespace midi_play::app { struct VideoExportOptions; }
 namespace midi_play::presentation::settings { class SettingsDialog; }
 namespace midi_play::presentation::windowchrome { class CustomTitleBar; }
 namespace midi_play::presentation::windowchrome { class WindowChromeController; }
@@ -51,8 +51,7 @@ protected:
 
 private slots:
     void openMusicFile();
-    void exportAudio();
-    void exportVideo();
+    void openExportDialog();
     void showSettings();
     void updatePosition(qint64 position, qint64 duration, qint64 sampledAtUs = 0);
     void updatePlaybackState(midi_play::playback::State state);
@@ -66,7 +65,9 @@ private:
     void applyTitleBarMode(midi_play::settings::TitleBarMode mode);
     void updateWindowChrome();
     void applyTheme(midi_play::settings::ThemeMode mode);
-    void updateExportAvailability();
+    void updateExportButtonState();
+    void startAudioExport(const app::AudioExportOptions& options);
+    void startVideoExport(const app::VideoExportOptions& options);
 
     static constexpr int kSliderResolution = 1'000'000;
 
@@ -91,9 +92,6 @@ private:
     QToolButton* m_playButton = nullptr;
     QToolButton* m_openButton = nullptr;
     QToolButton* m_exportButton = nullptr;
-    QMenu* m_exportMenu = nullptr;
-    QAction* m_audioExportAction = nullptr;
-    QAction* m_videoExportAction = nullptr;
     QToolButton* m_settingsButton = nullptr;
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_stopButton = nullptr;

@@ -124,6 +124,15 @@ QString mainWindowStyle(const AppTheme& theme)
         QToolButton#metronomeButton:disabled { color: @disabledText@; background: @disabled@; border-color: @disabledBorder@; }
         QToolButton#windowCloseButton:hover { background: @closeHover@; border-color: @closeHover@; }
         QToolButton#windowCloseButton:pressed { background: @closePressed@; border-color: @closePressed@; }
+        QTabWidget#exportTabs::pane { background: @panel@; border: 1px solid @border@; top: -1px; }
+        QTabBar#exportTabBar::tab {
+            color: @mutedText@; background: @input@; border: 1px solid @border@;
+            border-bottom: none; padding: 8px 26px; min-width: 72px;
+        }
+        QTabBar#exportTabBar::tab:hover:!selected { background: @inputHover@; color: @text@; }
+        QTabBar#exportTabBar::tab:selected {
+            color: @text@; background: @panel@; border-bottom-color: @panel@;
+        }
         QSlider::groove:horizontal { height: 4px; background: @sliderTrack@; }
         QSlider::sub-page:horizontal { background: @accent@; }
         QSlider::handle:horizontal { width: 14px; margin: -5px 0; border-radius: 7px; background: @handle@; }
