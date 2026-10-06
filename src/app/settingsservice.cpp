@@ -46,6 +46,7 @@ void SettingsService::load()
     loadedSettings.visualEffectsEnabled = false;
 #endif
     loadedSettings.soundFontPath = normalizeSoundFontPath(loadedSettings.soundFontPath);
+    loadedSettings.ffmpegPath = normalizeFfmpegPath(loadedSettings.ffmpegPath);
     loadedSettings.backgroundImagePath = normalizeBackgroundImagePath(loadedSettings.backgroundImagePath);
     loadedSettings.backgroundImageAlignment = settings::normalizeBackgroundImageAlignment(
         loadedSettings.backgroundImageAlignment);
@@ -148,6 +149,23 @@ void SettingsService::setSoundFontPath(const QString& path)
     persistSettings();
 }
 
+void SettingsService::setFfmpegPath(const QString& path)
+{
+    const QString normalizedPath = normalizeFfmpegPath(path);
+    if (m_settings.ffmpegPath == normalizedPath) return;
+    m_settings.ffmpegPath = normalizedPath;
+    emit ffmpegPathChanged(m_settings.ffmpegPath);
+    persistSettings();
+}
+
+void SettingsService::setFfmpegUsePath(bool enabled)
+{
+    if (m_settings.ffmpegUsePath == enabled) return;
+    m_settings.ffmpegUsePath = enabled;
+    emit ffmpegUsePathChanged(enabled);
+    persistSettings();
+}
+
 void SettingsService::setBackgroundImagePath(const QString& path)
 {
     const QString normalizedPath = normalizeBackgroundImagePath(path);
@@ -215,6 +233,13 @@ QString SettingsService::normalizeSoundFontPath(const QString& path)
     }
 
     return QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
+}
+
+QString SettingsService::normalizeFfmpegPath(const QString& path)
+{
+    const QString trimmed = path.trimmed();
+    if (trimmed.isEmpty()) return {};
+    return QFileInfo(trimmed).absoluteFilePath();
 }
 
 QString SettingsService::normalizeBackgroundImagePath(const QString& path)

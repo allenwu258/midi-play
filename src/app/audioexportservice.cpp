@@ -1,4 +1,5 @@
 #include "audioexportservice.h"
+#include "offlineaudiorenderer.h"
 
 #include "domain/playback/metronometimeline.h"
 #include "domain/playback/playbackmodel.h"
@@ -63,81 +64,21 @@ AudioExportResult AudioExportService::exportDocument(
         && static_cast<quint64>(totalFrames) * 4 > std::numeric_limits<quint32>::max() - 36)
         return failure(QStringLiteral("WAV 超过 4 GB RIFF 格式上限，请使用 MP3"));
 
-    playback::MetronomeTimeline metronome(nullptr, nullptr);
-    if (options.includeMetronome) {
-        // Both the event stream and beat grid use the same repeat-expanded timeline.
-        metronome = playback::MetronomeTimeline(document, model.timeline());
-        if (!metronome.available()) return failure(metronome.unavailableReason());
-    }
-
-    audio::FluidSynthEngine engine;
     QString error;
-    if (!engine.loadOffline(font.absoluteFilePath(), options.sampleRate,
-                            options.includeMetronome, &error)) return failure(error);
     auto encoder = encoding::createAudioFileEncoder(options.format);
     if (!encoder->open(options.outputPath, options.sampleRate, options.bitrateKbps, &error))
         return failure(error);
 
-    constexpr int kBlockFrames = 4096;
-    std::vector<float> left(kBlockFrames);
-    std::vector<float> right(kBlockFrames);
-    const auto& beats = metronome.beats();
-    qsizetype eventIndex = 0;
-    qsizetype beatIndex = 0;
-    qint64 currentFrame = 0;
-    bool releasedAtEnd = false;
-    int lastProgress = -1;
-    float peakLeft = 0.0f;
-    float peakRight = 0.0f;
-    quint64 clippedSamples = 0;
-    while (currentFrame < totalFrames) {
-        if (canceled && canceled->load()) return {AudioExportStatus::Canceled, {}, currentFrame};
-        while (eventIndex < events.size()
-               && toFrame(events[eventIndex].timestampUs, options.sampleRate) <= currentFrame) {
-            engine.submit(events[eventIndex++]);
-        }
-        while (beatIndex < beats.size()
-               && toFrame(beats[beatIndex].timeUs, options.sampleRate) <= currentFrame) {
-            engine.submitMetronomeClick(beats[beatIndex++].accent == playback::MetronomeAccent::Measure);
-        }
-        if (!releasedAtEnd && currentFrame >= musicalEndFrame) {
-            for (int channel = 0; channel < 16; ++channel) {
-                engine.controlChange(channel, 64, 0);
-                engine.controlChange(channel, 66, 0);
-                engine.controlChange(channel, 123, 0);
-            }
-            releasedAtEnd = true;
-        }
-        qint64 endFrame = std::min(currentFrame + kBlockFrames, totalFrames);
-        if (!releasedAtEnd) endFrame = std::min(endFrame, musicalEndFrame);
-        if (eventIndex < events.size())
-            endFrame = std::min(endFrame, toFrame(events[eventIndex].timestampUs, options.sampleRate));
-        if (beatIndex < beats.size())
-            endFrame = std::min(endFrame, toFrame(beats[beatIndex].timeUs, options.sampleRate));
-        const int frames = static_cast<int>(endFrame - currentFrame);
-        if (frames <= 0) return failure(QStringLiteral("音频事件时序无效"));
-        if (!engine.renderOffline(frames, left.data(), right.data(), &error)) return failure(error);
-        for (int i = 0; i < frames; ++i) {
-            if (!std::isfinite(left[i]) || !std::isfinite(right[i]))
-                return failure(QStringLiteral("合成器产生了无效音频采样"));
-            const float leftLevel = std::abs(left[i]);
-            const float rightLevel = std::abs(right[i]);
-            peakLeft = std::max(peakLeft, leftLevel);
-            peakRight = std::max(peakRight, rightLevel);
-            clippedSamples += static_cast<quint64>(leftLevel > 1.0f);
-            clippedSamples += static_cast<quint64>(rightLevel > 1.0f);
-        }
-        if (!encoder->write(left.data(), right.data(), frames, &error)) return failure(error);
-        currentFrame = endFrame;
-        const int percent = static_cast<int>(currentFrame * 100 / totalFrames);
-        if (progress && percent != lastProgress) {
-            progress(percent);
-            lastProgress = percent;
-        }
-    }
-    if (canceled && canceled->load()) return {AudioExportStatus::Canceled, {}, currentFrame};
+    const OfflineAudioOptions renderOptions {font.absoluteFilePath(), options.sampleRate, 100,
+                                            options.includeMetronome, totalFrames};
+    const auto result = OfflineAudioRenderer::render(document, renderOptions,
+        [&encoder](const float* left, const float* right, int count, QString* error) {
+            return encoder->write(left, right, count, error);
+        }, canceled, std::move(progress));
+    if (result.status != AudioExportStatus::Success) return result;
+    if (canceled && canceled->load()) return {AudioExportStatus::Canceled, {}, result.frames};
     if (!encoder->finish(&error)) return failure(error);
-    return {AudioExportStatus::Success, {}, totalFrames, peakLeft, peakRight, clippedSamples};
+    return result;
 }
 
 } // namespace midi_play::app

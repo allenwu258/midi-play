@@ -25,6 +25,8 @@ public:
     const QString& lastLoadWarning() const noexcept { return m_lastLoadWarning; }
     settings::TitleBarMode titleBarMode() const noexcept { return m_settings.titleBarMode; }
     const QString& soundFontPath() const noexcept { return m_settings.soundFontPath; }
+    const QString& ffmpegPath() const noexcept { return m_settings.ffmpegPath; }
+    bool ffmpegUsePath() const noexcept { return m_settings.ffmpegUsePath; }
     const QString& backgroundImagePath() const noexcept { return m_settings.backgroundImagePath; }
     bool backgroundImageEnabled() const noexcept { return m_settings.backgroundImageEnabled; }
     settings::BackgroundImageAlignment backgroundImageAlignment() const noexcept
@@ -46,6 +48,8 @@ public slots:
     void setNoteColorMode(settings::NoteColorMode mode);
     void setTitleBarMode(settings::TitleBarMode mode);
     void setSoundFontPath(const QString& path);
+    void setFfmpegPath(const QString& path);
+    void setFfmpegUsePath(bool enabled);
     void setBackgroundImagePath(const QString& path);
     void setBackgroundImageEnabled(bool enabled);
     void setBackgroundImageAlignment(settings::BackgroundImageAlignment alignment);
@@ -61,6 +65,8 @@ signals:
     void noteColorModeChanged(midi_play::settings::NoteColorMode mode);
     void titleBarModeChanged(midi_play::settings::TitleBarMode mode);
     void soundFontPathChanged(const QString& path);
+    void ffmpegPathChanged(const QString& path);
+    void ffmpegUsePathChanged(bool enabled);
     void backgroundImagePathChanged(const QString& path);
     void backgroundImageEnabledChanged(bool enabled);
     void backgroundImageAlignmentChanged(midi_play::settings::BackgroundImageAlignment alignment);
@@ -72,6 +78,7 @@ signals:
 
 private:
     static QString normalizeSoundFontPath(const QString& path);
+    static QString normalizeFfmpegPath(const QString& path);
     static QString normalizeBackgroundImagePath(const QString& path);
     void persistSettings();
 

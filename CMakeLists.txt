@@ -64,6 +64,14 @@ endif()
 set(MIDI_PLAY_COMMON_SOURCES
     src/app/audioexportservice.h
     src/app/audioexportservice.cpp
+    src/app/exporttimeline.h
+    src/app/exporttimeline.cpp
+    src/app/offlineaudiorenderer.h
+    src/app/offlineaudiorenderer.cpp
+    src/app/videoexportservice.h
+    src/app/videoexportservice.cpp
+    src/app/ffmpegservice.h
+    src/app/ffmpegservice.cpp
     src/app/playerapplicationservice.h
     src/app/playerapplicationservice.cpp
     src/app/isettingsstore.h
@@ -138,6 +146,10 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/infrastructure/audio/threadedplaybackaudioservice.cpp
     src/infrastructure/encoding/audiofileencoder.h
     src/infrastructure/encoding/audiofileencoder.cpp
+    src/infrastructure/encoding/ffmpegprobe.h
+    src/infrastructure/encoding/ffmpegprobe.cpp
+    src/infrastructure/encoding/ffmpegvideoencoder.h
+    src/infrastructure/encoding/ffmpegvideoencoder.cpp
     src/infrastructure/resources/projectaudiosettings.h
     src/infrastructure/resources/projectaudiosettings.cpp
     src/infrastructure/settings/qsettingsstore.h
@@ -160,6 +172,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/infrastructure/midi/mididocumentbuilder.cpp
     src/presentation/mainwindow.h
     src/presentation/mainwindow.cpp
+    src/presentation/videoexportdialog.h
+    src/presentation/videoexportdialog.cpp
     src/presentation/transport/playbackratecontrol.h
     src/presentation/transport/playbackratecontrol.cpp
     src/presentation/playbackmetadatapresenter.h
@@ -213,7 +227,11 @@ if (MIDI_PLAY_HAS_VULKAN)
         src/presentation/visualization/fallingnotesvulkanwindow.h
         src/presentation/visualization/fallingnotesvulkanwindow.cpp
         src/presentation/visualization/vulkanscene.h
-        src/presentation/visualization/vulkanscene.cpp)
+        src/presentation/visualization/vulkanscene.cpp
+        src/presentation/visualization/vulkanpipeline.h
+        src/presentation/visualization/vulkanpipeline.cpp
+        src/presentation/visualization/offscreen/vulkanoffscreenrenderer.h
+        src/presentation/visualization/offscreen/vulkanoffscreenrenderer.cpp)
 endif()
 
 add_library(midi_play_core STATIC ${MIDI_PLAY_COMMON_SOURCES})
@@ -423,6 +441,24 @@ if (BUILD_TESTING)
         COMMAND midi_play_presentation_tests -platform offscreen)
     if (TARGET Qt6::QOffscreenIntegrationPlugin)
         set_tests_properties(presentation_backend_configuration PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+    endif()
+
+    add_executable(midi_play_video_export_tests tests/videoexporttests.cpp)
+    target_link_libraries(midi_play_video_export_tests PRIVATE midi_play_core)
+    target_compile_definitions(midi_play_video_export_tests PRIVATE
+        MIDI_PLAY_TEST_CLICK_SF2="${CMAKE_CURRENT_SOURCE_DIR}/assets/metronome.sf2")
+    if (COMMAND midi_play_deploy_offscreen_plugin)
+        midi_play_deploy_offscreen_plugin(midi_play_video_export_tests)
+    endif()
+    add_test(NAME video_export_configuration
+        COMMAND midi_play_video_export_tests -platform offscreen)
+    add_executable(midi_play_video_encoder_tests tests/videoencodertests.cpp)
+    target_link_libraries(midi_play_video_encoder_tests PRIVATE midi_play_core)
+    add_test(NAME video_encoder_roundtrip COMMAND midi_play_video_encoder_tests)
+    set_tests_properties(video_encoder_roundtrip PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+    if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        set_tests_properties(video_export_configuration PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
     endif()
 

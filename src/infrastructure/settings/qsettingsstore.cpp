@@ -84,6 +84,9 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     result.titleBarMode = midi_play::settings::titleBarModeFromPersistentValue(configuredTitleBarMode);
     result.soundFontPath =
         file.value(QStringLiteral("Audio/soundFontPath")).toString().trimmed();
+    result.ffmpegPath =
+        file.value(QStringLiteral("Video/ffmpegPath")).toString().trimmed();
+    result.ffmpegUsePath = file.value(QStringLiteral("Video/ffmpegUsePath"), true).toBool();
     result.backgroundImagePath =
         file.value(QStringLiteral("Visualization/backgroundImagePath")).toString().trimmed();
     result.backgroundImageEnabled = file.value(
@@ -211,6 +214,12 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
     } else {
         file.setValue(QStringLiteral("Audio/soundFontPath"), settings.soundFontPath);
     }
+    if (settings.ffmpegPath.isEmpty()) {
+        file.remove(QStringLiteral("Video/ffmpegPath"));
+    } else {
+        file.setValue(QStringLiteral("Video/ffmpegPath"), settings.ffmpegPath);
+    }
+    file.setValue(QStringLiteral("Video/ffmpegUsePath"), settings.ffmpegUsePath);
     if (settings.backgroundImagePath.isEmpty()) {
         file.remove(QStringLiteral("Visualization/backgroundImagePath"));
     } else {

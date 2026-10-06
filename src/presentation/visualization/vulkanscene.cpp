@@ -90,7 +90,10 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     const bool candidatesChanged = m_window.ensure(m_index,
         state.transportPositionUs - state.afterglowUs,
         state.transportPositionUs + state.lookAheadUs, state.visibilityGuardUs);
-    if (candidatesChanged || layoutChanged || materialsChanged || effectsChanged) {
+    const qint64 timeOrigin = (state.transportPositionUs / 60'000'000) * 60'000'000;
+    const bool originChanged = m_timeOriginUs != timeOrigin;
+    m_timeOriginUs = timeOrigin;
+    if (candidatesChanged || layoutChanged || materialsChanged || effectsChanged || originChanged) {
         rebuildNotes(state);
         m_consumedMaterialRevision = m_cache.materialRevision();
     }

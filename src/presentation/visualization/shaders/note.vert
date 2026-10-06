@@ -16,6 +16,7 @@ layout(push_constant) uniform Frame {
     float strikeGlowStrength;
     float keyGlowStrength;
     float particleStrength;
+    float offsetX; float offsetY; float animationSeconds;
 } frame;
 layout(location=0) out vec2 local;
 layout(location=1) out vec2 world;
@@ -77,6 +78,6 @@ void main() {
     world=r.xy+local;
     texcoord=uv.xy+corner*uv.zw;
     shape=vec4(r.zw,stroke,kind);
-    vec2 physicalWorld = world * frame.dpr;
+    vec2 physicalWorld = world * frame.dpr + vec2(frame.offsetX, frame.offsetY);
     gl_Position=vec4(physicalWorld.x/frame.width*2-1,physicalWorld.y/frame.height*2-1,0,1);
 }

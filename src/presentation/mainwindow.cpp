@@ -3,11 +3,14 @@
 #include "app/audioexportservice.h"
 #include "app/playerapplicationservice.h"
 #include "app/settingsservice.h"
+#include "app/ffmpegservice.h"
+#include "app/videoexportservice.h"
 #include "playbackmetadatapresenter.h"
 #include "presentation/settings/settingsdialog.h"
 #include "presentation/transport/playbackratecontrol.h"
 #include "presentation/windowchrome/customtitlebar.h"
 #include "presentation/visualization/fallingnotesview.h"
+#include "presentation/videoexportdialog.h"
 
 #include "presentation/theme/widgetstyles.h"
 #include "presentation/theme/themeicons.h"
@@ -22,6 +25,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QFutureWatcher>
+#include <QHelpEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -36,6 +40,7 @@
 #include <QStyle>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtMath>
@@ -51,6 +56,22 @@
 namespace midi_play::presentation {
 namespace {
 
+class ReasonToolButton final : public QToolButton {
+public:
+    using QToolButton::QToolButton;
+
+protected:
+    bool event(QEvent* event) override
+    {
+        if (!isEnabled() && event->type() == QEvent::ToolTip && !toolTip().isEmpty()) {
+            const auto* help = static_cast<QHelpEvent*>(event);
+            QToolTip::showText(help->globalPos(), toolTip(), this);
+            return true;
+        }
+        return QToolButton::event(event);
+    }
+};
+
 QFrame* verticalSeparator(QWidget* parent)
 {
     auto* separator = new QFrame(parent);
@@ -63,7 +84,7 @@ QFrame* verticalSeparator(QWidget* parent)
 QToolButton* toolButton(QWidget* parent, const QIcon& icon, const QString& text,
                         const QString& tooltip, bool iconOnly = false)
 {
-    auto* button = new QToolButton(parent);
+    auto* button = new ReasonToolButton(parent);
     button->setIcon(icon);
     button->setText(text);
     button->setToolTip(tooltip);
@@ -78,8 +99,9 @@ QToolButton* toolButton(QWidget* parent, const QIcon& icon, const QString& text,
 
 MainWindow::MainWindow(app::PlayerApplicationService* service,
                        app::SettingsService* settingsService,
-                       QWidget* parent, theme::ThemeController* themeController)
-    : QMainWindow(parent), m_service(service), m_settingsService(settingsService)
+                       QWidget* parent, theme::ThemeController* themeController,
+                       app::FfmpegService* ffmpegService)
+    : QMainWindow(parent), m_service(service), m_settingsService(settingsService), m_ffmpegService(ffmpegService)
     , m_themeController(themeController)
 {
     setWindowTitle(QStringLiteral("MIDI Play"));
@@ -132,10 +154,14 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     m_exportButton = toolButton(topBar, QIcon(),
                                 QStringLiteral("导出音频"), QStringLiteral("将当前乐曲导出为 MP3 或 WAV"));
     m_exportButton->setObjectName(QStringLiteral("exportButton"));
+    m_videoExportButton = toolButton(topBar, QIcon(), QStringLiteral("导出视频"),
+                                    QStringLiteral("仅支持 Vulkan 画面和有效 FFmpeg 时可用"));
+    m_videoExportButton->setObjectName(QStringLiteral("videoExportButton"));
     m_settingsButton = toolButton(topBar, QIcon(),
                                       QStringLiteral("设置"), QStringLiteral("打开播放器设置"));
     topLayout->addWidget(m_openButton);
     topLayout->addWidget(m_exportButton);
+    topLayout->addWidget(m_videoExportButton);
     topLayout->addWidget(m_settingsButton);
 
     m_windowControlsSeparator = verticalSeparator(topBar);
@@ -293,6 +319,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
 
     connect(m_openButton, &QToolButton::clicked, this, &MainWindow::openMusicFile);
     connect(m_exportButton, &QToolButton::clicked, this, &MainWindow::exportAudio);
+    connect(m_videoExportButton, &QToolButton::clicked, this, &MainWindow::exportVideo);
     connect(m_settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
     connect(m_minimizeButton, &QToolButton::clicked, this, &MainWindow::showMinimized);
     connect(m_maximizeButton, &QToolButton::clicked, this, [this] {
@@ -303,6 +330,11 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
                 this, &MainWindow::applyTitleBarMode);
     }
+    if (m_ffmpegService)
+        connect(m_ffmpegService, &app::FfmpegService::changed, this, &MainWindow::updateVideoExportAvailability);
+    connect(m_visualization, &visualization::FallingNotesView::graphicsModeResolved,
+            this, [this](midi_play::settings::GraphicsMode) { updateVideoExportAvailability(); });
+    updateVideoExportAvailability();
     connect(m_playButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::play);
     connect(m_pauseButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::pause);
     connect(m_stopButton, &QToolButton::clicked, m_service, &app::PlayerApplicationService::stop);
@@ -350,6 +382,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_positionSlider->setEnabled(duration > 0);
                 m_statusLabel->setText(QStringLiteral("曲目已加载"));
                 updateTransportControls();
+                updateVideoExportAvailability();
             });
     connect(m_service, &app::PlayerApplicationService::visualizationReady, this,
             [this](midi_play::visualization::VisualChartPtr chart) {
@@ -698,6 +731,7 @@ void MainWindow::exportAudio()
 
     m_exporting = true;
     m_exportButton->setEnabled(false);
+    updateVideoExportAvailability();
     m_exportCancel = std::make_shared<std::atomic_bool>(false);
     auto* progress = new QProgressDialog(QStringLiteral("正在导出音频"), QStringLiteral("取消"),
                                          0, 100, this);
@@ -731,6 +765,7 @@ void MainWindow::exportAudio()
         m_exportCancel.reset();
         m_exporting = false;
         updateTransportControls();
+        updateVideoExportAvailability();
         if (result.status == app::AudioExportStatus::Success) {
             m_statusLabel->setText(result.clippedSamples
                 ? QStringLiteral("音频已导出（检测到削波）: %1").arg(options.outputPath)
@@ -748,10 +783,92 @@ void MainWindow::exportAudio()
     }));
 }
 
+void MainWindow::updateVideoExportAvailability()
+{
+    if (!m_videoExportButton) return;
+    const bool document = m_service && m_service->document();
+    const bool vulkan = m_visualization && m_visualization->vulkanReady();
+    const bool ffmpeg = m_ffmpegService && m_ffmpegService->result().valid;
+    const bool available = document && vulkan && ffmpeg && !m_exporting;
+    m_videoExportButton->setEnabled(available);
+    if (available) {
+        m_videoExportButton->setToolTip(QStringLiteral("导出 Vulkan 流光画面为 MP4"));
+    } else if (!vulkan) {
+        m_videoExportButton->setToolTip(QStringLiteral("视频导出仅支持 Vulkan 图形模式"));
+    } else if (m_ffmpegService && m_ffmpegService->checking()) {
+        m_videoExportButton->setToolTip(QStringLiteral("正在检查 FFmpeg"));
+    } else if (!ffmpeg && m_ffmpegService) {
+        m_videoExportButton->setToolTip(m_ffmpegService->unavailableReason());
+    } else if (!document) {
+        m_videoExportButton->setToolTip(QStringLiteral("请先打开乐曲"));
+    } else if (m_exporting) {
+        m_videoExportButton->setToolTip(QStringLiteral("正在导出，请稍候"));
+    } else {
+        m_videoExportButton->setToolTip(QStringLiteral("视频导出服务不可用"));
+    }
+}
+
+void MainWindow::exportVideo()
+{
+#if !MIDI_PLAY_HAS_VULKAN
+    return;
+#else
+    const auto document = m_service ? m_service->document() : nullptr;
+    if (!document || m_exporting || !m_ffmpegService || !m_ffmpegService->result().valid
+        || !m_visualization->vulkanReady()) return;
+    app::VideoExportOptions defaults;
+    defaults.ffmpegExecutable = m_ffmpegService->result().executablePath;
+    defaults.sourcePath = m_service->fileName();
+    defaults.soundFontPath = m_service->soundFontPath();
+    defaults.scene.state = m_visualization->exportState();
+    defaults.scene.logicalSize = QSize(1280, 720);
+    defaults.scene.outputSize = QSize(1920, 1080);
+    defaults.scene.font = m_visualization->font();
+    defaults.scene.background = m_visualization->exportBackground();
+    defaults.outputPath = QFileInfo(m_service->fileName()).absolutePath() + QLatin1Char('/')
+        + QFileInfo(m_service->fileName()).completeBaseName() + QStringLiteral(".mp4");
+    VideoExportDialog dialog(defaults, m_positionUs, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    auto options = dialog.options();
+    options.ffmpegExecutable = m_ffmpegService->result().executablePath;
+    if (options.outputPath.trimmed().isEmpty() || QFileInfo(options.outputPath).suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0) {
+        QMessageBox::warning(this, QStringLiteral("导出视频"), QStringLiteral("输出文件扩展名需要为 .mp4。"));
+        return;
+    }
+    if (QFileInfo::exists(options.outputPath)
+        && QMessageBox::question(this, QStringLiteral("覆盖文件"), QStringLiteral("目标文件已存在，确定覆盖吗？\n%1").arg(options.outputPath)) != QMessageBox::Yes) return;
+    m_exporting = true;
+    m_exportCancel = std::make_shared<std::atomic_bool>(false);
+    auto* progress = new QProgressDialog(QStringLiteral("正在导出视频"), QStringLiteral("取消"), 0, 100, this);
+    progress->setWindowTitle(QStringLiteral("导出视频")); progress->setMinimumDuration(0); progress->setAutoClose(false); progress->setAutoReset(false);
+    m_exportProgress = progress;
+    const auto cancel = m_exportCancel;
+    auto* watcher = new QFutureWatcher<app::VideoExportResult>(this);
+    auto stage = std::make_shared<std::atomic_int>(0);
+    auto* timer = new QTimer(this); timer->setInterval(80);
+    connect(timer, &QTimer::timeout, this, [this, stage] { if (m_exportProgress) m_exportProgress->setValue(stage->load()); });
+    connect(progress, &QProgressDialog::canceled, this, [cancel] { cancel->store(true); });
+    progress->show(); timer->start(); updateVideoExportAvailability();
+    connect(watcher, &QFutureWatcher<app::VideoExportResult>::finished, this, [this, watcher, timer, options] {
+        const auto result = watcher->result(); watcher->deleteLater(); timer->stop(); timer->deleteLater();
+        if (m_exportProgress) m_exportProgress->deleteLater(); m_exportProgress = nullptr;
+        m_exportCancel.reset(); m_exporting = false; updateTransportControls(); updateVideoExportAvailability();
+        if (result.status == app::VideoExportStatus::Success) m_statusLabel->setText(QStringLiteral("视频已导出: %1").arg(options.outputPath));
+        else if (result.status == app::VideoExportStatus::Canceled) m_statusLabel->setText(QStringLiteral("已取消视频导出"));
+        else { m_statusLabel->setText(QStringLiteral("视频导出失败")); QMessageBox::warning(this, QStringLiteral("视频导出失败"), result.error); }
+    });
+    const auto frozenDocument = document;
+    watcher->setFuture(QtConcurrent::run([frozenDocument, options, cancel, stage] {
+        return app::VideoExportService::exportDocument(frozenDocument, options, cancel.get(),
+            [stage](int percent, const QString&) { stage->store(percent); });
+    }));
+#endif
+}
+
 void MainWindow::showSettings()
 {
     if (!m_settingsDialog) {
-        m_settingsDialog = new settings::SettingsDialog(m_settingsService, m_service, this, m_themeController);
+        m_settingsDialog = new settings::SettingsDialog(m_settingsService, m_service, this, m_themeController, m_ffmpegService);
     }
 
     m_settingsDialog->show();
@@ -856,6 +973,7 @@ void MainWindow::updateTransportControls()
     m_stopButton->setEnabled(hasDocument && m_playbackState != playback::State::Stopped);
     m_positionSlider->setEnabled(hasDocument);
     m_exportButton->setEnabled(m_service->document() && !m_exporting);
+    updateVideoExportAvailability();
 }
 
 } // namespace midi_play::presentation

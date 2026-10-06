@@ -19,6 +19,7 @@ class QSlider;
 
 namespace midi_play::app { class SettingsService; }
 namespace midi_play::app { class PlayerApplicationService; }
+namespace midi_play::app { class FfmpegService; }
 namespace midi_play::presentation::theme { class ThemeController; }
 
 namespace midi_play::presentation::settings {
@@ -29,7 +30,8 @@ public:
     explicit SettingsDialog(app::SettingsService* settingsService,
                             app::PlayerApplicationService* playerService,
                             QWidget* parent = nullptr,
-                            theme::ThemeController* themeController = nullptr);
+                            theme::ThemeController* themeController = nullptr,
+                            app::FfmpegService* ffmpegService = nullptr);
 
 private slots:
     void applyRefreshRateFromUi();
@@ -39,6 +41,8 @@ private slots:
     void applyVisualEffectsFromUi();
     void chooseSoundFont();
     void chooseBackgroundImage();
+    void chooseFfmpegDirectory();
+    void updateFfmpegControls();
     void applyBackgroundModeFromUi();
     void applyBackgroundAlignmentFromUi();
     void applyBackgroundOpacityFromUi(int value);
@@ -64,6 +68,11 @@ private:
 
     app::SettingsService* m_settingsService = nullptr;
     app::PlayerApplicationService* m_playerService = nullptr;
+    app::FfmpegService* m_ffmpegService = nullptr;
+    QComboBox* m_ffmpegModeCombo = nullptr;
+    QLineEdit* m_ffmpegPathEdit = nullptr;
+    QPushButton* m_chooseFfmpegButton = nullptr;
+    QLabel* m_ffmpegStatusLabel = nullptr;
     QComboBox* m_refreshRateCombo = nullptr;
     QComboBox* m_titleBarModeCombo = nullptr;
     QComboBox* m_graphicsModeCombo = nullptr;

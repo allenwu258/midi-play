@@ -11,6 +11,7 @@ layout(push_constant) uniform Frame {
     float strikeGlowStrength;
     float keyGlowStrength;
     float particleStrength;
+    float offsetX; float offsetY; float animationSeconds;
 } frame;
 layout(location=0) in vec2 local;
 layout(location=1) in vec2 world;
@@ -71,7 +72,7 @@ void main() {
             // diagonal band reads as a detached white flare, especially on
             // long notes; this small glint keeps the material alive without
             // changing coverage or creating a second bright note in the body.
-            float glintCenter = fract(frame.position * 0.12 + flags.w);
+            float glintCenter = fract(frame.animationSeconds * 0.12 + flags.w);
             float glintDistance = abs(fract(normalized.x - glintCenter + 0.5) - 0.5);
             float glint = 1.0 - smoothstep(0.0, 0.075, glintDistance);
             glint *= 1.0 - smoothstep(0.0, 0.16, normalized.y);

@@ -1,5 +1,6 @@
 #include "app/playerapplicationservice.h"
 #include "app/settingsservice.h"
+#include "app/ffmpegservice.h"
 #include "infrastructure/settings/qsettingsstore.h"
 #include "presentation/settings/soundfontsetup.h"
 #include "presentation/mainwindow.h"
@@ -28,6 +29,7 @@ int main(int argc, char* argv[])
     auto settingsStore = std::make_unique<midi_play::infrastructure::settings::QSettingsStore>();
     midi_play::app::SettingsService settingsService(std::move(settingsStore));
     settingsService.load();
+    midi_play::app::FfmpegService ffmpegService(&settingsService);
     midi_play::presentation::theme::ThemeController themeController(settingsService.themeMode());
     QObject::connect(&settingsService, &midi_play::app::SettingsService::themeModeChanged,
                      &themeController, &midi_play::presentation::theme::ThemeController::setMode);
@@ -40,7 +42,7 @@ int main(int argc, char* argv[])
     QObject::connect(&service, &midi_play::app::PlayerApplicationService::soundFontSelectionCommitted,
                      &settingsService, &midi_play::app::SettingsService::setSoundFontPath);
 
-    midi_play::presentation::MainWindow window(&service, &settingsService, nullptr, &themeController);
+    midi_play::presentation::MainWindow window(&service, &settingsService, nullptr, &themeController, &ffmpegService);
     window.show();
 
     midi_play::presentation::settings::SoundFontSetup soundFontSetup(

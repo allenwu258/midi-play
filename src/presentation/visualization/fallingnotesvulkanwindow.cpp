@@ -1,5 +1,6 @@
 #include "fallingnotesvulkanwindow.h"
 #include "vulkanscene.h"
+#include "vulkanpipeline.h"
 
 #include <QFile>
 #include <QGuiApplication>
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cmath>
 #include <stdexcept>
 #include <vector>
 
@@ -53,24 +55,6 @@ struct ImageResources {
     bool submitted = false;
 };
 
-struct FrameConstants {
-    float width;
-    float height;
-    float positionSeconds;
-    float strikeY;
-    float pixelsPerSecond;
-    float clipTop;
-    float clipBottom;
-    float dpr;
-    float bodyOpacity;
-    float noteHaloStrength;
-    float noteEdgeStrength;
-    float noteSheenStrength;
-    float strikeGlowStrength;
-    float keyGlowStrength;
-    float particleStrength;
-};
-static_assert(sizeof(FrameConstants) == 60);
 }
 
 class FallingNotesVulkanRenderer final : public QVulkanWindowRenderer {
@@ -90,7 +74,6 @@ private:
     void reserve(Buffer& buffer, VkDeviceSize bytes, VkBufferUsageFlags usage);
     void upload(Buffer& buffer, const void* source, VkDeviceSize bytes, VkDeviceSize offset = 0);
     void uploadDynamicUi(ImageResources& frame);
-    VkShaderModule shader(const char* path);
     void createPipeline();
     void createRenderPass();
     void createAtlas(ImageResources& frame);
@@ -248,74 +231,9 @@ void FallingNotesVulkanRenderer::initResources()
     } catch (const std::exception& error) { fail(QString::fromUtf8(error.what())); }
 }
 
-VkShaderModule FallingNotesVulkanRenderer::shader(const char* path)
-{
-    QFile file(QString::fromLatin1(path));
-    if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("Missing embedded Vulkan shader");
-    const QByteArray bytes = file.readAll();
-    if (bytes.isEmpty() || bytes.size() % 4) throw std::runtime_error("Invalid SPIR-V size");
-    std::vector<uint32_t> words(size_t(bytes.size() / 4));
-    std::memcpy(words.data(), bytes.constData(), size_t(bytes.size()));
-    VkShaderModuleCreateInfo info {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    info.codeSize = size_t(bytes.size());
-    info.pCode = words.data();
-    VkShaderModule result = VK_NULL_HANDLE;
-    checked(m_df->vkCreateShaderModule(m_device, &info, nullptr, &result), "shader module");
-    return result;
-}
-
 void FallingNotesVulkanRenderer::createPipeline()
 {
-    VkShaderModule vertex = VK_NULL_HANDLE;
-    VkShaderModule fragment = VK_NULL_HANDLE;
-    try {
-        vertex = shader(":/midi_play/shaders/note.vert.spv");
-        fragment = shader(":/midi_play/shaders/note.frag.spv");
-        VkPipelineShaderStageCreateInfo stages[2] {};
-        for (auto& stage : stages) { stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; stage.pName = "main"; }
-        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = vertex;
-        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = fragment;
-        VkVertexInputBindingDescription binding {0, sizeof(VulkanQuad), VK_VERTEX_INPUT_RATE_INSTANCE};
-        std::array<VkVertexInputAttributeDescription, 7> attributes {};
-        for (uint32_t i = 0; i < attributes.size(); ++i) attributes[i] = {i, 0, VK_FORMAT_R32G32B32A32_SFLOAT, i * 16};
-        VkPipelineVertexInputStateCreateInfo input {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-        input.vertexBindingDescriptionCount = 1; input.pVertexBindingDescriptions = &binding;
-        input.vertexAttributeDescriptionCount = uint32_t(attributes.size()); input.pVertexAttributeDescriptions = attributes.data();
-        VkPipelineInputAssemblyStateCreateInfo assembly {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        VkPipelineViewportStateCreateInfo viewport {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-        viewport.viewportCount = viewport.scissorCount = 1;
-        VkPipelineRasterizationStateCreateInfo raster {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.lineWidth = 1;
-        VkPipelineMultisampleStateCreateInfo samples {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        samples.rasterizationSamples = m_window->sampleCountFlagBits();
-        VkPipelineDepthStencilStateCreateInfo depth {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        VkPipelineColorBlendAttachmentState blend {};
-        blend.blendEnable = VK_TRUE;
-        blend.srcColorBlendFactor = blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        blend.dstColorBlendFactor = blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_ADD;
-        blend.colorWriteMask = 0xf;
-        VkPipelineColorBlendStateCreateInfo blending {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        blending.attachmentCount = 1; blending.pAttachments = &blend;
-        const VkDynamicState states[] {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-        VkPipelineDynamicStateCreateInfo dynamic {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-        dynamic.dynamicStateCount = 2; dynamic.pDynamicStates = states;
-        VkGraphicsPipelineCreateInfo pipeline {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-        pipeline.stageCount = 2; pipeline.pStages = stages;
-        pipeline.pVertexInputState = &input; pipeline.pInputAssemblyState = &assembly;
-        pipeline.pViewportState = &viewport; pipeline.pRasterizationState = &raster;
-        pipeline.pMultisampleState = &samples; pipeline.pDepthStencilState = &depth;
-        pipeline.pColorBlendState = &blending; pipeline.pDynamicState = &dynamic;
-        pipeline.layout = m_layout; pipeline.renderPass = m_renderPass;
-        checked(m_df->vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &m_pipeline), "graphics pipeline");
-    } catch (...) {
-        if (vertex) m_df->vkDestroyShaderModule(m_device, vertex, nullptr);
-        if (fragment) m_df->vkDestroyShaderModule(m_device, fragment, nullptr);
-        throw;
-    }
-    m_df->vkDestroyShaderModule(m_device, vertex, nullptr);
-    m_df->vkDestroyShaderModule(m_device, fragment, nullptr);
+    m_pipeline = createScenePipeline(m_device, m_layout, m_renderPass);
 }
 
 void FallingNotesVulkanRenderer::createRenderPass()
@@ -654,7 +572,8 @@ void FallingNotesVulkanRenderer::startNextFrame()
             float(m_scene.bodyOpacity()), m_scene.effectsProfile().noteHaloStrength,
             m_scene.effectsProfile().noteEdgeStrength, m_scene.effectsProfile().noteSheenStrength,
             m_scene.effectsProfile().strikeGlowStrength, m_scene.effectsProfile().keyGlowStrength,
-            m_scene.effectsProfile().particleStrength};
+            m_scene.effectsProfile().particleStrength, 0, 0,
+            float(std::fmod(state.transportPositionUs / 1'000'000.0, 250.0))};
         VkViewport viewport {0, 0, float(physical.width()), float(physical.height()), 0, 1};
         VkRect2D scissor {{0, 0}, begin.renderArea.extent};
         m_df->vkCmdSetViewport(command, 0, 1, &viewport);

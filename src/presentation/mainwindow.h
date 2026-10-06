@@ -21,6 +21,7 @@ class QProgressDialog;
 
 namespace midi_play::app { class PlayerApplicationService; }
 namespace midi_play::app { class SettingsService; }
+namespace midi_play::app { class FfmpegService; }
 namespace midi_play::presentation::settings { class SettingsDialog; }
 namespace midi_play::presentation::windowchrome { class CustomTitleBar; }
 namespace midi_play::presentation::visualization { class FallingNotesView; }
@@ -35,7 +36,8 @@ public:
     explicit MainWindow(app::PlayerApplicationService* service,
                         app::SettingsService* settingsService,
                         QWidget* parent = nullptr,
-                        theme::ThemeController* themeController = nullptr);
+                        theme::ThemeController* themeController = nullptr,
+                        app::FfmpegService* ffmpegService = nullptr);
     ~MainWindow() override;
 
 protected:
@@ -46,6 +48,7 @@ protected:
 private slots:
     void openMusicFile();
     void exportAudio();
+    void exportVideo();
     void showSettings();
     void updatePosition(qint64 position, qint64 duration, qint64 sampledAtUs = 0);
     void updatePlaybackState(midi_play::playback::State state);
@@ -59,11 +62,13 @@ private:
     void applyTitleBarMode(midi_play::settings::TitleBarMode mode);
     void updateWindowControlButtons();
     void applyTheme(midi_play::settings::ThemeMode mode);
+    void updateVideoExportAvailability();
 
     static constexpr int kSliderResolution = 1'000'000;
 
     app::PlayerApplicationService* m_service = nullptr;
     app::SettingsService* m_settingsService = nullptr;
+    app::FfmpegService* m_ffmpegService = nullptr;
     theme::ThemeController* m_themeController = nullptr;
     midi_play::settings::ThemeMode m_themeMode = midi_play::settings::kDefaultThemeMode;
     QPointer<settings::SettingsDialog> m_settingsDialog;
@@ -81,6 +86,7 @@ private:
     QToolButton* m_playButton = nullptr;
     QToolButton* m_openButton = nullptr;
     QToolButton* m_exportButton = nullptr;
+    QToolButton* m_videoExportButton = nullptr;
     QToolButton* m_settingsButton = nullptr;
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_stopButton = nullptr;

@@ -40,6 +40,16 @@ public:
     { return m_state.visualEffectsLevel; }
     midi_play::settings::ThemeMode themeMode() const noexcept { return m_state.themeMode; }
     midi_play::settings::NoteColorMode noteColorMode() const noexcept { return m_state.noteColorMode; }
+    bool vulkanReady() const noexcept {
+        return m_graphicsMode == midi_play::settings::GraphicsMode::VulkanExperimental
+            && !m_graphicsModeResolutionPending;
+    }
+    midi_play::visualization::PlaybackSceneState exportState() const {
+        auto result = m_state;
+        result.candidateNoteIndices = {};
+        return result;
+    }
+    QImage exportBackground() const { return m_backgroundImage; }
 
 public slots:
     void setChart(midi_play::visualization::VisualChartPtr chart);

@@ -2,6 +2,7 @@
 #include "soundfontsetup.h"
 
 #include "app/settingsservice.h"
+#include "app/ffmpegservice.h"
 #include "app/playerapplicationservice.h"
 #include "domain/settings/playersettings.h"
 
@@ -34,9 +35,11 @@ constexpr int kVisualEffectsDisabledUiValue = -1;
 
 SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                                app::PlayerApplicationService* playerService,
-                               QWidget* parent, theme::ThemeController* themeController)
+                               QWidget* parent, theme::ThemeController* themeController,
+                               app::FfmpegService* ffmpegService)
     : QDialog(parent), m_settingsService(settingsService), m_playerService(playerService)
 {
+    m_ffmpegService = ffmpegService ? ffmpegService : new app::FfmpegService(settingsService, this);
     setWindowTitle(QStringLiteral("设置"));
     setWindowFlag(Qt::Window, true);
     setModal(false);
@@ -150,6 +153,42 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     soundFontActions->addStretch();
     soundFontLayout->addLayout(soundFontActions);
     form->addRow(QStringLiteral("音源"), soundFontEditor);
+
+    auto* ffmpegEditor = new QWidget(this);
+    auto* ffmpegLayout = new QVBoxLayout(ffmpegEditor);
+    ffmpegLayout->setContentsMargins(0, 0, 0, 0);
+    ffmpegLayout->setSpacing(6);
+    m_ffmpegModeCombo = new QComboBox(ffmpegEditor);
+    m_ffmpegModeCombo->setObjectName(QStringLiteral("ffmpegModeCombo"));
+    m_ffmpegModeCombo->addItem(QStringLiteral("自动读取 PATH"), true);
+    m_ffmpegModeCombo->addItem(QStringLiteral("手动选择目录"), false);
+    ffmpegLayout->addWidget(m_ffmpegModeCombo);
+    auto* ffmpegPathRow = new QHBoxLayout();
+    m_ffmpegPathEdit = new QLineEdit(ffmpegEditor);
+    m_ffmpegPathEdit->setObjectName(QStringLiteral("ffmpegPathEdit"));
+    m_ffmpegPathEdit->setReadOnly(true);
+    m_ffmpegPathEdit->setPlaceholderText(QStringLiteral("尚未选择 FFmpeg 目录"));
+    m_chooseFfmpegButton = new QPushButton(QStringLiteral("选择目录"), ffmpegEditor);
+    m_chooseFfmpegButton->setObjectName(QStringLiteral("chooseFfmpegButton"));
+    ffmpegPathRow->addWidget(m_ffmpegPathEdit, 1);
+    ffmpegPathRow->addWidget(m_chooseFfmpegButton);
+    ffmpegLayout->addLayout(ffmpegPathRow);
+    m_ffmpegStatusLabel = new QLabel(ffmpegEditor);
+    m_ffmpegStatusLabel->setObjectName(QStringLiteral("ffmpegStatusLabel"));
+    m_ffmpegStatusLabel->setTextFormat(Qt::PlainText);
+    m_ffmpegStatusLabel->setWordWrap(false);
+    ffmpegLayout->addWidget(m_ffmpegStatusLabel);
+    form->addRow(QStringLiteral("视频编码器"), ffmpegEditor);
+    connect(m_ffmpegService, &app::FfmpegService::changed, this, &SettingsDialog::updateFfmpegControls);
+    connect(m_chooseFfmpegButton, &QPushButton::clicked, this, &SettingsDialog::chooseFfmpegDirectory);
+    connect(m_ffmpegModeCombo, &QComboBox::currentIndexChanged, this, [this] {
+        if (m_settingsService) m_settingsService->setFfmpegUsePath(m_ffmpegModeCombo->currentData().toBool());
+    });
+    if (m_settingsService) {
+        connect(m_settingsService, &app::SettingsService::ffmpegPathChanged, this, &SettingsDialog::updateFfmpegControls);
+        connect(m_settingsService, &app::SettingsService::ffmpegUsePathChanged, this, &SettingsDialog::updateFfmpegControls);
+    }
+    updateFfmpegControls();
 
     m_backgroundModeCombo = new QComboBox(this);
     m_backgroundModeCombo->setObjectName(QStringLiteral("backgroundModeCombo"));
@@ -428,6 +467,33 @@ void SettingsDialog::applyVisualEffectsFromUi()
 void SettingsDialog::chooseSoundFont()
 {
     chooseSoundFontFile(this, m_settingsService, m_playerService);
+}
+
+void SettingsDialog::chooseFfmpegDirectory()
+{
+    if (!m_settingsService) return;
+    const QString directory = QFileDialog::getExistingDirectory(this, QStringLiteral("选择 FFmpeg 目录"),
+                                                                 m_settingsService->ffmpegPath());
+    if (directory.isEmpty()) return;
+    const bool unchanged = directory == m_settingsService->ffmpegPath();
+    m_settingsService->setFfmpegPath(directory);
+    if (unchanged) m_ffmpegService->refresh();
+}
+
+void SettingsDialog::updateFfmpegControls()
+{
+    const bool usePath = !m_settingsService || m_settingsService->ffmpegUsePath();
+    const QSignalBlocker blocker(m_ffmpegModeCombo);
+    m_ffmpegModeCombo->setCurrentIndex(m_ffmpegModeCombo->findData(usePath));
+    m_ffmpegModeCombo->setEnabled(m_settingsService);
+    m_ffmpegPathEdit->setVisible(!usePath);
+    m_chooseFfmpegButton->setVisible(!usePath);
+    m_chooseFfmpegButton->setEnabled(m_settingsService);
+    m_ffmpegPathEdit->setText(m_settingsService ? m_settingsService->ffmpegPath() : QString());
+    m_ffmpegPathEdit->setToolTip(m_ffmpegPathEdit->text());
+    const auto& result = m_ffmpegService->result();
+    m_ffmpegStatusLabel->setText(result.valid ? QStringLiteral("FFmpeg 可用") : m_ffmpegService->unavailableReason());
+    m_ffmpegStatusLabel->setToolTip(result.valid ? result.executablePath : result.error);
 }
 
 void SettingsDialog::chooseBackgroundImage()
