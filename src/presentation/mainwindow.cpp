@@ -321,6 +321,13 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     connect(m_windowChrome, &windowchrome::WindowChromeController::nativeIntegrationFailed,
             this, [this](const QString& reason) {
         m_statusLabel->setText(reason);
+        // A failed custom-frame application has already fallen back to the
+        // native frame. Persist the effective mode so the settings UI and the
+        // next launch do not keep requesting an unavailable integration.
+        if (m_settingsService
+            && m_settingsService->titleBarMode() != midi_play::settings::TitleBarMode::Native) {
+            m_settingsService->setTitleBarMode(midi_play::settings::TitleBarMode::Native);
+        }
     });
     if (m_settingsService) {
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
