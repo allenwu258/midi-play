@@ -9,6 +9,8 @@
 #include "presentation/settings/settingsdialog.h"
 #include "presentation/transport/playbackratecontrol.h"
 #include "presentation/windowchrome/customtitlebar.h"
+#include "presentation/windowchrome/windowchromecontroller.h"
+#include "presentation/windowchrome/captionbuttons.h"
 #include "presentation/visualization/fallingnotesview.h"
 #include "presentation/videoexportdialog.h"
 
@@ -45,11 +47,6 @@
 #include <QWidget>
 #include <QtMath>
 #include <QtConcurrent>
-
-#if defined(Q_OS_WIN)
-#include <windows.h>
-#include <windowsx.h>
-#endif
 
 #include <algorithm>
 
@@ -116,11 +113,23 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
 
     auto* topBar = new windowchrome::CustomTitleBar(central);
     m_topBar = topBar;
+    m_windowChrome = new windowchrome::WindowChromeController(this);
     topBar->setObjectName(QStringLiteral("topBar"));
     topBar->setFixedHeight(58);
     auto* topLayout = new QHBoxLayout(topBar);
     topLayout->setContentsMargins(16, 0, 12, 0);
     topLayout->setSpacing(10);
+
+    m_systemMenuButton = new QToolButton(topBar);
+    m_systemMenuButton->setObjectName(QStringLiteral("windowSystemMenuButton"));
+    m_systemMenuButton->setAutoRaise(true);
+    m_systemMenuButton->setFixedSize(24, 28);
+    m_systemMenuButton->setIcon(windowIcon());
+    m_systemMenuButton->setIconSize(QSize(20, 20));
+    m_systemMenuButton->setAccessibleName(QStringLiteral("窗口系统菜单"));
+    m_systemMenuButton->setToolTip(QStringLiteral("窗口系统菜单（Alt+Space）"));
+    m_systemMenuButton->hide();
+    topLayout->addWidget(m_systemMenuButton);
 
     auto* brand = new QLabel(QStringLiteral("MIDI Play"), topBar);
     brand->setObjectName(QStringLiteral("brandLabel"));
@@ -164,32 +173,18 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     topLayout->addWidget(m_videoExportButton);
     topLayout->addWidget(m_settingsButton);
 
-    m_windowControlsSeparator = verticalSeparator(topBar);
-    topLayout->addWidget(m_windowControlsSeparator);
-    m_minimizeButton = toolButton(topBar, QIcon(), {},
-                                  QStringLiteral("最小化窗口"), true);
-    m_maximizeButton = toolButton(topBar, QIcon(), {},
-                                  QStringLiteral("最大化窗口"), true);
-    m_closeButton = toolButton(topBar, QIcon(), {},
-                               QStringLiteral("关闭窗口"), true);
-    m_minimizeButton->setObjectName(QStringLiteral("windowMinimizeButton"));
-    m_maximizeButton->setObjectName(QStringLiteral("windowMaximizeButton"));
-    m_closeButton->setObjectName(QStringLiteral("windowCloseButton"));
-    m_minimizeButton->setAccessibleName(QStringLiteral("最小化窗口"));
-    m_maximizeButton->setAccessibleName(QStringLiteral("最大化或还原窗口"));
-    m_closeButton->setAccessibleName(QStringLiteral("关闭窗口"));
-    topLayout->addWidget(m_minimizeButton);
-    topLayout->addWidget(m_maximizeButton);
-    topLayout->addWidget(m_closeButton);
-    m_windowControlsSeparator->setVisible(false);
-    m_minimizeButton->setVisible(false);
-    m_maximizeButton->setVisible(false);
-    m_closeButton->setVisible(false);
-    topBar->registerDragWidget(brand);
-    topBar->registerDragWidget(m_fileLabel);
-    topBar->registerDragWidget(m_keyLabel);
-    topBar->registerDragWidget(m_timeSignatureLabel);
-    topBar->registerDragWidget(m_tempoLabel);
+    m_windowChrome->setTitleBar(topBar, m_systemMenuButton,
+        {m_openButton, m_exportButton, m_videoExportButton, m_settingsButton});
+    m_captionButtons = new windowchrome::CaptionButtons(topBar);
+    m_captionButtons->hide();
+    topLayout->addWidget(m_captionButtons, 0, Qt::AlignTop);
+    m_windowChrome->setCaptionButtons(m_captionButtons);
+    connect(m_windowChrome, &windowchrome::WindowChromeController::frameMetricsChanged,
+            this, &MainWindow::updateWindowChrome);
+    connect(m_windowChrome, &windowchrome::WindowChromeController::modeChanged,
+            this, &MainWindow::updateWindowChrome);
+    connect(m_systemMenuButton, &QToolButton::clicked,
+            m_windowChrome, &windowchrome::WindowChromeController::showSystemMenu);
     root->addWidget(topBar);
 
     m_visualization = new visualization::FallingNotesView(central);
@@ -321,11 +316,10 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     connect(m_exportButton, &QToolButton::clicked, this, &MainWindow::exportAudio);
     connect(m_videoExportButton, &QToolButton::clicked, this, &MainWindow::exportVideo);
     connect(m_settingsButton, &QToolButton::clicked, this, &MainWindow::showSettings);
-    connect(m_minimizeButton, &QToolButton::clicked, this, &MainWindow::showMinimized);
-    connect(m_maximizeButton, &QToolButton::clicked, this, [this] {
-        if (isMaximized()) showNormal(); else showMaximized();
+    connect(m_windowChrome, &windowchrome::WindowChromeController::nativeIntegrationFailed,
+            this, [this](const QString& reason) {
+        m_statusLabel->setText(reason);
     });
-    connect(m_closeButton, &QToolButton::clicked, this, &MainWindow::close);
     if (m_settingsService) {
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
                 this, &MainWindow::applyTitleBarMode);
@@ -463,140 +457,36 @@ void MainWindow::changeEvent(QEvent* event)
 {
     QMainWindow::changeEvent(event);
     if (event->type() == QEvent::WindowStateChange) {
-        updateWindowControlButtons();
+        updateWindowChrome();
+    } else if (event->type() == QEvent::ActivationChange && m_topBar) {
+        m_topBar->setWindowActive(isActiveWindow());
+    } else if (event->type() == QEvent::WindowIconChange && m_systemMenuButton) {
+        m_systemMenuButton->setIcon(windowIcon());
     }
 }
 
 bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
 {
-#if defined(Q_OS_WIN)
-    if (m_titleBarMode == midi_play::settings::TitleBarMode::Custom
-        && (eventType == QByteArrayLiteral("windows_generic_MSG")
-            || eventType == QByteArrayLiteral("windows_dispatcher_MSG"))
-        && message && result) {
-        const auto* nativeMessage = static_cast<MSG*>(message);
-        if (nativeMessage->message == WM_NCHITTEST) {
-            const HWND mainWindowHandle = reinterpret_cast<HWND>(winId());
-            if (nativeMessage->hwnd != mainWindowHandle) {
-                return QMainWindow::nativeEvent(eventType, message, result);
-            }
-
-            RECT windowRect {};
-            if (!GetWindowRect(mainWindowHandle, &windowRect)) {
-                return QMainWindow::nativeEvent(eventType, message, result);
-            }
-
-            const int globalX = GET_X_LPARAM(nativeMessage->lParam);
-            const int globalY = GET_Y_LPARAM(nativeMessage->lParam);
-            // Keep title-bar controls in the Qt client area even when their
-            // upper edge falls inside the native resize hit-test band.
-            if (m_topBar) {
-                const auto controls = m_topBar->findChildren<QToolButton*>(
-                    QString(), Qt::FindDirectChildrenOnly);
-                const qreal deviceRatio = devicePixelRatioF();
-                for (const auto* control : controls) {
-                    if (!control->isVisible()) {
-                        continue;
-                    }
-                    const QPoint logicalPosition = control->mapTo(this, QPoint(0, 0));
-                    const QRect physicalRect(
-                        windowRect.left + qRound(logicalPosition.x() * deviceRatio),
-                        windowRect.top + qRound(logicalPosition.y() * deviceRatio),
-                        qRound(control->width() * deviceRatio),
-                        qRound(control->height() * deviceRatio));
-                    if (physicalRect.contains(QPoint(globalX, globalY))) {
-                        *result = HTCLIENT;
-                        return true;
-                    }
-                }
-            }
-
-            // Use a fixed physical-pixel border. Scaling this value by the Qt
-            // device ratio makes the hit band grow into the title-bar controls
-            // on high-DPI displays.
-            constexpr int kResizeHitTestMarginPx = 6;
-            const int margin = kResizeHitTestMarginPx;
-            const bool maximized = isMaximized() || isFullScreen();
-            if (!maximized) {
-                Qt::Edges edges;
-                if (globalX < windowRect.left + margin) edges |= Qt::LeftEdge;
-                if (globalX >= windowRect.right - margin) edges |= Qt::RightEdge;
-                if (globalY < windowRect.top + margin) edges |= Qt::TopEdge;
-                if (globalY >= windowRect.bottom - margin) edges |= Qt::BottomEdge;
-                if (edges != Qt::Edges()) {
-                    if (edges == (Qt::TopEdge | Qt::LeftEdge)) *result = HTTOPLEFT;
-                    else if (edges == (Qt::TopEdge | Qt::RightEdge)) *result = HTTOPRIGHT;
-                    else if (edges == (Qt::BottomEdge | Qt::LeftEdge)) *result = HTBOTTOMLEFT;
-                    else if (edges == (Qt::BottomEdge | Qt::RightEdge)) *result = HTBOTTOMRIGHT;
-                    else if (edges.testFlag(Qt::LeftEdge)) *result = HTLEFT;
-                    else if (edges.testFlag(Qt::RightEdge)) *result = HTRIGHT;
-                    else if (edges.testFlag(Qt::TopEdge)) *result = HTTOP;
-                    else *result = HTBOTTOM;
-                    return true;
-                }
-            }
-
-            // Keep the whole non-resize area in the Qt client region. Returning
-            // HTCAPTION here would route mouse input through Windows and prevent
-            // the title-bar tool buttons from receiving their click events.
-            *result = HTCLIENT;
-            return true;
-        }
-    }
-#else
-    Q_UNUSED(eventType)
-    Q_UNUSED(message)
-    Q_UNUSED(result)
-#endif
+    if (m_windowChrome && m_windowChrome->processNativeEvent(eventType, message, result))
+        return true;
     return QMainWindow::nativeEvent(eventType, message, result);
 }
 
 void MainWindow::applyTitleBarMode(midi_play::settings::TitleBarMode mode)
 {
-    const auto normalizedMode = midi_play::settings::normalizeTitleBarMode(mode);
-    const bool custom = normalizedMode == midi_play::settings::TitleBarMode::Custom;
-    if (m_topBar) {
-        m_topBar->setDragEnabled(custom);
-    }
-    if (m_titleBarMode == normalizedMode && windowFlags().testFlag(Qt::FramelessWindowHint)
-        == custom) {
-        updateWindowControlButtons();
-        return;
-    }
-
-    const bool visible = isVisible();
-    const bool maximized = isMaximized();
-    const bool fullScreen = isFullScreen();
-    const QRect savedNormalGeometry = normalGeometry();
-    if (visible) hide();
-
-    m_titleBarMode = normalizedMode;
-    setWindowFlag(Qt::FramelessWindowHint, custom);
-    m_windowControlsSeparator->setVisible(custom);
-    m_minimizeButton->setVisible(custom);
-    m_maximizeButton->setVisible(custom);
-    m_closeButton->setVisible(custom);
-    updateWindowControlButtons();
-
-    if (visible) {
-        if (fullScreen) showFullScreen();
-        else if (maximized) showMaximized();
-        else {
-            show();
-            if (savedNormalGeometry.isValid()) setGeometry(savedNormalGeometry);
-        }
-    }
+    m_windowChrome->setMode(mode);
+    updateWindowChrome();
 }
 
-void MainWindow::updateWindowControlButtons()
+void MainWindow::updateWindowChrome()
 {
-    if (!m_maximizeButton) return;
-    const bool maximized = isMaximized();
-    m_maximizeButton->setIcon(theme::themedIcon(
-        maximized ? theme::IconGlyph::Restore : theme::IconGlyph::Maximize, theme::themeFor(m_themeMode)));
-    m_maximizeButton->setToolTip(maximized ? QStringLiteral("还原窗口") : QStringLiteral("最大化窗口"));
-    m_maximizeButton->setAccessibleName(maximized ? QStringLiteral("还原窗口")
-                                                  : QStringLiteral("最大化窗口"));
+    if (!m_topBar || !m_windowChrome || !m_systemMenuButton) return;
+    const bool custom = m_windowChrome->mode() == midi_play::settings::TitleBarMode::Custom;
+    m_systemMenuButton->setVisible(custom && !isFullScreen());
+    m_captionButtons->setVisible(custom && !isFullScreen());
+    m_captionButtons->setMaximized(isMaximized());
+    m_topBar->layout()->setContentsMargins(16, 0, custom ? 0 : 12, 0);
+    m_topBar->setFixedHeight(std::max(58, m_windowChrome->minimumCaptionHeight()));
 }
 
 void MainWindow::applyTheme(midi_play::settings::ThemeMode mode)
@@ -607,15 +497,13 @@ void MainWindow::applyTheme(midi_play::settings::ThemeMode mode)
     setStyleSheet(theme::mainWindowStyle(current));
     m_visualization->setThemeMode(m_themeMode);
     m_playbackRateControl->setThemeMode(m_themeMode);
+    m_windowChrome->setTheme(m_themeMode);
     m_openButton->setIcon(theme::themedIcon(theme::IconGlyph::Open, current));
     m_exportButton->setIcon(theme::themedIcon(theme::IconGlyph::Export, current));
     m_settingsButton->setIcon(theme::themedIcon(theme::IconGlyph::Settings, current));
     m_playButton->setIcon(theme::themedIcon(theme::IconGlyph::Play, current));
     m_pauseButton->setIcon(theme::themedIcon(theme::IconGlyph::Pause, current));
     m_stopButton->setIcon(theme::themedIcon(theme::IconGlyph::Stop, current));
-    m_minimizeButton->setIcon(theme::themedIcon(theme::IconGlyph::Minimize, current));
-    m_closeButton->setIcon(theme::themedIcon(theme::IconGlyph::Close, current));
-    updateWindowControlButtons();
 }
 
 void MainWindow::openMusicFile()

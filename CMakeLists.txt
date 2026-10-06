@@ -192,6 +192,12 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/theme/widgetstyles.cpp
     src/presentation/windowchrome/customtitlebar.h
     src/presentation/windowchrome/customtitlebar.cpp
+    src/presentation/windowchrome/captionbuttons.h
+    src/presentation/windowchrome/captionbuttons.cpp
+    src/presentation/windowchrome/windowchromecontroller.h
+    src/presentation/windowchrome/windowchromecontroller.cpp
+    src/presentation/windowchrome/windowchromegeometry.h
+    src/presentation/windowchrome/windowchromegeometry.cpp
     src/presentation/visualization/scenegeometry.h
     src/presentation/visualization/scenelayoutengine.h
     src/presentation/visualization/scenelayoutengine.cpp
@@ -304,6 +310,7 @@ endif()
 
 if (WIN32)
     target_compile_definitions(midi_play_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(midi_play_core PRIVATE dwmapi user32 shell32)
 endif()
 
 include(GNUInstallDirs)
@@ -442,6 +449,24 @@ if (BUILD_TESTING)
     if (TARGET Qt6::QOffscreenIntegrationPlugin)
         set_tests_properties(presentation_backend_configuration PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+    endif()
+
+    add_executable(midi_play_window_chrome_tests tests/windowchrometests.cpp)
+    target_link_libraries(midi_play_window_chrome_tests PRIVATE midi_play_core)
+    add_test(NAME window_chrome_geometry COMMAND midi_play_window_chrome_tests)
+    if (WIN32)
+        target_compile_definitions(midi_play_window_chrome_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        target_link_libraries(midi_play_window_chrome_tests PRIVATE dwmapi user32)
+        add_test(NAME window_chrome_native
+            COMMAND midi_play_window_chrome_tests --native -platform windows)
+        set_tests_properties(window_chrome_native PROPERTIES
+            LABELS "windows;desktop" RUN_SERIAL TRUE TIMEOUT 45 SKIP_RETURN_CODE 77)
+        if (MIDI_PLAY_HAS_VULKAN)
+            add_test(NAME window_chrome_vulkan
+                COMMAND midi_play_window_chrome_tests --native --vulkan -platform windows)
+            set_tests_properties(window_chrome_vulkan PROPERTIES
+                LABELS "windows;desktop;vulkan" RUN_SERIAL TRUE TIMEOUT 60 SKIP_RETURN_CODE 77)
+        endif()
     endif()
 
     add_executable(midi_play_video_export_tests tests/videoexporttests.cpp)

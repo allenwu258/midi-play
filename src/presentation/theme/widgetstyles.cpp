@@ -85,6 +85,14 @@ QString mainWindowStyle(const AppTheme& theme)
         QWidget#transportBar { border-top: 1px solid @divider@; }
         QLabel#brandLabel { color: @text@; font-size: 17px; font-weight: 600; }
         QLabel#fileLabel { color: @fileText@; font-size: 12px; }
+        QWidget#topBar[windowActive="false"] QLabel#brandLabel,
+        QWidget#topBar[windowActive="false"] QLabel#fileLabel { color: @mutedText@; }
+        QWidget#topBar[nativeHighContrast="true"] { background: palette(window); }
+        QWidget#topBar[nativeHighContrast="true"] QLabel { color: palette(window-text); }
+        QWidget#topBar[nativeHighContrast="true"] QToolButton { color: palette(button-text); }
+        QWidget#topBar[nativeHighContrast="true"] QToolButton:hover {
+            background: palette(highlight); color: palette(highlighted-text);
+        }
         QLabel#statusLabel { color: @mutedText@; font-size: 11px; }
         QLabel#soundFontError { color: @errorText@; font-size: 12px; padding: 4px 8px; }
         QLabel#metricLabel { color: @secondaryText@; font-size: 11px; }

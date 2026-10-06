@@ -24,6 +24,8 @@ namespace midi_play::app { class SettingsService; }
 namespace midi_play::app { class FfmpegService; }
 namespace midi_play::presentation::settings { class SettingsDialog; }
 namespace midi_play::presentation::windowchrome { class CustomTitleBar; }
+namespace midi_play::presentation::windowchrome { class WindowChromeController; }
+namespace midi_play::presentation::windowchrome { class CaptionButtons; }
 namespace midi_play::presentation::visualization { class FallingNotesView; }
 namespace midi_play::presentation::theme { class ThemeController; }
 
@@ -60,7 +62,7 @@ private:
     void updateResponsiveVisibility();
     void updateTransportControls();
     void applyTitleBarMode(midi_play::settings::TitleBarMode mode);
-    void updateWindowControlButtons();
+    void updateWindowChrome();
     void applyTheme(midi_play::settings::ThemeMode mode);
     void updateVideoExportAvailability();
 
@@ -72,9 +74,10 @@ private:
     theme::ThemeController* m_themeController = nullptr;
     midi_play::settings::ThemeMode m_themeMode = midi_play::settings::kDefaultThemeMode;
     QPointer<settings::SettingsDialog> m_settingsDialog;
-    midi_play::settings::TitleBarMode m_titleBarMode = midi_play::settings::kDefaultTitleBarMode;
     windowchrome::CustomTitleBar* m_topBar = nullptr;
-    QFrame* m_windowControlsSeparator = nullptr;
+    windowchrome::WindowChromeController* m_windowChrome = nullptr;
+    QToolButton* m_systemMenuButton = nullptr;
+    windowchrome::CaptionButtons* m_captionButtons = nullptr;
     visualization::FallingNotesView* m_visualization = nullptr;
     QLabel* m_fileLabel = nullptr;
     QLabel* m_keyLabel = nullptr;
@@ -92,9 +95,6 @@ private:
     QToolButton* m_stopButton = nullptr;
     QToolButton* m_metronomeButton = nullptr;
     PlaybackRateControl* m_playbackRateControl = nullptr;
-    QToolButton* m_minimizeButton = nullptr;
-    QToolButton* m_maximizeButton = nullptr;
-    QToolButton* m_closeButton = nullptr;
     QSlider* m_positionSlider = nullptr;
     midi_play::visualization::VisualChartPtr m_chart;
     PlaybackMetadataTimeline m_metadataTimeline;
