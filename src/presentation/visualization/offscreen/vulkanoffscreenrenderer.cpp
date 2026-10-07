@@ -22,6 +22,7 @@ struct Buffer {
     void* mapped = nullptr;
     VkDeviceSize capacity = 0;
     bool coherent = false;
+    bool cached = false;
 };
 struct Texture {
     VkImage image = VK_NULL_HANDLE;
@@ -67,7 +68,8 @@ private:
         uint32_t timestampQueryBase = 0;
     };
     uint32_t memoryType(uint32_t bits, VkMemoryPropertyFlags required, VkMemoryPropertyFlags preferred);
-    void reserve(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage);
+    void reserve(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage,
+                 VkMemoryPropertyFlags preferred = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void write(Buffer& buffer, const void* data, VkDeviceSize size);
     void destroy(Buffer& buffer);
     void destroy(Texture& texture);
@@ -122,7 +124,8 @@ void VulkanOffscreenRenderer::Impl::destroy(Buffer& buffer)
     if (buffer.memory) vkFreeMemory(m_device, buffer.memory, nullptr);
     buffer = {};
 }
-void VulkanOffscreenRenderer::Impl::reserve(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage)
+void VulkanOffscreenRenderer::Impl::reserve(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage,
+                                            VkMemoryPropertyFlags preferred)
 {
     if (buffer.handle && buffer.capacity >= size) return;
     destroy(buffer);
@@ -132,7 +135,7 @@ void VulkanOffscreenRenderer::Impl::reserve(Buffer& buffer, VkDeviceSize size, V
     VkMemoryRequirements requirements;
     vkGetBufferMemoryRequirements(m_device, buffer.handle, &requirements);
     const auto type = memoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                 preferred);
     VkMemoryAllocateInfo allocation {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     allocation.allocationSize = requirements.size; allocation.memoryTypeIndex = type;
     check(vkAllocateMemory(m_device, &allocation, nullptr, &buffer.memory), "allocate buffer");
@@ -140,6 +143,7 @@ void VulkanOffscreenRenderer::Impl::reserve(Buffer& buffer, VkDeviceSize size, V
     check(vkMapMemory(m_device, buffer.memory, 0, VK_WHOLE_SIZE, 0, &buffer.mapped), "map buffer");
     buffer.capacity = info.size;
     buffer.coherent = (m_memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+    buffer.cached = (m_memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0;
 }
 void VulkanOffscreenRenderer::Impl::write(Buffer& buffer, const void* data, VkDeviceSize size)
 {
@@ -386,7 +390,11 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         framebuffer.pAttachments = &slot.target.view;
         check(vkCreateFramebuffer(m_device, &framebuffer, nullptr, &slot.framebuffer), "create frame framebuffer");
-        reserve(slot.readback, readbackBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        // Uploads favor coherent writes; readback favors cached CPU reads.
+        // A host-visible fallback remains valid on devices without HOST_CACHED.
+        reserve(slot.readback, readbackBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+        m_diagnostics.readbackHostCached = slot.readback.cached;
     }
     const auto geometry = SceneLayoutEngine().layout(config.logicalSize, config.state.chart.get(),
         config.state.lookAheadUs, config.state.showNotationStrip);

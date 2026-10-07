@@ -37,9 +37,13 @@ struct VideoExportMetrics {
     qint64 readbackMs = 0;
     qint64 qimageCopyMs = 0;
     qint64 gpuFrameMs = 0;
+    qint64 encoderFrameBufferWaitMs = 0;
     qint64 encoderQueueWaitMs = 0;
     qint64 ffmpegWriteMs = 0;
     int peakEncoderQueueDepth = 0;
+    QString videoEncoder;
+    bool hardwareAccelerated = false;
+    qint64 encoderSelectionMs = 0;
     bool gpuTimestamps = false;
     QString vulkanDeviceName;
     QString vulkanDeviceType;

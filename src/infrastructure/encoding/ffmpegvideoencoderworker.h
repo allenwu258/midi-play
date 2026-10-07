@@ -14,9 +14,13 @@ namespace midi_play::encoding {
 struct FfmpegVideoEncoderDiagnostics {
     qint64 submittedFrames = 0;
     qint64 encodedFrames = 0;
+    quint64 recycledFrameWaitNs = 0;
     quint64 queueWaitNs = 0;
     quint64 writeNs = 0;
     int peakQueueDepth = 0;
+    QString videoEncoder;
+    bool hardwareAccelerated = false;
+    quint64 encoderSelectionNs = 0;
 };
 
 // Owns FfmpegVideoEncoder and its QProcess on one dedicated thread. The
@@ -33,6 +37,9 @@ public:
     bool open(const QString& executable, const QString& output, const QString& pcmPath,
               QSize size, int fps, int crf, qint64 frameCount, int audioSampleRate,
               const std::atomic_bool* canceled, QString* error);
+    // A single producer acquires a buffer, fills it, then moves it into
+    // submitFrame(). The encoder returns buffers after copying them to QProcess.
+    bool acquireFrame(QImage& frame, QString* error);
     bool submitFrame(QImage frame, QString* error);
     bool finish(QString* error);
 
@@ -49,8 +56,11 @@ private:
     mutable std::mutex m_mutex;
     std::condition_variable m_notEmpty;
     std::condition_variable m_notFull;
+    std::condition_variable m_frameAvailable;
     std::condition_variable m_started;
     std::deque<QImage> m_frames;
+    std::deque<QImage> m_recycledFrames;
+    QSize m_frameSize;
     std::thread m_thread;
     const std::atomic_bool* m_canceled = nullptr;
     QString m_error;
@@ -62,9 +72,13 @@ private:
     qint64 m_submittedFrames = 0;
     qint64 m_encodedFrames = 0;
     bool m_diagnosticsEnabled = false;
+    quint64 m_recycledFrameWaitNs = 0;
     quint64 m_queueWaitNs = 0;
     quint64 m_writeNs = 0;
     int m_peakQueueDepth = 0;
+    QString m_videoEncoder;
+    bool m_hardwareAccelerated = false;
+    quint64 m_encoderSelectionNs = 0;
 };
 
 } // namespace midi_play::encoding

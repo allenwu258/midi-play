@@ -51,6 +51,7 @@ void appendVideoDiagnostics(const VideoExportOptions& options, qint64 frameCount
     json.insert(QStringLiteral("vulkanTimestampValidBits"), int(renderer.timestampValidBits));
     json.insert(QStringLiteral("vulkanDeviceLocalHeapBytes"), qint64(renderer.deviceLocalHeapBytes));
     json.insert(QStringLiteral("vulkanHostVisibleHeapBytes"), qint64(renderer.hostVisibleHeapBytes));
+    json.insert(QStringLiteral("readbackHostCached"), renderer.readbackHostCached);
     json.insert(QStringLiteral("gpuTimestamps"), renderer.gpuTimestamps);
     json.insert(QStringLiteral("submittedFrames"), renderer.submittedFrames);
     json.insert(QStringLiteral("completedFrames"), renderer.completedFrames);
@@ -65,8 +66,12 @@ void appendVideoDiagnostics(const VideoExportOptions& options, qint64 frameCount
     json.insert(QStringLiteral("readbackNs"), qint64(renderer.readbackNs));
     json.insert(QStringLiteral("qimageCopyNs"), qint64(renderer.qimageCopyNs));
     json.insert(QStringLiteral("gpuFrameNs"), qint64(renderer.gpuFrameNs));
+    json.insert(QStringLiteral("encoderFrameBufferWaitNs"), qint64(encoder.recycledFrameWaitNs));
     json.insert(QStringLiteral("encoderQueueWaitNs"), qint64(encoder.queueWaitNs));
     json.insert(QStringLiteral("ffmpegWriteNs"), qint64(encoder.writeNs));
+    json.insert(QStringLiteral("videoEncoder"), encoder.videoEncoder);
+    json.insert(QStringLiteral("hardwareAccelerated"), encoder.hardwareAccelerated);
+    json.insert(QStringLiteral("encoderSelectionNs"), qint64(encoder.encoderSelectionNs));
     json.insert(QStringLiteral("audioRenderMs"), metrics.audioRenderMs);
     json.insert(QStringLiteral("videoPipelineMs"), metrics.videoPipelineMs);
     json.insert(QStringLiteral("muxFinalizeMs"), metrics.muxFinalizeMs);
@@ -181,6 +186,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         auto current = std::move(pending.front());
         pending.pop_front();
         QImage frame;
+        if (!encoder.acquireFrame(frame, &error)) return false;
         if (!renderer.completeRender(current.ticket, frame, canceled, &error)) return false;
         if (!encoder.submitFrame(std::move(frame), &error)) return false;
         metrics.encodedFrames = encoder.encodedFrames();
@@ -252,9 +258,13 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         metrics.readbackMs = nanosecondsToMilliseconds(rendererDiagnostics.readbackNs);
         metrics.qimageCopyMs = nanosecondsToMilliseconds(rendererDiagnostics.qimageCopyNs);
         metrics.gpuFrameMs = nanosecondsToMilliseconds(rendererDiagnostics.gpuFrameNs);
+        metrics.encoderFrameBufferWaitMs = nanosecondsToMilliseconds(encoderDiagnostics.recycledFrameWaitNs);
         metrics.encoderQueueWaitMs = nanosecondsToMilliseconds(encoderDiagnostics.queueWaitNs);
         metrics.ffmpegWriteMs = nanosecondsToMilliseconds(encoderDiagnostics.writeNs);
         metrics.peakEncoderQueueDepth = encoderDiagnostics.peakQueueDepth;
+        metrics.videoEncoder = encoderDiagnostics.videoEncoder;
+        metrics.hardwareAccelerated = encoderDiagnostics.hardwareAccelerated;
+        metrics.encoderSelectionMs = nanosecondsToMilliseconds(encoderDiagnostics.encoderSelectionNs);
         metrics.gpuTimestamps = rendererDiagnostics.gpuTimestamps;
         metrics.vulkanDeviceName = rendererDiagnostics.deviceName;
         metrics.vulkanDeviceType = rendererDiagnostics.deviceType;

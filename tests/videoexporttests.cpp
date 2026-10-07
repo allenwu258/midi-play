@@ -4,12 +4,15 @@
 #include "app/settingsservice.h"
 #include "app/videoexportservice.h"
 #include "domain/music/musicdocument.h"
+#include "domain/playback/playbackmodel.h"
+#include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/encoding/ffmpegprobe.h"
 #include "infrastructure/settings/qsettingsstore.h"
 #include "presentation/exportdialog.h"
 #include "presentation/mainwindow.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
@@ -20,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -303,6 +307,89 @@ void testVideoIntegration()
     }
 }
 
+void benchmarkVideoExport()
+{
+#if MIDI_PLAY_HAS_VULKAN
+    using midi_play::presentation::visualization::VulkanOffscreenRenderer;
+    using midi_play::presentation::visualization::VulkanRenderTicket;
+    const auto document = integrationDocument(false);
+    const auto ffmpeg = midi_play::encoding::probeFfmpeg(
+        QStandardPaths::findExecutable(QStringLiteral("ffmpeg")), false);
+    require(ffmpeg.valid, "benchmark requires FFmpeg");
+    QTemporaryDir directory;
+    require(directory.isValid(), "benchmark directory is available");
+    for (const QSize size : {QSize(1920, 1080), QSize(3840, 2160)}) {
+        midi_play::app::VideoExportOptions options;
+        options.ffmpegExecutable = ffmpeg.executablePath;
+        options.outputPath = directory.filePath(QStringLiteral("benchmark.mp4"));
+        options.includeAudio = false;
+        options.tailMilliseconds = 0;
+        options.scene.outputSize = size;
+        options.scene.font = QApplication::font();
+
+        QElapsedTimer totalTimer;
+        totalTimer.start();
+        const auto result = midi_play::app::VideoExportService::exportDocument(document, options);
+        if (result.status != midi_play::app::VideoExportStatus::Success)
+            std::fprintf(stderr, "%s\n", result.error.toUtf8().constData());
+        require(result.status == midi_play::app::VideoExportStatus::Success, "benchmark export succeeds");
+        const qint64 totalMs = totalTimer.elapsed();
+        const auto& metrics = result.metrics;
+        std::fprintf(stdout,
+            "BENCHMARK export %dx%d frames=%lld pipeline_ms=%lld finalize_ms=%lld total_ms=%lld\n",
+            size.width(), size.height(), result.frames, metrics.videoPipelineMs, metrics.muxFinalizeMs, totalMs);
+
+        auto scene = options.scene;
+        scene.state.chart = midi_play::visualization::PlaybackVisualizationProjector().project(*document, 1, {});
+        scene.state.durationUs = midi_play::playback::PlaybackModel(document).durationUs();
+        VulkanOffscreenRenderer renderer;
+        QString error;
+        require(renderer.initialize(scene, &error), "benchmark renderer initializes");
+        // Reuse three images and warm each Vulkan slot before measuring to
+        // distinguish steady readback cost from allocation and shader startup.
+        QImage frames[3];
+        for (auto& frame : frames) frame = QImage(size, QImage::Format_RGBA8888);
+        std::deque<VulkanRenderTicket> pending;
+        for (int i = 0; i < 3; ++i) {
+            VulkanRenderTicket ticket;
+            require(renderer.beginRender(i * 16'667, ticket, nullptr, &error), "warmup frame submits");
+            pending.push_back(ticket);
+        }
+        for (int i = 0; i < 3; ++i) {
+            auto ticket = pending.front();
+            pending.pop_front();
+            require(renderer.completeRender(ticket, frames[i], nullptr, &error), "warmup frame completes");
+        }
+        const auto initial = renderer.diagnostics();
+        constexpr int frameCount = 120;
+        int completed = 0;
+        const auto completeNext = [&] {
+            auto ticket = pending.front();
+            pending.pop_front();
+            require(renderer.completeRender(ticket, frames[completed % 3], nullptr, &error),
+                    "benchmark readback completes");
+            ++completed;
+        };
+        totalTimer.restart();
+        for (int i = 0; i < frameCount; ++i) {
+            if (pending.size() == 3) completeNext();
+            VulkanRenderTicket ticket;
+            require(renderer.beginRender(i * 16'667, ticket, nullptr, &error), "benchmark frame submits");
+            pending.push_back(ticket);
+        }
+        while (!pending.empty()) completeNext();
+        const qint64 renderMs = totalTimer.elapsed();
+        const auto final = renderer.diagnostics();
+        require(completed == frameCount, "benchmark completes all frame slots");
+        std::fprintf(stdout,
+            "BENCHMARK render %dx%d frames=%d elapsed_ms=%lld copy_ms=%.3f gpu_ms=%.3f\n",
+            size.width(), size.height(), frameCount, renderMs,
+            double(final.qimageCopyNs - initial.qimageCopyNs) / 1e6,
+            double(final.gpuFrameNs - initial.gpuFrameNs) / 1e6);
+    }
+#endif
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -313,5 +400,6 @@ int main(int argc, char** argv)
     testFfmpegSettings();
     testUnifiedExportDialogTabs();
     if (app.arguments().contains(QStringLiteral("--integration"))) testVideoIntegration();
+    if (app.arguments().contains(QStringLiteral("--benchmark"))) benchmarkVideoExport();
     return 0;
 }

@@ -5,6 +5,12 @@
 #include <atomic>
 
 namespace midi_play::encoding {
+struct FfmpegVideoEncoderRuntimeDiagnostics {
+    QString videoEncoder;
+    bool hardwareAccelerated = false;
+    quint64 selectionNs = 0;
+};
+
 class FfmpegVideoEncoder final {
 public:
     ~FfmpegVideoEncoder();
@@ -13,6 +19,7 @@ public:
               const std::atomic_bool* canceled, QString* error);
     bool writeFrame(const QImage& frame, QString* error);
     bool finish(QString* error);
+    FfmpegVideoEncoderRuntimeDiagnostics diagnostics() const { return m_runtimeDiagnostics; }
     static bool validate(const QString& executable, const QString& path,
                          const std::atomic_bool* canceled, QString* error,
                          QSize expectedSize = {}, int expectedFps = 0,
@@ -23,10 +30,11 @@ private:
     bool processError(QString* error);
     QProcess m_process;
     const std::atomic_bool* m_canceled = nullptr;
-    QByteArray m_diagnostics;
+    QByteArray m_processDiagnostics;
     QSize m_size;
     qint64 m_expectedFrames = 0;
     qint64 m_writtenFrames = 0;
     int m_audioSampleRate = 44'100;
+    FfmpegVideoEncoderRuntimeDiagnostics m_runtimeDiagnostics;
 };
 } // namespace midi_play::encoding

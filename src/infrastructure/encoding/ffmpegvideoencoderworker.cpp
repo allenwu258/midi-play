@@ -3,10 +3,14 @@
 
 #include <QElapsedTimer>
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <utility>
 
 namespace midi_play::encoding {
+namespace {
+constexpr auto cancellationPollInterval = std::chrono::milliseconds(50);
+}
 
 FfmpegVideoEncoderWorker::FfmpegVideoEncoderWorker(std::size_t capacity)
     : m_capacity(std::max<std::size_t>(1, capacity))
@@ -23,6 +27,7 @@ FfmpegVideoEncoderWorker::~FfmpegVideoEncoderWorker()
     }
     m_notEmpty.notify_all();
     m_notFull.notify_all();
+    m_frameAvailable.notify_all();
     if (m_thread.joinable()) m_thread.join();
 }
 
@@ -38,6 +43,18 @@ bool FfmpegVideoEncoderWorker::open(const QString& executable, const QString& ou
             return false;
         }
         m_canceled = canceled;
+        m_frameSize = size;
+        // Queue capacity plus one consumer and one producer buffer. Allocation
+        // happens once; legacy submitFrame() callers may still provide images.
+        for (std::size_t i = 0; i < m_capacity + 2; ++i) {
+            QImage frame(size, QImage::Format_RGBA8888);
+            if (frame.isNull()) {
+                m_recycledFrames.clear();
+                if (error) *error = QStringLiteral("Cannot allocate video frame buffers");
+                return false;
+            }
+            m_recycledFrames.push_back(std::move(frame));
+        }
     }
     try {
         m_thread = std::thread(&FfmpegVideoEncoderWorker::run, this,
@@ -58,6 +75,27 @@ bool FfmpegVideoEncoderWorker::open(const QString& executable, const QString& ou
     return true;
 }
 
+bool FfmpegVideoEncoderWorker::acquireFrame(QImage& frame, QString* error)
+{
+    std::unique_lock lock(m_mutex);
+    if (!m_startedFlag || !m_opened) {
+        if (error) *error = m_error.isEmpty() ? QStringLiteral("FFmpeg 编码工作线程未启动") : m_error;
+        return false;
+    }
+    QElapsedTimer timer;
+    if (m_diagnosticsEnabled) timer.start();
+    while (m_recycledFrames.empty() && !shouldStopLocked())
+        m_frameAvailable.wait_for(lock, cancellationPollInterval);
+    if (m_diagnosticsEnabled) m_recycledFrameWaitNs += quint64(timer.nsecsElapsed());
+    if (shouldStopLocked() || m_recycledFrames.empty()) {
+        if (error) *error = m_error;
+        return false;
+    }
+    frame = std::move(m_recycledFrames.front());
+    m_recycledFrames.pop_front();
+    return true;
+}
+
 bool FfmpegVideoEncoderWorker::submitFrame(QImage frame, QString* error)
 {
     if (frame.isNull()) {
@@ -69,11 +107,15 @@ bool FfmpegVideoEncoderWorker::submitFrame(QImage frame, QString* error)
         if (error) *error = m_error.isEmpty() ? QStringLiteral("FFmpeg 编码工作线程未启动") : m_error;
         return false;
     }
+    if (frame.size() != m_frameSize || frame.format() != QImage::Format_RGBA8888
+        || frame.bytesPerLine() != m_frameSize.width() * 4) {
+        if (error) *error = QStringLiteral("Invalid video frame format");
+        return false;
+    }
     QElapsedTimer queueTimer;
     if (m_diagnosticsEnabled) queueTimer.start();
-    m_notFull.wait(lock, [this] {
-        return m_frames.size() < m_capacity || shouldStopLocked();
-    });
+    while (m_frames.size() >= m_capacity && !shouldStopLocked())
+        m_notFull.wait_for(lock, cancellationPollInterval);
     if (m_diagnosticsEnabled) m_queueWaitNs += quint64(queueTimer.nsecsElapsed());
     if (shouldStopLocked()) {
         if (error) *error = m_error;
@@ -100,6 +142,7 @@ bool FfmpegVideoEncoderWorker::finish(QString* error)
     }
     m_notEmpty.notify_all();
     m_notFull.notify_all();
+    m_frameAvailable.notify_all();
     if (m_thread.joinable()) m_thread.join();
 
     std::lock_guard lock(m_mutex);
@@ -123,7 +166,9 @@ FfmpegVideoEncoderDiagnostics FfmpegVideoEncoderWorker::diagnostics() const
 {
     std::lock_guard lock(m_mutex);
     if (!m_diagnosticsEnabled) return {};
-    return {m_submittedFrames, m_encodedFrames, m_queueWaitNs, m_writeNs, m_peakQueueDepth};
+    return {m_submittedFrames, m_encodedFrames, m_recycledFrameWaitNs,
+            m_queueWaitNs, m_writeNs, m_peakQueueDepth, m_videoEncoder,
+            m_hardwareAccelerated, m_encoderSelectionNs};
 }
 
 void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString pcmPath,
@@ -143,13 +188,20 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
     m_started.notify_all();
     if (!opened) return;
 
+    {
+        const auto encoderDiagnostics = encoder.diagnostics();
+        std::lock_guard lock(m_mutex);
+        m_videoEncoder = encoderDiagnostics.videoEncoder;
+        m_hardwareAccelerated = encoderDiagnostics.hardwareAccelerated;
+        m_encoderSelectionNs = encoderDiagnostics.selectionNs;
+    }
+
     for (;;) {
         QImage frame;
         {
             std::unique_lock lock(m_mutex);
-            m_notEmpty.wait(lock, [this] {
-                return !m_frames.empty() || m_stopRequested || m_abortRequested;
-            });
+            while (m_frames.empty() && !shouldStopLocked())
+                m_notEmpty.wait_for(lock, cancellationPollInterval);
             if (m_abortRequested || (canceled && canceled->load())) {
                 m_frames.clear();
                 break;
@@ -169,19 +221,24 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
             m_stopRequested = true;
             m_frames.clear();
             m_notFull.notify_all();
+            m_frameAvailable.notify_all();
             break;
         }
-        if (m_diagnosticsEnabled) m_writeNs += quint64(writeTimer.nsecsElapsed());
         {
             std::lock_guard lock(m_mutex);
+            if (m_diagnosticsEnabled) m_writeNs += quint64(writeTimer.nsecsElapsed());
             ++m_encodedFrames;
+            if (m_recycledFrames.size() < m_capacity + 2)
+                m_recycledFrames.push_back(std::move(frame));
         }
+        m_frameAvailable.notify_one();
         if (canceled && canceled->load()) {
             std::lock_guard lock(m_mutex);
             m_abortRequested = true;
             m_stopRequested = true;
             m_frames.clear();
             m_notFull.notify_all();
+            m_frameAvailable.notify_all();
             break;
         }
     }

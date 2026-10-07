@@ -28,6 +28,7 @@ struct VulkanRenderDiagnostics {
     quint32 timestampValidBits = 0;
     quint64 deviceLocalHeapBytes = 0;
     quint64 hostVisibleHeapBytes = 0;
+    bool readbackHostCached = false;
     quint64 scenePrepareNs = 0;
     quint64 bufferUploadNs = 0;
     quint64 commandRecordNs = 0;
