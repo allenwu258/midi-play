@@ -20,11 +20,22 @@ struct VideoExportOptions {
     bool includeMetronome = false;
 };
 enum class VideoExportStatus { Success, Failed, Canceled };
+struct VideoExportMetrics {
+    qint64 audioRenderMs = 0;
+    qint64 videoPipelineMs = 0;
+    qint64 muxFinalizeMs = 0;
+    qint64 validationMs = 0;
+    qint64 commitMs = 0;
+    qint64 submittedFrames = 0;
+    qint64 encodedFrames = 0;
+    int peakInFlightFrames = 0;
+};
 struct VideoExportResult {
     VideoExportStatus status = VideoExportStatus::Failed;
     QString error;
     qint64 frames = 0;
     quint64 clippedSamples = 0;
+    VideoExportMetrics metrics;
 };
 class VideoExportService final {
 public:

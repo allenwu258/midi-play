@@ -275,6 +275,11 @@ void testVideoIntegration()
                     "Vulkan and FFmpeg export a multi-note MP4");
             require(result.frames > 0 && QFileInfo(options.outputPath).size() > 0,
                     "integration MP4 has frames and bytes");
+            require(result.metrics.submittedFrames == result.frames
+                        && result.metrics.encodedFrames == result.frames,
+                    "concurrent pipeline submits and encodes every frame");
+            require(result.metrics.peakInFlightFrames >= 2,
+                    "concurrent pipeline keeps multiple Vulkan frames in flight");
 
             // The reference calls the existing standalone export service.
             // Speed is represented as a tempo change in its input document,

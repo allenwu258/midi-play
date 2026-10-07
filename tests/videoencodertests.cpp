@@ -1,5 +1,6 @@
 #include "app/exporttimeline.h"
 #include "infrastructure/encoding/ffmpegvideoencoder.h"
+#include "infrastructure/encoding/ffmpegvideoencoderworker.h"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -239,6 +240,31 @@ void testInvalidPcm(const QString& ffmpeg, const QString& directory)
     require(!encoder.finish(&error), "encoder rejects missing video frames");
 }
 
+void testEncoderWorker(const QString& ffmpeg, const QString& ffprobe, const QString& directory)
+{
+    const midi_play::app::ExportTimeline timeline(500'003, 30, 100, 0);
+    const QString output = directory + QStringLiteral("/worker.mp4");
+    midi_play::encoding::FfmpegVideoEncoderWorker worker(2);
+    QString error;
+    const QSize size(96, 64);
+    require(worker.open(ffmpeg, output, {}, size, 30, 20, timeline.frameCount(), sampleRate,
+                        nullptr, &error), "encoder worker opens", error);
+    for (qint64 i = 0; i < timeline.frameCount(); ++i) {
+        QImage frame(size, QImage::Format_RGBA8888);
+        frame.fill(QColor(int(i * 29 % 200) + 20, int(i * 17 % 200) + 20, int(i * 43 % 200) + 20));
+        require(worker.submitFrame(std::move(frame), &error), "encoder worker accepts frame", error);
+    }
+    require(worker.finish(&error), "encoder worker finalizes frames", error);
+    require(worker.submittedFrames() == timeline.frameCount()
+                && worker.encodedFrames() == timeline.frameCount(),
+            "encoder worker preserves submitted and encoded frame counts");
+    require(midi_play::encoding::FfmpegVideoEncoder::validate(ffmpeg, output, nullptr, &error,
+                size, 30, timeline.frameCount(), false, timeline.videoDurationUs()),
+            "encoder worker output passes integrity check", error);
+    if (!ffprobe.isEmpty()) verifyVideoPts(ffprobe, output, timeline, 30);
+    std::fprintf(stdout, "PASS: bounded FFmpeg encoder worker\n");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -253,6 +279,7 @@ int main(int argc, char** argv)
     QTemporaryDir directory;
     require(directory.isValid(), "encoder test directory exists");
     testInvalidPcm(ffmpeg, directory.path());
+    testEncoderWorker(ffmpeg, ffprobe, directory.path());
     for (const int fps : {30, 60}) {
         for (const int rate : {50, 100, 120, 150, 200}) {
             testEncoding(ffmpeg, ffprobe, directory.path(), fps, rate, true);

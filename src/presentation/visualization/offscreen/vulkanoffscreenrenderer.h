@@ -14,12 +14,28 @@ struct ExportSceneConfig {
     QImage background;
 };
 
-// Owns a Vulkan device and an image target. No window, surface or swapchain.
+// A submitted frame owns one slot in the renderer until completeRender().
+// The ticket is intentionally small; it only carries the slot identity
+// needed to match a GPU completion with its frame.
+struct VulkanRenderTicket {
+    int slot = -1;
+    qint64 musicPositionUs = 0;
+
+    bool valid() const { return slot >= 0; }
+};
+
+// Owns a Vulkan device and a bounded set of image targets. No window, surface
+// or swapchain is involved. beginRender()/completeRender() expose GPU work
+// without making callers share Vulkan objects across threads.
 class VulkanOffscreenRenderer final {
 public:
     VulkanOffscreenRenderer();
     ~VulkanOffscreenRenderer();
     bool initialize(const ExportSceneConfig& config, QString* error);
+    bool beginRender(qint64 musicPositionUs, VulkanRenderTicket& ticket,
+                     const std::atomic_bool* canceled, QString* error);
+    bool completeRender(VulkanRenderTicket& ticket, QImage& frame,
+                        const std::atomic_bool* canceled, QString* error);
     bool render(qint64 musicPositionUs, QImage& frame, const std::atomic_bool* canceled, QString* error);
 private:
     class Impl;

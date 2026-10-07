@@ -615,3 +615,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 `
 另外在 PATH 仅提供 FFmpeg、没有 ffprobe 的独立环境重新完成 12 组编码测试，确认可使用完整解码检查完成导出。dist 中未包含 FFmpeg 或 ffprobe。专项编码和 Vulkan 集成需要在运行时 PATH 包含外部 FFmpeg、Qt 及构建目录 DLL 的环境单独执行。本轮保持 `feat/video-export-vulkan` 分支的所有修改未提交。
 
 2026-10-06 用户样例修正后，再次使用 dist 流程构建 Vulkan Release。13 项 CTest 中 12 项通过；脚本运行时从 PATH 清理外部 FFmpeg，因此编码回环按设计跳过，并随后在构建环境手动通过。8 组真实 Vulkan 集成也全部通过。打包 GUI/CLI 依赖闭包与渲染、MP3 smoke 均通过，程序 SHA256 与 Release 构建产物一致，包内没有 FFmpeg/ffprobe。原 `dist/midi-play-video-export-windows-x64` 正被运行中的 GUI 占用，脚本拒绝移动该目录；为保留打开中的进程并交付可用产物，本轮新包输出为 `dist/midi-play-video-export-audio-fix-windows-x64/`，所有源码仍未提交。
+
+## 24. 并发导出第一阶段（2026-10-07）
+
+新分支 `feat/video-export-concurrent-pipeline` 将 Vulkan 离屏导出从每帧同步等待改为有界的三槽流水线。每个槽独立拥有目标图像、command buffer、fence、动态/静态实例 buffer 和 readback buffer；同一个 Vulkan device/queue 仍由导出线程顺序提交，避免多设备和跨线程 Vulkan 资源竞争。
+
+`VulkanOffscreenRenderer` 新增 `beginRender()` / `completeRender()` 两阶段接口。`VideoExportService` 先填充在途槽位，再按 frame index 完成最早帧并提交到有界的 `FfmpegVideoEncoderWorker`，随后提交下一帧。FFmpeg 的 `QProcess` 在专属线程中创建、写入和结束；工作线程按队列顺序消费，容量耗尽时向渲染侧施加背压。这样 GPU 可以处理后续帧，而 CPU 等待 readback 或编码队列；编码器仍只有一个有序写入者，PTS 和帧顺序不变。原同步 `render()` 接口保留给预览及兼容调用。
+
+`VideoExportResult` 现在返回音频合成、视频流水线、封装、完整性校验和安全提交耗时，以及提交/编码帧数和峰值在途帧数。视频集成测试额外断言所有帧都经过并发流水线且至少有两个 Vulkan 帧同时在途。该阶段没有改变音频采样率、ExportTimeline、FFmpeg 参数或最终文件安全提交语义；1080p/4K 长曲吞吐量仍需在目标设备上用这些指标单独标定。
