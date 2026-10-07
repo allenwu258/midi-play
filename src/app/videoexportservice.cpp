@@ -7,9 +7,12 @@
 #include "infrastructure/encoding/ffmpegvideoencoder.h"
 #include "infrastructure/encoding/ffmpegvideoencoderworker.h"
 #include <QDir>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSaveFile>
 #include <QStorageInfo>
 #include <QTemporaryDir>
@@ -18,6 +21,64 @@
 #include <vector>
 
 namespace midi_play::app {
+namespace {
+qint64 nanosecondsToMilliseconds(quint64 nanoseconds)
+{
+    return qint64((nanoseconds + 500'000) / 1'000'000);
+}
+
+void appendVideoDiagnostics(const VideoExportOptions& options, qint64 frameCount,
+                            const VideoExportMetrics& metrics,
+                            const presentation::visualization::VulkanRenderDiagnostics& renderer,
+                            const encoding::FfmpegVideoEncoderDiagnostics& encoder)
+{
+    if (!renderer.enabled) return;
+    const QString path = qEnvironmentVariable("MIDI_PLAY_VIDEO_DIAGNOSTICS_PATH").trimmed();
+    if (path.isEmpty()) return;
+    QJsonObject json;
+    json.insert(QStringLiteral("schemaVersion"), 1);
+    json.insert(QStringLiteral("timestampUtc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    json.insert(QStringLiteral("frameCount"), frameCount);
+    json.insert(QStringLiteral("fps"), options.fps);
+    json.insert(QStringLiteral("width"), options.scene.outputSize.width());
+    json.insert(QStringLiteral("height"), options.scene.outputSize.height());
+    json.insert(QStringLiteral("includeAudio"), options.includeAudio);
+    json.insert(QStringLiteral("vulkanDeviceName"), renderer.deviceName);
+    json.insert(QStringLiteral("vulkanDeviceType"), renderer.deviceType);
+    json.insert(QStringLiteral("vulkanVendorId"), int(renderer.vendorId));
+    json.insert(QStringLiteral("vulkanDriverVersion"), qint64(renderer.driverVersion));
+    json.insert(QStringLiteral("vulkanQueueFamily"), int(renderer.queueFamily));
+    json.insert(QStringLiteral("vulkanTimestampValidBits"), int(renderer.timestampValidBits));
+    json.insert(QStringLiteral("vulkanDeviceLocalHeapBytes"), qint64(renderer.deviceLocalHeapBytes));
+    json.insert(QStringLiteral("vulkanHostVisibleHeapBytes"), qint64(renderer.hostVisibleHeapBytes));
+    json.insert(QStringLiteral("gpuTimestamps"), renderer.gpuTimestamps);
+    json.insert(QStringLiteral("submittedFrames"), renderer.submittedFrames);
+    json.insert(QStringLiteral("completedFrames"), renderer.completedFrames);
+    json.insert(QStringLiteral("encodedFrames"), encoder.encodedFrames);
+    json.insert(QStringLiteral("peakInFlightFrames"), metrics.peakInFlightFrames);
+    json.insert(QStringLiteral("peakEncoderQueueDepth"), encoder.peakQueueDepth);
+    json.insert(QStringLiteral("scenePrepareNs"), qint64(renderer.scenePrepareNs));
+    json.insert(QStringLiteral("bufferUploadNs"), qint64(renderer.bufferUploadNs));
+    json.insert(QStringLiteral("commandRecordNs"), qint64(renderer.commandRecordNs));
+    json.insert(QStringLiteral("queueSubmitNs"), qint64(renderer.queueSubmitNs));
+    json.insert(QStringLiteral("fenceWaitNs"), qint64(renderer.fenceWaitNs));
+    json.insert(QStringLiteral("readbackNs"), qint64(renderer.readbackNs));
+    json.insert(QStringLiteral("qimageCopyNs"), qint64(renderer.qimageCopyNs));
+    json.insert(QStringLiteral("gpuFrameNs"), qint64(renderer.gpuFrameNs));
+    json.insert(QStringLiteral("encoderQueueWaitNs"), qint64(encoder.queueWaitNs));
+    json.insert(QStringLiteral("ffmpegWriteNs"), qint64(encoder.writeNs));
+    json.insert(QStringLiteral("audioRenderMs"), metrics.audioRenderMs);
+    json.insert(QStringLiteral("videoPipelineMs"), metrics.videoPipelineMs);
+    json.insert(QStringLiteral("muxFinalizeMs"), metrics.muxFinalizeMs);
+    json.insert(QStringLiteral("validationMs"), metrics.validationMs);
+    json.insert(QStringLiteral("commitMs"), metrics.commitMs);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) return;
+    file.write(QJsonDocument(json).toJson(QJsonDocument::Compact));
+    file.write("\n");
+}
+} // namespace
+
 VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music::MusicDocument> document,
     const VideoExportOptions& options, const std::atomic_bool* canceled, Progress progress)
 {
@@ -180,6 +241,25 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     if (isCanceled()) return failure({});
     if (!destination.commit()) return failure(destination.errorString());
     metrics.commitMs = commitTimer.elapsed();
+    const auto rendererDiagnostics = renderer.diagnostics();
+    const auto encoderDiagnostics = encoder.diagnostics();
+    if (rendererDiagnostics.enabled) {
+        metrics.scenePrepareMs = nanosecondsToMilliseconds(rendererDiagnostics.scenePrepareNs);
+        metrics.bufferUploadMs = nanosecondsToMilliseconds(rendererDiagnostics.bufferUploadNs);
+        metrics.commandRecordMs = nanosecondsToMilliseconds(rendererDiagnostics.commandRecordNs);
+        metrics.queueSubmitMs = nanosecondsToMilliseconds(rendererDiagnostics.queueSubmitNs);
+        metrics.fenceWaitMs = nanosecondsToMilliseconds(rendererDiagnostics.fenceWaitNs);
+        metrics.readbackMs = nanosecondsToMilliseconds(rendererDiagnostics.readbackNs);
+        metrics.qimageCopyMs = nanosecondsToMilliseconds(rendererDiagnostics.qimageCopyNs);
+        metrics.gpuFrameMs = nanosecondsToMilliseconds(rendererDiagnostics.gpuFrameNs);
+        metrics.encoderQueueWaitMs = nanosecondsToMilliseconds(encoderDiagnostics.queueWaitNs);
+        metrics.ffmpegWriteMs = nanosecondsToMilliseconds(encoderDiagnostics.writeNs);
+        metrics.peakEncoderQueueDepth = encoderDiagnostics.peakQueueDepth;
+        metrics.gpuTimestamps = rendererDiagnostics.gpuTimestamps;
+        metrics.vulkanDeviceName = rendererDiagnostics.deviceName;
+        metrics.vulkanDeviceType = rendererDiagnostics.deviceType;
+        appendVideoDiagnostics(options, timeline.frameCount(), metrics, rendererDiagnostics, encoderDiagnostics);
+    }
     report(100, QStringLiteral("视频已导出"));
     return {VideoExportStatus::Success, {}, timeline.frameCount(), clipped, metrics};
 #endif

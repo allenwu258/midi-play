@@ -2,6 +2,7 @@
 #include "vulkanoffscreenrenderer.h"
 #include "presentation/visualization/vulkanscene.h"
 #include "presentation/visualization/vulkanpipeline.h"
+#include <QElapsedTimer>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -29,6 +30,17 @@ struct Texture {
     Buffer staging;
     bool uploaded = false;
 };
+
+QString physicalDeviceTypeName(VkPhysicalDeviceType type)
+{
+    switch (type) {
+    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return QStringLiteral("integrated");
+    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return QStringLiteral("discrete");
+    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return QStringLiteral("virtual");
+    case VK_PHYSICAL_DEVICE_TYPE_CPU: return QStringLiteral("cpu");
+    default: return QStringLiteral("other");
+    }
+}
 }
 
 class VulkanOffscreenRenderer::Impl {
@@ -38,6 +50,7 @@ public:
     bool beginRender(qint64 position, VulkanRenderTicket& ticket, const std::atomic_bool* canceled);
     bool completeRender(VulkanRenderTicket& ticket, QImage& frame, const std::atomic_bool* canceled);
     bool render(qint64 position, QImage& frame, const std::atomic_bool* canceled);
+    VulkanRenderDiagnostics diagnostics() const { return m_diagnostics; }
 private:
     struct FrameSlot {
         Texture target;
@@ -51,6 +64,7 @@ private:
         quint64 notesRevision = 0;
         quint64 staticUiRevision = 0;
         bool inFlight = false;
+        uint32_t timestampQueryBase = 0;
     };
     uint32_t memoryType(uint32_t bits, VkMemoryPropertyFlags required, VkMemoryPropertyFlags preferred);
     void reserve(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage);
@@ -66,6 +80,7 @@ private:
     ExportSceneConfig m_config;
     VulkanScene m_scene;
     VkInstance m_instance = VK_NULL_HANDLE;
+    uint32_t m_instanceApiVersion = VK_API_VERSION_1_0;
     VkDevice m_device = VK_NULL_HANDLE;
     VkQueue m_queue = VK_NULL_HANDLE;
     VkPhysicalDeviceMemoryProperties m_memory {};
@@ -77,11 +92,14 @@ private:
     VkPipelineLayout m_layout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkSampler m_sampler = VK_NULL_HANDLE;
+    VkQueryPool m_timestampQueries = VK_NULL_HANDLE;
+    float m_timestampPeriod = 0.0f;
     Texture m_atlas, m_background;
     std::vector<FrameSlot> m_slots;
     quint64 m_atlasRevision = 0;
     float m_scale = 1, m_offsetX = 0, m_offsetY = 0;
     VkRect2D m_scissor {};
+    VulkanRenderDiagnostics m_diagnostics;
 };
 
 uint32_t VulkanOffscreenRenderer::Impl::memoryType(uint32_t bits, VkMemoryPropertyFlags required,
@@ -198,13 +216,20 @@ void VulkanOffscreenRenderer::Impl::uploadTexture(Texture& texture, const QImage
 
 void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
 {
+    m_diagnostics = {};
+    m_diagnostics.enabled = qEnvironmentVariableIntValue("MIDI_PLAY_VIDEO_DIAGNOSTICS") > 0;
     m_config = config;
     m_config.state.candidateNoteIndices = {};
     m_config.state.loading = false; m_config.state.errorMessage.clear();
     m_config.state.transportState = playback::State::Playing;
     m_config.state.effectsStartUs = 0;
+    if (const auto enumerateInstanceVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+            vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"))) {
+        enumerateInstanceVersion(&m_instanceApiVersion);
+        m_instanceApiVersion = std::min(m_instanceApiVersion, uint32_t(VK_API_VERSION_1_2));
+    }
     VkApplicationInfo app {VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    app.pApplicationName = "MIDI Play video export"; app.apiVersion = VK_API_VERSION_1_0;
+    app.pApplicationName = "MIDI Play video export"; app.apiVersion = m_instanceApiVersion;
     VkInstanceCreateInfo instance {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; instance.pApplicationInfo = &app;
     check(vkCreateInstance(&instance, nullptr, &m_instance), "create Vulkan instance");
     uint32_t count = 0;
@@ -226,9 +251,41 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     if (!physical) throw std::runtime_error("No Vulkan graphics device available");
     VkPhysicalDeviceProperties properties;
     vkGetPhysicalDeviceProperties(physical, &properties);
+    vkGetPhysicalDeviceMemoryProperties(physical, &m_memory);
+    m_diagnostics.deviceName = QString::fromUtf8(properties.deviceName);
+    m_diagnostics.deviceType = physicalDeviceTypeName(properties.deviceType);
+    m_diagnostics.vendorId = properties.vendorID;
+    m_diagnostics.driverVersion = properties.driverVersion;
+    m_diagnostics.queueFamily = family;
+    m_diagnostics.timestampValidBits = [&] {
+        uint32_t families = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(physical, &families, nullptr);
+        std::vector<VkQueueFamilyProperties> queueProperties(families);
+        vkGetPhysicalDeviceQueueFamilyProperties(physical, &families, queueProperties.data());
+        return family < families ? queueProperties[family].timestampValidBits : 0u;
+    }();
+    m_timestampPeriod = properties.limits.timestampPeriod;
+    for (uint32_t i = 0; i < m_memory.memoryHeapCount; ++i) {
+        if (m_memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            m_diagnostics.deviceLocalHeapBytes += quint64(m_memory.memoryHeaps[i].size);
+    }
+    std::vector<bool> countedHostHeaps(m_memory.memoryHeapCount, false);
+    for (uint32_t i = 0; i < m_memory.memoryTypeCount; ++i) {
+        if (!(m_memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
+        const auto heap = m_memory.memoryTypes[i].heapIndex;
+        if (!countedHostHeaps[heap]) {
+            m_diagnostics.hostVisibleHeapBytes += quint64(m_memory.memoryHeaps[heap].size);
+            countedHostHeaps[heap] = true;
+        }
+    }
+    const uint32_t apiMajor = VK_VERSION_MAJOR(properties.apiVersion);
+    const uint32_t apiMinor = VK_VERSION_MINOR(properties.apiVersion);
+    m_diagnostics.gpuTimestamps = m_diagnostics.enabled
+        && m_instanceApiVersion >= VK_API_VERSION_1_2
+        && (apiMajor > 1 || (apiMajor == 1 && apiMinor >= 2))
+        && m_diagnostics.timestampValidBits > 0 && m_timestampPeriod > 0.0f;
     if (uint32_t(std::max(config.outputSize.width(), config.outputSize.height())) > properties.limits.maxImageDimension2D)
         throw std::runtime_error("Output exceeds Vulkan device image limit");
-    vkGetPhysicalDeviceMemoryProperties(physical, &m_memory);
     const float priority = 1;
     VkDeviceQueueCreateInfo queue {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
     queue.queueFamilyIndex = family; queue.queueCount = 1; queue.pQueuePriorities = &priority;
@@ -296,6 +353,15 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     } else bindTexture(m_atlas, 1);
     constexpr int slotCount = 3;
     m_slots.resize(slotCount);
+    if (m_diagnostics.gpuTimestamps) {
+        VkQueryPoolCreateInfo query {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        query.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        query.queryCount = uint32_t(slotCount * 2);
+        if (vkCreateQueryPool(m_device, &query, nullptr, &m_timestampQueries) != VK_SUCCESS) {
+            m_timestampQueries = VK_NULL_HANDLE;
+            m_diagnostics.gpuTimestamps = false;
+        }
+    }
     std::vector<VkCommandBuffer> commands(static_cast<size_t>(slotCount));
     VkCommandBufferAllocateInfo command {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     command.commandPool = m_pool;
@@ -314,6 +380,7 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     for (int i = 0; i < slotCount; ++i) {
         auto& slot = m_slots[size_t(i)];
         slot.command = commands[size_t(i)];
+        slot.timestampQueryBase = uint32_t(i * 2);
         check(vkCreateFence(m_device, &fence, nullptr, &slot.fence), "create frame fence");
         createImage(slot.target, config.outputSize,
                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
@@ -349,8 +416,11 @@ void VulkanOffscreenRenderer::Impl::waitForAllSlots()
 {
     for (auto& slot : m_slots) {
         if (!slot.inFlight) continue;
+        QElapsedTimer timer;
+        if (m_diagnostics.enabled) timer.start();
         check(vkWaitForFences(m_device, 1, &slot.fence, VK_TRUE, 10'000'000'000ULL),
               "wait for frame slot");
+        if (m_diagnostics.enabled) m_diagnostics.fenceWaitNs += quint64(timer.nsecsElapsed());
     }
 }
 
@@ -367,14 +437,18 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     auto& slot = m_slots[size_t(slotIndex)];
     auto state = m_config.state;
     state.transportPositionUs = position; state.updateVisibleWindow();
+    QElapsedTimer timer;
+    if (m_diagnostics.enabled) timer.start();
     m_scene.prepare(state, m_config.logicalSize, m_scale, m_config.font, !m_config.background.isNull(),
                     m_config.background.size(), 1);
+    if (m_diagnostics.enabled) m_diagnostics.scenePrepareNs += quint64(timer.nsecsElapsed());
     // A slot owns all buffers written by this frame. This allows the next
     // frame to prepare and upload while an earlier command buffer is running.
     const auto upload = [this](Buffer& buffer, const QVector<VulkanQuad>& quads) {
         const auto bytes = VkDeviceSize(quads.size()) * sizeof(VulkanQuad);
         reserve(buffer, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT); write(buffer, quads.constData(), bytes);
     };
+    if (m_diagnostics.enabled) timer.restart();
     if (slot.notesRevision != m_scene.notesRevision()) {
         upload(slot.notes, m_scene.notes());
         slot.notesRevision = m_scene.notesRevision();
@@ -384,6 +458,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
         slot.staticUiRevision = m_scene.staticUiRevision();
     }
     upload(slot.dynamicUi, m_scene.dynamicUi().quads);
+    if (m_diagnostics.enabled) m_diagnostics.bufferUploadNs += quint64(timer.nsecsElapsed());
 
     const bool atlasChanged = m_atlasRevision != m_scene.atlasRevision();
     const bool backgroundChanged = m_background.image && !m_background.uploaded;
@@ -392,10 +467,16 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     // alive for ordered readback.
     if (atlasChanged || backgroundChanged) waitForAllSlots();
 
+    if (m_diagnostics.enabled) timer.restart();
     check(vkResetCommandBuffer(slot.command, 0), "reset frame command buffer");
     VkCommandBufferBeginInfo begin {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(slot.command, &begin), "begin frame command buffer");
+    if (m_diagnostics.gpuTimestamps) {
+        vkCmdResetQueryPool(slot.command, m_timestampQueries, slot.timestampQueryBase, 2);
+        vkCmdWriteTimestamp(slot.command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                            m_timestampQueries, slot.timestampQueryBase);
+    }
     if (atlasChanged) {
         uploadTexture(m_atlas, m_scene.atlas(), slot.command);
         m_atlasRevision = m_scene.atlasRevision();
@@ -438,11 +519,19 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     barrier.buffer = slot.readback.handle; barrier.size = VK_WHOLE_SIZE;
     vkCmdPipelineBarrier(slot.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
         0, 0, nullptr, 1, &barrier, 0, nullptr);
+    if (m_diagnostics.gpuTimestamps) {
+        vkCmdWriteTimestamp(slot.command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                            m_timestampQueries, slot.timestampQueryBase + 1);
+    }
     check(vkEndCommandBuffer(slot.command), "end frame command buffer");
+    if (m_diagnostics.enabled) m_diagnostics.commandRecordNs += quint64(timer.nsecsElapsed());
     check(vkResetFences(m_device, 1, &slot.fence), "reset frame fence");
     VkSubmitInfo submit {VK_STRUCTURE_TYPE_SUBMIT_INFO}; submit.commandBufferCount = 1; submit.pCommandBuffers = &slot.command;
+    if (m_diagnostics.enabled) timer.restart();
     check(vkQueueSubmit(m_queue, 1, &submit, slot.fence), "submit frame");
+    if (m_diagnostics.enabled) m_diagnostics.queueSubmitNs += quint64(timer.nsecsElapsed());
     slot.inFlight = true;
+    if (m_diagnostics.enabled) ++m_diagnostics.submittedFrames;
     ticket.slot = slotIndex;
     ticket.musicPositionUs = position;
     return true;
@@ -455,19 +544,37 @@ bool VulkanOffscreenRenderer::Impl::completeRender(VulkanRenderTicket& ticket, Q
         throw std::runtime_error("Invalid render ticket");
     auto& slot = m_slots[size_t(ticket.slot)];
     if (!slot.inFlight) throw std::runtime_error("Render ticket is no longer in flight");
+    QElapsedTimer timer;
+    if (m_diagnostics.enabled) timer.start();
     check(vkWaitForFences(m_device, 1, &slot.fence, VK_TRUE, 10'000'000'000ULL), "wait for frame");
+    if (m_diagnostics.enabled) m_diagnostics.fenceWaitNs += quint64(timer.nsecsElapsed());
     slot.inFlight = false;
     ticket.slot = -1;
     if (canceled && canceled->load()) return false;
+    if (m_diagnostics.enabled) timer.restart();
     if (!slot.readback.coherent) {
         VkMappedMemoryRange range {VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
         range.memory = slot.readback.memory; range.size = VK_WHOLE_SIZE;
         check(vkInvalidateMappedMemoryRanges(m_device, 1, &range), "invalidate readback");
     }
+    if (m_diagnostics.enabled) m_diagnostics.readbackNs += quint64(timer.nsecsElapsed());
+    if (m_diagnostics.gpuTimestamps) {
+        quint64 timestamps[2] = {};
+        const VkResult result = vkGetQueryPoolResults(m_device, m_timestampQueries,
+            slot.timestampQueryBase, 2, sizeof(timestamps), timestamps, sizeof(quint64), VK_QUERY_RESULT_64_BIT);
+        if (result == VK_SUCCESS && timestamps[1] >= timestamps[0]) {
+            m_diagnostics.gpuFrameNs += quint64(double(timestamps[1] - timestamps[0]) * double(m_timestampPeriod));
+        }
+    }
     const QSize size = m_config.outputSize;
+    if (m_diagnostics.enabled) timer.restart();
     if (frame.size() != size || frame.format() != QImage::Format_RGBA8888) frame = QImage(size, QImage::Format_RGBA8888);
     if (frame.isNull()) throw std::runtime_error("Cannot allocate video frame");
     std::memcpy(frame.bits(), slot.readback.mapped, size_t(size.width()) * size.height() * 4);
+    if (m_diagnostics.enabled) {
+        m_diagnostics.qimageCopyNs += quint64(timer.nsecsElapsed());
+        ++m_diagnostics.completedFrames;
+    }
     return true;
 }
 
@@ -489,6 +596,8 @@ void VulkanOffscreenRenderer::Impl::cleanup()
             destroy(slot.notes); destroy(slot.staticUi); destroy(slot.dynamicUi); destroy(slot.readback);
         }
         m_slots.clear();
+        if (m_timestampQueries) vkDestroyQueryPool(m_device, m_timestampQueries, nullptr);
+        m_timestampQueries = VK_NULL_HANDLE;
         destroy(m_atlas); destroy(m_background);
         if (m_sampler) vkDestroySampler(m_device, m_sampler, nullptr);
         if (m_layout) vkDestroyPipelineLayout(m_device, m_layout, nullptr);
@@ -528,5 +637,9 @@ bool VulkanOffscreenRenderer::render(qint64 position, QImage& frame, const std::
     if (!m_impl) { *error = QStringLiteral("离屏渲染器尚未初始化"); return false; }
     try { return m_impl->render(position, frame, canceled); }
     catch (const std::exception& e) { *error = QString::fromUtf8(e.what()); return false; }
+}
+VulkanRenderDiagnostics VulkanOffscreenRenderer::diagnostics() const
+{
+    return m_impl ? m_impl->diagnostics() : VulkanRenderDiagnostics{};
 }
 } // namespace midi_play::presentation::visualization

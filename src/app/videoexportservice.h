@@ -29,6 +29,20 @@ struct VideoExportMetrics {
     qint64 submittedFrames = 0;
     qint64 encodedFrames = 0;
     int peakInFlightFrames = 0;
+    qint64 scenePrepareMs = 0;
+    qint64 bufferUploadMs = 0;
+    qint64 commandRecordMs = 0;
+    qint64 queueSubmitMs = 0;
+    qint64 fenceWaitMs = 0;
+    qint64 readbackMs = 0;
+    qint64 qimageCopyMs = 0;
+    qint64 gpuFrameMs = 0;
+    qint64 encoderQueueWaitMs = 0;
+    qint64 ffmpegWriteMs = 0;
+    int peakEncoderQueueDepth = 0;
+    bool gpuTimestamps = false;
+    QString vulkanDeviceName;
+    QString vulkanDeviceType;
 };
 struct VideoExportResult {
     VideoExportStatus status = VideoExportStatus::Failed;

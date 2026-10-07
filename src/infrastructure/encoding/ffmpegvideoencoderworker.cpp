@@ -1,6 +1,7 @@
 #include "ffmpegvideoencoderworker.h"
 #include "ffmpegvideoencoder.h"
 
+#include <QElapsedTimer>
 #include <algorithm>
 #include <exception>
 #include <utility>
@@ -9,6 +10,7 @@ namespace midi_play::encoding {
 
 FfmpegVideoEncoderWorker::FfmpegVideoEncoderWorker(std::size_t capacity)
     : m_capacity(std::max<std::size_t>(1, capacity))
+    , m_diagnosticsEnabled(qEnvironmentVariableIntValue("MIDI_PLAY_VIDEO_DIAGNOSTICS") > 0)
 {
 }
 
@@ -67,15 +69,19 @@ bool FfmpegVideoEncoderWorker::submitFrame(QImage frame, QString* error)
         if (error) *error = m_error.isEmpty() ? QStringLiteral("FFmpeg 编码工作线程未启动") : m_error;
         return false;
     }
+    QElapsedTimer queueTimer;
+    if (m_diagnosticsEnabled) queueTimer.start();
     m_notFull.wait(lock, [this] {
         return m_frames.size() < m_capacity || shouldStopLocked();
     });
+    if (m_diagnosticsEnabled) m_queueWaitNs += quint64(queueTimer.nsecsElapsed());
     if (shouldStopLocked()) {
         if (error) *error = m_error;
         return false;
     }
     m_frames.push_back(std::move(frame));
     ++m_submittedFrames;
+    if (m_diagnosticsEnabled) m_peakQueueDepth = std::max(m_peakQueueDepth, int(m_frames.size()));
     lock.unlock();
     m_notEmpty.notify_one();
     return true;
@@ -113,6 +119,13 @@ qint64 FfmpegVideoEncoderWorker::encodedFrames() const
     return m_encodedFrames;
 }
 
+FfmpegVideoEncoderDiagnostics FfmpegVideoEncoderWorker::diagnostics() const
+{
+    std::lock_guard lock(m_mutex);
+    if (!m_diagnosticsEnabled) return {};
+    return {m_submittedFrames, m_encodedFrames, m_queueWaitNs, m_writeNs, m_peakQueueDepth};
+}
+
 void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString pcmPath,
                                    QSize size, int fps, int crf, qint64 frameCount,
                                    int audioSampleRate, const std::atomic_bool* canceled)
@@ -148,6 +161,8 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
         m_notFull.notify_one();
 
         error.clear();
+        QElapsedTimer writeTimer;
+        if (m_diagnosticsEnabled) writeTimer.start();
         if (!encoder.writeFrame(frame, &error)) {
             std::lock_guard lock(m_mutex);
             if (!error.isEmpty()) m_error = error;
@@ -156,6 +171,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
             m_notFull.notify_all();
             break;
         }
+        if (m_diagnosticsEnabled) m_writeNs += quint64(writeTimer.nsecsElapsed());
         {
             std::lock_guard lock(m_mutex);
             ++m_encodedFrames;

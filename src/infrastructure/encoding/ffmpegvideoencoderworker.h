@@ -11,6 +11,14 @@
 
 namespace midi_play::encoding {
 
+struct FfmpegVideoEncoderDiagnostics {
+    qint64 submittedFrames = 0;
+    qint64 encodedFrames = 0;
+    quint64 queueWaitNs = 0;
+    quint64 writeNs = 0;
+    int peakQueueDepth = 0;
+};
+
 // Owns FfmpegVideoEncoder and its QProcess on one dedicated thread. The
 // producer only submits complete frames; a bounded queue keeps memory use
 // predictable and applies backpressure when the encoder falls behind.
@@ -30,6 +38,7 @@ public:
 
     qint64 submittedFrames() const;
     qint64 encodedFrames() const;
+    FfmpegVideoEncoderDiagnostics diagnostics() const;
 
 private:
     void run(QString executable, QString output, QString pcmPath, QSize size, int fps, int crf,
@@ -52,6 +61,10 @@ private:
     bool m_finishRequested = false;
     qint64 m_submittedFrames = 0;
     qint64 m_encodedFrames = 0;
+    bool m_diagnosticsEnabled = false;
+    quint64 m_queueWaitNs = 0;
+    quint64 m_writeNs = 0;
+    int m_peakQueueDepth = 0;
 };
 
 } // namespace midi_play::encoding

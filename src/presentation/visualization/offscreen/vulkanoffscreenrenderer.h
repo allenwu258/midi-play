@@ -14,6 +14,32 @@ struct ExportSceneConfig {
     QImage background;
 };
 
+// Opt-in internal timings for diagnosing export throughput. All counters are
+// cumulative for one renderer instance and remain zero when diagnostics are
+// disabled.
+struct VulkanRenderDiagnostics {
+    bool enabled = false;
+    bool gpuTimestamps = false;
+    QString deviceName;
+    QString deviceType;
+    quint32 vendorId = 0;
+    quint32 driverVersion = 0;
+    quint32 queueFamily = 0;
+    quint32 timestampValidBits = 0;
+    quint64 deviceLocalHeapBytes = 0;
+    quint64 hostVisibleHeapBytes = 0;
+    quint64 scenePrepareNs = 0;
+    quint64 bufferUploadNs = 0;
+    quint64 commandRecordNs = 0;
+    quint64 queueSubmitNs = 0;
+    quint64 fenceWaitNs = 0;
+    quint64 readbackNs = 0;
+    quint64 qimageCopyNs = 0;
+    quint64 gpuFrameNs = 0;
+    qint64 submittedFrames = 0;
+    qint64 completedFrames = 0;
+};
+
 // A submitted frame owns one slot in the renderer until completeRender().
 // The ticket is intentionally small; it only carries the slot identity
 // needed to match a GPU completion with its frame.
@@ -37,6 +63,7 @@ public:
     bool completeRender(VulkanRenderTicket& ticket, QImage& frame,
                         const std::atomic_bool* canceled, QString* error);
     bool render(qint64 musicPositionUs, QImage& frame, const std::atomic_bool* canceled, QString* error);
+    VulkanRenderDiagnostics diagnostics() const;
 private:
     class Impl;
     std::unique_ptr<Impl> m_impl;
