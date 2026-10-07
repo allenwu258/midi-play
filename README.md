@@ -10,7 +10,7 @@ MIDI Play 是一款开源桌面音乐播放器，提供实时钢琴键盘、深�
 
 [下载 Windows x64 发行版](https://github.com/allenwu258/midi-play/releases/latest) · [快速开始](#快速开始) · [从源码构建](#源码构建) · [反馈问题](https://github.com/allenwu258/midi-play/issues)
 
-当前稳定发布版本：[v0.4.4](https://github.com/allenwu258/midi-play/releases/tag/v0.4.4)，提供完整 Windows x64 便携发行包、MP3/WAV 音频导出、可配置的 Vulkan 流光玻璃特效和图片背景布局控制。
+当前稳定发布版本：[v0.4.7](https://github.com/allenwu258/midi-play/releases/tag/v0.4.7)，提供完整 Windows x64 便携发行包、Vulkan 并发视频导出、MP3/WAV 音频导出、可配置的 Vulkan 流光玻璃特效和图片背景布局控制。
 
 > 播放前需自行准备本地 SF2 / SF3 音源。程序不附带乐曲音源，也不会自动下载；可以跳过首次配置，先打开并查看乐曲。
 
@@ -81,7 +81,7 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 
 ## 快速开始
 
-1. 前往 [Releases](https://github.com/allenwu258/midi-play/releases/latest)，下载最新的 Windows x64 便携发行包（当前稳定版本为 v0.4.4）。GitHub 自动提供的 `Source code` 是源码包。
+1. 前往 [Releases](https://github.com/allenwu258/midi-play/releases/latest)，下载最新的 Windows x64 便携发行包（当前稳定版本为 v0.4.7）。GitHub 自动提供的 `Source code` 是源码包。
 2. 完整解压 ZIP，运行其中的 `midi_play.exe`，保留同目录 DLL、插件和许可证文件。
 3. 在启动引导中选择本地 `.sf2` 或 `.sf3` 音源。多轨 MIDI 建议使用覆盖完整 General MIDI（GM）乐器的音源；选择成功后会尝试自动保存路径。
 4. 点击“打开乐曲”，选择 `.mid`、`.midi`、`.kar`、`.xml` 或 `.musicxml` 文件，再点击播放。
@@ -249,7 +249,13 @@ cmake --build --preset windows-msvc-debug
 - **标题栏样式**：Windows 可选择原生或自定义实验模式，macOS/Linux 只显示原生模式；
 - **音源**：选择或更换本地 .sf2/.sf3，成功加载后自动保存选择；加载失败会显示内联错误。
 
-主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。加载乐曲后，点击顶部“导出”打开统一导出页面：音频 Tab 可选择 MP3/WAV、采样率、码率、节拍器、尾音及目标文件；视频 Tab 可选择 MP4 的分辨率、帧率、画质、播放速度、音乐、节拍器、尾音及目标文件，并提供 Vulkan 画面预览。导出在后台进行，可取消；导出期间可以继续查看或播放乐曲，当前导出始终使用开始时的乐曲和音源。音频 MP3 默认为 44.1 kHz、192 kbps、立体声，尾音 500 ms；视频导出使用外部 FFmpeg，传统 Qt 图形模式不可用；不会自动归一化或限制动态。
+主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。加载乐曲后，点击顶部“导出”打开统一导出页面：音频 Tab 可选择 MP3/WAV、采样率、码率、节拍器、尾音及目标文件；视频 Tab 可选择 MP4 的分辨率、帧率、画质、播放速度、音乐、节拍器、尾音及目标文件，并提供 Vulkan 画面预览。导出在后台进行，可取消；导出期间可以继续查看或播放乐曲，当前导出始终使用开始时的乐曲和音源。音频 MP3 默认为 44.1 kHz、192 kbps、立体声，尾音 500 ms；视频导出使用 Vulkan 三槽并发渲染、固定帧缓冲池和有界 FFmpeg 队列，传统 Qt 图形模式不可用；不会自动归一化或限制动态。
+
+### 视频导出性能
+
+视频导出将固定时间线拆为渲染、GPU readback 和编码三个阶段：三槽 Vulkan frame-in-flight 允许 GPU 与 CPU 编码并行，固定 `QImage` 帧池避免逐帧分配，有界队列通过背压限制内存增长。NVIDIA 环境会自动探测 `h264_nvenc`，不可用时回退 `libx264`，输出格式和音视频时间线保持一致。FFmpeg 不随发行包提供，需要在系统 `PATH` 中提供，或在设置中选择其目录。
+
+需要定位导出瓶颈时，可设置 `MIDI_PLAY_VIDEO_DIAGNOSTICS=1` 启用诊断，并用 `MIDI_PLAY_VIDEO_DIAGNOSTICS_PATH` 指定 JSONL 输出文件。实现与基准数据见 [视频导出性能优化复盘](docs/video-export-performance-review.md)。
 
 ## 配置与音源
 
@@ -454,6 +460,9 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - metronome_timeline_and_readers：拍号、显式点击单位、附点速度、弱起、重复段落、MIDI format 2、重复标记的相位稳定性、可视化小节线与点击重音的一致性，以及丢帧后的节拍调度。
 - metronome_fluidsynth_audio：使用真实 FluidSynth 和正式混音回调离线合成，验证点击音强弱、自然结束、音源切换，以及歌曲复音满载时连续点击和取消不抢占任何歌曲声部；配置 Windows FluidSynth DLL 时启用，无需音频设备。
 - audio_export：使用内置测试音源验证 sample 边界、尾音、反复段、节拍器混音、WAV/MP3 输出、重复导出一致性，以及取消或失败时保留原目标文件。
+- video_export_configuration：验证视频导出参数默认值、边界、FFmpeg 路径探测和 Vulkan 能力门控。
+- video_encoder_roundtrip：使用可用 FFmpeg 编码器完成短视频编码、音视频封装和 MP4 完整性校验；缺少外部 FFmpeg 时按环境跳过。
+- video_export_vulkan_integration：验证 Vulkan 离屏渲染、三槽 frame-in-flight、readback、帧序和取消路径。
 
 节拍器点击资源 `assets/metronome.sf2` 已提交到源码并通过 Qt Resource 嵌入可执行文件。`scripts/generate-metronome-soundfont.py` 使用 Python 标准库生成原创采样，仅用于重建该资源，普通构建和运行不需要 Python。内置资源需要写入系统临时目录供 FluidSynth 读取，退出时自动清理；提取或准备失败时仅禁用节拍器并显示原因。
 
@@ -489,6 +498,8 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - 简谱、鼓组 lane、量化网格和调性识别是播放可视化的派生数据，不能当作完整的自动扒谱结果。
 - Windows 自定义标题栏是实验功能，默认仍使用原生标题栏；macOS/Linux 不提供自定义标题栏选项。
 - 播放事件使用软件单调时钟调度，视觉位置按 transport 样本更新；当前目标是稳定播放和低 CPU 占用，不承诺严格的显示器 v-sync 或音频帧级视觉同步。
+- 视频导出依赖外部 FFmpeg；发行包不包含 FFmpeg、NVIDIA 驱动或 NVENC 运行时。没有可用的 FFmpeg 时视频导出会保持禁用；没有兼容 NVIDIA 编码器时自动使用软件 H.264，速度取决于 CPU 和画面复杂度。
+- 视频导出目前要求 Vulkan 图形设备；Vulkan 不可用时可继续使用播放器和音频导出，但视频导出不可用。
 
 后续可沿以下方向扩展：
 
@@ -506,7 +517,7 @@ assets/
   metronome.sf2                       原创节拍器资源（嵌入可执行文件）
 docs/
   images/midiplay-banner.svg          README 使用的深色底横版 Logo
-  *.md                                主题、音符色彩等设计与开发文档
+  *.md                                主题、视频导出、性能复盘与发行记录等文档
 src/
   app/                                应用服务和设置服务
   domain/music/                       音乐文档、时间线和分析

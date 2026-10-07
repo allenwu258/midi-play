@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(midi_play VERSION 0.1.0 LANGUAGES CXX)
+project(midi_play VERSION 0.4.7 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
+find_package(Threads REQUIRED)
 find_package(WebP CONFIG REQUIRED)
 find_package(mp3lame CONFIG REQUIRED)
 option(MIDI_PLAY_ENABLE_VULKAN "Build the experimental Vulkan renderer" ON)
@@ -150,6 +151,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/infrastructure/encoding/ffmpegprobe.cpp
     src/infrastructure/encoding/ffmpegvideoencoder.h
     src/infrastructure/encoding/ffmpegvideoencoder.cpp
+    src/infrastructure/encoding/ffmpegvideoencoderworker.h
+    src/infrastructure/encoding/ffmpegvideoencoderworker.cpp
     src/infrastructure/resources/projectaudiosettings.h
     src/infrastructure/resources/projectaudiosettings.cpp
     src/infrastructure/settings/qsettingsstore.h
@@ -257,7 +260,7 @@ if (MIDI_PLAY_HAS_VULKAN)
         FILES ${VULKAN_SHADER_BINARIES})
 endif()
 target_include_directories(midi_play_core PUBLIC src)
-target_link_libraries(midi_play_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml)
+target_link_libraries(midi_play_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml Threads::Threads)
 target_link_libraries(midi_play_core PRIVATE WebP::webp mp3lame::mp3lame)
 if (MIDI_PLAY_HAS_VULKAN)
     add_dependencies(midi_play_core midi_play_vulkan_shaders)

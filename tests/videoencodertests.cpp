@@ -1,19 +1,24 @@
 #include "app/exporttimeline.h"
 #include "infrastructure/encoding/ffmpegvideoencoder.h"
+#include "infrastructure/encoding/ffmpegvideoencoderworker.h"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
+#include <QSet>
 #include <QTemporaryDir>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -239,6 +244,77 @@ void testInvalidPcm(const QString& ffmpeg, const QString& directory)
     require(!encoder.finish(&error), "encoder rejects missing video frames");
 }
 
+void testEncoderWorker(const QString& ffmpeg, const QString& ffprobe, const QString& directory,
+                       bool reuseBuffers)
+{
+    const midi_play::app::ExportTimeline timeline(500'003, 30, 100, 0);
+    const QString output = directory + (reuseBuffers ? QStringLiteral("/worker-pooled.mp4")
+                                                     : QStringLiteral("/worker.mp4"));
+    midi_play::encoding::FfmpegVideoEncoderWorker worker(2);
+    QString error;
+    const QSize size(96, 64);
+    require(worker.open(ffmpeg, output, {}, size, 30, 20, timeline.frameCount(), sampleRate,
+                        nullptr, &error), "encoder worker opens", error);
+    QSet<quintptr> buffers;
+    for (qint64 i = 0; i < timeline.frameCount(); ++i) {
+        QImage frame;
+        if (reuseBuffers) {
+            require(worker.acquireFrame(frame, &error), "encoder worker lends frame", error);
+            buffers.insert(reinterpret_cast<quintptr>(frame.constBits()));
+        } else frame = QImage(size, QImage::Format_RGBA8888);
+        frame.fill(QColor(int(i * 29 % 200) + 20, int(i * 17 % 200) + 20, int(i * 43 % 200) + 20));
+        require(worker.submitFrame(std::move(frame), &error), "encoder worker accepts frame", error);
+    }
+    require(worker.finish(&error), "encoder worker finalizes frames", error);
+    if (reuseBuffers) {
+        require(buffers.size() <= 4, "worker reuses a bounded number of frame allocations");
+        QImage frame;
+        require(!worker.acquireFrame(frame, &error), "finished worker rejects frame acquisition");
+    }
+    require(worker.submittedFrames() == timeline.frameCount()
+                && worker.encodedFrames() == timeline.frameCount(),
+            "encoder worker preserves submitted and encoded frame counts");
+    require(midi_play::encoding::FfmpegVideoEncoder::validate(ffmpeg, output, nullptr, &error,
+                size, 30, timeline.frameCount(), false, timeline.videoDurationUs()),
+            "encoder worker output passes integrity check", error);
+    if (!ffprobe.isEmpty()) verifyVideoPts(ffprobe, output, timeline, 30);
+    const QByteArray pixels = run(ffmpeg, {"-v", "error", "-nostdin", "-i", output,
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"});
+    const qint64 frameBytes = qint64(size.width()) * size.height() * 3;
+    require(pixels.size() == frameBytes * timeline.frameCount(), "worker decodes every frame");
+    for (qint64 i = 0; i < timeline.frameCount(); ++i) {
+        const QColor expected(int(i * 29 % 200) + 20, int(i * 17 % 200) + 20, int(i * 43 % 200) + 20);
+        const qint64 offset = i * frameBytes + (size.width() * (size.height() / 2) + size.width() / 2) * 3;
+        require(std::abs(int(static_cast<unsigned char>(pixels[offset])) - expected.red()) < 10
+                    && std::abs(int(static_cast<unsigned char>(pixels[offset + 1])) - expected.green()) < 10
+                    && std::abs(int(static_cast<unsigned char>(pixels[offset + 2])) - expected.blue()) < 10,
+                "frame recycling preserves pixel contents and frame order");
+    }
+    std::fprintf(stdout, "PASS: bounded FFmpeg encoder worker\n");
+}
+
+void testCanceledFrameAcquisition(const QString& ffmpeg, const QString& directory)
+{
+    std::atomic_bool canceled {false};
+    midi_play::encoding::FfmpegVideoEncoderWorker worker(1);
+    QString error;
+    require(worker.open(ffmpeg, directory + QStringLiteral("/canceled.mp4"), {}, QSize(96, 64),
+                        30, 20, 30, sampleRate, &canceled, &error), "cancel test worker opens", error);
+    std::vector<QImage> held(3);
+    for (auto& frame : held) require(worker.acquireFrame(frame, &error), "pool buffer can be held", error);
+    std::thread canceler([&canceled] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        canceled.store(true);
+    });
+    QElapsedTimer timer;
+    timer.start();
+    QImage frame;
+    const bool acquired = worker.acquireFrame(frame, &error);
+    canceler.join();
+    require(!acquired && timer.elapsed() < 1000, "cancel wakes a producer blocked on the frame pool");
+    require(!worker.finish(&error), "canceled worker does not finalize a successful export");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -253,6 +329,9 @@ int main(int argc, char** argv)
     QTemporaryDir directory;
     require(directory.isValid(), "encoder test directory exists");
     testInvalidPcm(ffmpeg, directory.path());
+    testEncoderWorker(ffmpeg, ffprobe, directory.path(), false);
+    testEncoderWorker(ffmpeg, ffprobe, directory.path(), true);
+    testCanceledFrameAcquisition(ffmpeg, directory.path());
     for (const int fps : {30, 60}) {
         for (const int rate : {50, 100, 120, 150, 200}) {
             testEncoding(ffmpeg, ffprobe, directory.path(), fps, rate, true);

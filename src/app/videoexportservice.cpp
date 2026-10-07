@@ -5,22 +5,93 @@
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/encoding/ffmpegprobe.h"
 #include "infrastructure/encoding/ffmpegvideoencoder.h"
+#include "infrastructure/encoding/ffmpegvideoencoderworker.h"
 #include <QDir>
+#include <QDateTime>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSaveFile>
 #include <QStorageInfo>
 #include <QTemporaryDir>
 #include <algorithm>
+#include <deque>
 #include <vector>
 
 namespace midi_play::app {
+namespace {
+qint64 nanosecondsToMilliseconds(quint64 nanoseconds)
+{
+    return qint64((nanoseconds + 500'000) / 1'000'000);
+}
+
+void appendVideoDiagnostics(const VideoExportOptions& options, qint64 frameCount,
+                            const VideoExportMetrics& metrics,
+                            const presentation::visualization::VulkanRenderDiagnostics& renderer,
+                            const encoding::FfmpegVideoEncoderDiagnostics& encoder)
+{
+    if (!renderer.enabled) return;
+    const QString path = qEnvironmentVariable("MIDI_PLAY_VIDEO_DIAGNOSTICS_PATH").trimmed();
+    if (path.isEmpty()) return;
+    QJsonObject json;
+    json.insert(QStringLiteral("schemaVersion"), 1);
+    json.insert(QStringLiteral("timestampUtc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    json.insert(QStringLiteral("frameCount"), frameCount);
+    json.insert(QStringLiteral("fps"), options.fps);
+    json.insert(QStringLiteral("width"), options.scene.outputSize.width());
+    json.insert(QStringLiteral("height"), options.scene.outputSize.height());
+    json.insert(QStringLiteral("includeAudio"), options.includeAudio);
+    json.insert(QStringLiteral("vulkanDeviceName"), renderer.deviceName);
+    json.insert(QStringLiteral("vulkanDeviceType"), renderer.deviceType);
+    json.insert(QStringLiteral("vulkanVendorId"), int(renderer.vendorId));
+    json.insert(QStringLiteral("vulkanDriverVersion"), qint64(renderer.driverVersion));
+    json.insert(QStringLiteral("vulkanQueueFamily"), int(renderer.queueFamily));
+    json.insert(QStringLiteral("vulkanTimestampValidBits"), int(renderer.timestampValidBits));
+    json.insert(QStringLiteral("vulkanDeviceLocalHeapBytes"), qint64(renderer.deviceLocalHeapBytes));
+    json.insert(QStringLiteral("vulkanHostVisibleHeapBytes"), qint64(renderer.hostVisibleHeapBytes));
+    json.insert(QStringLiteral("readbackHostCached"), renderer.readbackHostCached);
+    json.insert(QStringLiteral("gpuTimestamps"), renderer.gpuTimestamps);
+    json.insert(QStringLiteral("submittedFrames"), renderer.submittedFrames);
+    json.insert(QStringLiteral("completedFrames"), renderer.completedFrames);
+    json.insert(QStringLiteral("encodedFrames"), encoder.encodedFrames);
+    json.insert(QStringLiteral("peakInFlightFrames"), metrics.peakInFlightFrames);
+    json.insert(QStringLiteral("peakEncoderQueueDepth"), encoder.peakQueueDepth);
+    json.insert(QStringLiteral("scenePrepareNs"), qint64(renderer.scenePrepareNs));
+    json.insert(QStringLiteral("bufferUploadNs"), qint64(renderer.bufferUploadNs));
+    json.insert(QStringLiteral("commandRecordNs"), qint64(renderer.commandRecordNs));
+    json.insert(QStringLiteral("queueSubmitNs"), qint64(renderer.queueSubmitNs));
+    json.insert(QStringLiteral("fenceWaitNs"), qint64(renderer.fenceWaitNs));
+    json.insert(QStringLiteral("readbackNs"), qint64(renderer.readbackNs));
+    json.insert(QStringLiteral("qimageCopyNs"), qint64(renderer.qimageCopyNs));
+    json.insert(QStringLiteral("gpuFrameNs"), qint64(renderer.gpuFrameNs));
+    json.insert(QStringLiteral("encoderFrameBufferWaitNs"), qint64(encoder.recycledFrameWaitNs));
+    json.insert(QStringLiteral("encoderQueueWaitNs"), qint64(encoder.queueWaitNs));
+    json.insert(QStringLiteral("ffmpegWriteNs"), qint64(encoder.writeNs));
+    json.insert(QStringLiteral("videoEncoder"), encoder.videoEncoder);
+    json.insert(QStringLiteral("hardwareAccelerated"), encoder.hardwareAccelerated);
+    json.insert(QStringLiteral("encoderSelectionNs"), qint64(encoder.encoderSelectionNs));
+    json.insert(QStringLiteral("audioRenderMs"), metrics.audioRenderMs);
+    json.insert(QStringLiteral("videoPipelineMs"), metrics.videoPipelineMs);
+    json.insert(QStringLiteral("muxFinalizeMs"), metrics.muxFinalizeMs);
+    json.insert(QStringLiteral("validationMs"), metrics.validationMs);
+    json.insert(QStringLiteral("commitMs"), metrics.commitMs);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) return;
+    file.write(QJsonDocument(json).toJson(QJsonDocument::Compact));
+    file.write("\n");
+}
+} // namespace
+
 VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music::MusicDocument> document,
     const VideoExportOptions& options, const std::atomic_bool* canceled, Progress progress)
 {
     const auto isCanceled = [canceled] { return canceled && canceled->load(); };
-    const auto failure = [&isCanceled](const QString& error) {
-        return VideoExportResult{isCanceled() ? VideoExportStatus::Canceled : VideoExportStatus::Failed, error};
+    VideoExportMetrics metrics;
+    const auto failure = [&isCanceled, &metrics](const QString& error) {
+        return VideoExportResult{isCanceled() ? VideoExportStatus::Canceled : VideoExportStatus::Failed, error,
+                                 0, 0, metrics};
     };
     const auto report = [&progress](int value, const QString& phase) { if (progress) progress(value, phase); };
 #if !MIDI_PLAY_HAS_VULKAN
@@ -77,6 +148,8 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         std::vector<float> interleaved(8192);
         const OfflineAudioOptions audio {font.absoluteFilePath(), ExportTimeline::audioSampleRate, options.ratePercent,
                                         options.includeMetronome, timeline.sampleCount()};
+        QElapsedTimer timer;
+        timer.start();
         const auto result = OfflineAudioRenderer::render(document, audio,
             [&pcm, &interleaved](const float* left, const float* right, int count, QString* error) {
                 for (int i = 0; i < count; ++i) { interleaved[i * 2] = left[i]; interleaved[i * 2 + 1] = right[i]; }
@@ -84,6 +157,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
                 if (pcm.write(reinterpret_cast<const char*>(interleaved.data()), bytes) == bytes) return true;
                 *error = pcm.errorString(); return false;
             }, canceled, [&report](int value) { report(value / 5, QStringLiteral("正在合成音频")); });
+        metrics.audioRenderMs = timer.elapsed();
         if (result.status != AudioExportStatus::Success) return failure(result.error);
         if (!pcm.flush()) return failure(pcm.errorString());
         // Windows may deny a second reader while the writer handle is open.
@@ -95,26 +169,69 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         clipped = result.clippedSamples;
     }
     const QString temporaryOutput = directory.filePath(QStringLiteral("video.mp4"));
-    encoding::FfmpegVideoEncoder encoder;
+    encoding::FfmpegVideoEncoderWorker encoder(3);
     if (!encoder.open(ffmpeg.executablePath, temporaryOutput, pcmPath, size, options.fps, options.crf,
                       timeline.frameCount(), ExportTimeline::audioSampleRate, canceled, &error))
         return failure(error);
-    QImage frame;
+
+    struct PendingFrame {
+        qint64 index = 0;
+        presentation::visualization::VulkanRenderTicket ticket;
+    };
+    std::deque<PendingFrame> pending;
+    QElapsedTimer videoTimer;
+    videoTimer.start();
+    auto completeNext = [&]() {
+        if (pending.empty()) return true;
+        auto current = std::move(pending.front());
+        pending.pop_front();
+        QImage frame;
+        if (!encoder.acquireFrame(frame, &error)) return false;
+        if (!renderer.completeRender(current.ticket, frame, canceled, &error)) return false;
+        if (!encoder.submitFrame(std::move(frame), &error)) return false;
+        metrics.encodedFrames = encoder.encodedFrames();
+        report(20 + int((current.index + 1) * 65 / timeline.frameCount()),
+               QStringLiteral("正在渲染视频 %1 / %2 帧")
+                   .arg(current.index + 1).arg(timeline.frameCount()));
+        return true;
+    };
     for (qint64 n = 0; n < timeline.frameCount(); ++n) {
         if (isCanceled()) return failure({});
-        if (!renderer.render(timeline.musicPositionUs(n), frame, canceled, &error)
-            || !encoder.writeFrame(frame, &error)) return failure(error);
-        report(20 + int((n + 1) * 65 / timeline.frameCount()), QStringLiteral("正在渲染视频 %1 / %2 帧").arg(n + 1).arg(timeline.frameCount()));
+        presentation::visualization::VulkanRenderTicket ticket;
+        error.clear();
+        if (!renderer.beginRender(timeline.musicPositionUs(n), ticket, canceled, &error)) {
+            if (!error.isEmpty() || pending.empty()) return failure(error);
+            if (!completeNext()) return failure(error);
+            --n;
+            continue;
+        }
+        pending.push_back({n, ticket});
+        ++metrics.submittedFrames;
+        metrics.peakInFlightFrames = std::max(metrics.peakInFlightFrames, int(pending.size()));
     }
+    while (!pending.empty()) {
+        if (isCanceled() || !completeNext()) return failure(error);
+    }
+    metrics.videoPipelineMs = videoTimer.elapsed();
     report(85, QStringLiteral("正在封装 MP4"));
-    if (!encoder.finish(&error)) return failure(error);
+    QElapsedTimer muxTimer;
+    muxTimer.start();
+    const bool encoderFinished = encoder.finish(&error);
+    metrics.encodedFrames = encoder.encodedFrames();
+    metrics.muxFinalizeMs = muxTimer.elapsed();
+    if (!encoderFinished) return failure(error);
     report(90, QStringLiteral("正在检查视频完整性"));
+    QElapsedTimer validationTimer;
+    validationTimer.start();
     if (!encoding::FfmpegVideoEncoder::validate(ffmpeg.executablePath, temporaryOutput, canceled, &error,
                                                 size, options.fps, timeline.frameCount(), options.includeAudio,
                                                 timeline.videoDurationUs(), ExportTimeline::audioSampleRate))
         return failure(error);
+    metrics.validationMs = validationTimer.elapsed();
     if (isCanceled()) return failure({});
     QFile source(temporaryOutput);
+    QElapsedTimer commitTimer;
+    commitTimer.start();
     QSaveFile destination(output.absoluteFilePath()); destination.setDirectWriteFallback(false);
     if (!source.open(QIODevice::ReadOnly) || !destination.open(QIODevice::WriteOnly))
         return failure(QStringLiteral("无法安全写入输出文件：%1").arg(destination.errorString()));
@@ -129,8 +246,32 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     }
     if (isCanceled()) return failure({});
     if (!destination.commit()) return failure(destination.errorString());
+    metrics.commitMs = commitTimer.elapsed();
+    const auto rendererDiagnostics = renderer.diagnostics();
+    const auto encoderDiagnostics = encoder.diagnostics();
+    if (rendererDiagnostics.enabled) {
+        metrics.scenePrepareMs = nanosecondsToMilliseconds(rendererDiagnostics.scenePrepareNs);
+        metrics.bufferUploadMs = nanosecondsToMilliseconds(rendererDiagnostics.bufferUploadNs);
+        metrics.commandRecordMs = nanosecondsToMilliseconds(rendererDiagnostics.commandRecordNs);
+        metrics.queueSubmitMs = nanosecondsToMilliseconds(rendererDiagnostics.queueSubmitNs);
+        metrics.fenceWaitMs = nanosecondsToMilliseconds(rendererDiagnostics.fenceWaitNs);
+        metrics.readbackMs = nanosecondsToMilliseconds(rendererDiagnostics.readbackNs);
+        metrics.qimageCopyMs = nanosecondsToMilliseconds(rendererDiagnostics.qimageCopyNs);
+        metrics.gpuFrameMs = nanosecondsToMilliseconds(rendererDiagnostics.gpuFrameNs);
+        metrics.encoderFrameBufferWaitMs = nanosecondsToMilliseconds(encoderDiagnostics.recycledFrameWaitNs);
+        metrics.encoderQueueWaitMs = nanosecondsToMilliseconds(encoderDiagnostics.queueWaitNs);
+        metrics.ffmpegWriteMs = nanosecondsToMilliseconds(encoderDiagnostics.writeNs);
+        metrics.peakEncoderQueueDepth = encoderDiagnostics.peakQueueDepth;
+        metrics.videoEncoder = encoderDiagnostics.videoEncoder;
+        metrics.hardwareAccelerated = encoderDiagnostics.hardwareAccelerated;
+        metrics.encoderSelectionMs = nanosecondsToMilliseconds(encoderDiagnostics.encoderSelectionNs);
+        metrics.gpuTimestamps = rendererDiagnostics.gpuTimestamps;
+        metrics.vulkanDeviceName = rendererDiagnostics.deviceName;
+        metrics.vulkanDeviceType = rendererDiagnostics.deviceType;
+        appendVideoDiagnostics(options, timeline.frameCount(), metrics, rendererDiagnostics, encoderDiagnostics);
+    }
     report(100, QStringLiteral("视频已导出"));
-    return {VideoExportStatus::Success, {}, timeline.frameCount(), clipped};
+    return {VideoExportStatus::Success, {}, timeline.frameCount(), clipped, metrics};
 #endif
 }
 } // namespace midi_play::app

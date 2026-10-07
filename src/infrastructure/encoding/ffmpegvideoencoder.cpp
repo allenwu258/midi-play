@@ -5,12 +5,116 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHash>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QStandardPaths>
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
 namespace {
+
+struct VideoEncoderSelection {
+    QString name = QStringLiteral("libx264");
+    bool hardwareAccelerated = false;
+};
+
+QMutex encoderSelectionMutex;
+QHash<QString, VideoEncoderSelection> encoderSelectionCache;
+
+QString encoderCacheKey(const QString& executable, QSize size, int fps, int crf,
+                        const QString& preference)
+{
+    return QStringLiteral("%1|%2x%3|%4|%5|%6")
+        .arg(QFileInfo(executable).absoluteFilePath()).arg(size.width()).arg(size.height())
+        .arg(fps).arg(crf).arg(preference);
+}
+
+QStringList videoEncodingArguments(const VideoEncoderSelection& encoder, int crf, int fps)
+{
+    QStringList args {QStringLiteral("-c:v"), encoder.name};
+    if (encoder.hardwareAccelerated) {
+        // CQ and CRF are different rate controls. Preserve the quality ordering
+        // of the existing UI while using NVENC's quality-targeted VBR mode.
+        args << QStringLiteral("-preset") << QStringLiteral("p4")
+             << QStringLiteral("-rc") << QStringLiteral("vbr")
+             << QStringLiteral("-cq") << QString::number(crf)
+             << QStringLiteral("-b:v") << QStringLiteral("0");
+    } else {
+        args << QStringLiteral("-preset") << QStringLiteral("medium")
+             << QStringLiteral("-crf") << QString::number(crf);
+    }
+    // B-frames can produce MP4 edit lists which some players handle poorly.
+    // Keep the existing zero-origin, non-negative decode timeline for both
+    // encoders and use the same color conversion in the probe and the export.
+    args << QStringLiteral("-bf") << QStringLiteral("0")
+         << QStringLiteral("-vf") << QStringLiteral("scale=in_range=full:out_range=tv:out_color_matrix=bt709,format=yuv420p")
+         << QStringLiteral("-color_range") << QStringLiteral("tv")
+         << QStringLiteral("-colorspace") << QStringLiteral("bt709")
+         << QStringLiteral("-color_primaries") << QStringLiteral("bt709")
+         << QStringLiteral("-color_trc") << QStringLiteral("iec61966-2-1")
+         << QStringLiteral("-g") << QString::number(fps * 2)
+         << QStringLiteral("-fps_mode") << QStringLiteral("cfr");
+    return args;
+}
+
+bool probeVideoEncoder(const QString& executable, const VideoEncoderSelection& encoder,
+                       QSize size, int fps, int crf, const std::atomic_bool* canceled)
+{
+    if (canceled && canceled->load()) return false;
+    QProcess process;
+    QStringList args {
+        QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+        QStringLiteral("-nostdin"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+        QStringLiteral("-i"), QStringLiteral("color=c=black:s=%1x%2:r=%3,format=rgba")
+            .arg(size.width()).arg(size.height()).arg(fps),
+        QStringLiteral("-frames:v"), QStringLiteral("2")};
+    args += videoEncodingArguments(encoder, crf, fps);
+    args << QStringLiteral("-f") << QStringLiteral("null") << QStringLiteral("-");
+    process.start(executable, args);
+    if (!process.waitForStarted(1500)) return false;
+    QElapsedTimer timer;
+    timer.start();
+    while (!process.waitForFinished(100)) {
+        if (canceled && canceled->load()) {
+            process.kill();
+            process.waitForFinished(1000);
+            return false;
+        }
+        if (timer.elapsed() > 10'000) {
+            process.kill();
+            process.waitForFinished(1000);
+            return false;
+        }
+    }
+    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+}
+
+VideoEncoderSelection selectVideoEncoder(const QString& executable, QSize size, int fps, int crf,
+                                         const std::atomic_bool* canceled)
+{
+    // An internal override permits reproducible software/hardware comparisons.
+    // Only implemented profiles are accepted; arbitrary FFmpeg codec names do
+    // not share NVENC's quality parameters.
+    const QString preference = qEnvironmentVariable("MIDI_PLAY_VIDEO_ENCODER").trimmed().toLower();
+    if (!preference.isEmpty() && preference != QStringLiteral("auto")
+        && preference != QStringLiteral("h264_nvenc")) return {};
+    const QString key = encoderCacheKey(executable, size, fps, crf, preference);
+    {
+        QMutexLocker lock(&encoderSelectionMutex);
+        const auto cached = encoderSelectionCache.constFind(key);
+        if (cached != encoderSelectionCache.constEnd()) return *cached;
+    }
+    const VideoEncoderSelection hardware {QStringLiteral("h264_nvenc"), true};
+    const auto selected = probeVideoEncoder(executable, hardware, size, fps, crf, canceled)
+        ? hardware : VideoEncoderSelection{};
+    {
+        QMutexLocker lock(&encoderSelectionMutex);
+        encoderSelectionCache.insert(key, selected);
+    }
+    return selected;
+}
 
 QString siblingFfprobe(const QString& ffmpeg)
 {
@@ -146,15 +250,15 @@ FfmpegVideoEncoder::~FfmpegVideoEncoder()
 }
 void FfmpegVideoEncoder::collectDiagnostics()
 {
-    m_diagnostics += m_process.readAllStandardError();
-    if (m_diagnostics.size() > 16384) m_diagnostics = m_diagnostics.right(16384);
+    m_processDiagnostics += m_process.readAllStandardError();
+    if (m_processDiagnostics.size() > 16384) m_processDiagnostics = m_processDiagnostics.right(16384);
     m_process.readAllStandardOutput();
 }
 bool FfmpegVideoEncoder::processError(QString* error)
 {
     collectDiagnostics();
-    *error = QStringLiteral("FFmpeg 编码失败：%1").arg(m_diagnostics.isEmpty()
-        ? m_process.errorString() : QString::fromUtf8(m_diagnostics).trimmed());
+    *error = QStringLiteral("FFmpeg 编码失败：%1").arg(m_processDiagnostics.isEmpty()
+        ? m_process.errorString() : QString::fromUtf8(m_processDiagnostics).trimmed());
     return false;
 }
 bool FfmpegVideoEncoder::open(const QString& executable, const QString& output, const QString& pcmPath,
@@ -186,30 +290,22 @@ bool FfmpegVideoEncoder::open(const QString& executable, const QString& output, 
     m_expectedFrames = frameCount;
     m_writtenFrames = 0;
     m_audioSampleRate = audioSampleRate;
-    m_diagnostics.clear();
+    m_processDiagnostics.clear();
+    QElapsedTimer selectionTimer;
+    selectionTimer.start();
+    const auto encoder = selectVideoEncoder(executable, size, fps, crf, canceled);
+    if (canceled && canceled->load()) return false;
+    m_runtimeDiagnostics.videoEncoder = encoder.name;
+    m_runtimeDiagnostics.hardwareAccelerated = encoder.hardwareAccelerated;
+    m_runtimeDiagnostics.selectionNs = quint64(selectionTimer.nsecsElapsed());
     QStringList args {QStringLiteral("-nostdin"), QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("warning"),
         QStringLiteral("-f"), QStringLiteral("rawvideo"), QStringLiteral("-pixel_format"), QStringLiteral("rgba"),
         QStringLiteral("-video_size"), QStringLiteral("%1x%2").arg(size.width()).arg(size.height()),
         QStringLiteral("-framerate"), QString::number(fps), QStringLiteral("-i"), QStringLiteral("pipe:0")};
     if (!pcmPath.isEmpty()) args << QStringLiteral("-f") << QStringLiteral("f32le") << QStringLiteral("-ar")
         << QString::number(audioSampleRate) << QStringLiteral("-ac") << QStringLiteral("2") << QStringLiteral("-i") << pcmPath;
-    args << QStringLiteral("-map") << QStringLiteral("0:v:0") << QStringLiteral("-c:v") << QStringLiteral("libx264")
-        << QStringLiteral("-preset") << QStringLiteral("medium") << QStringLiteral("-crf") << QString::number(crf)
-        // Keep the video decode timeline non-negative.  B-frame reordering
-        // introduces negative DTS and makes FFmpeg add a second MP4 edit list
-        // (media_time=1024) to the video track.  That combination is valid,
-        // but several FFmpeg/LAV based players apply the video and AAC edit
-        // lists inconsistently and repeatedly correct the audio clock.  The
-        // export path favors deterministic playback compatibility over the
-        // small bitrate saving from B-frames.
-        << QStringLiteral("-bf") << QStringLiteral("0")
-        << QStringLiteral("-vf") << QStringLiteral("scale=in_range=full:out_range=tv:out_color_matrix=bt709,format=yuv420p")
-        << QStringLiteral("-color_range") << QStringLiteral("tv") << QStringLiteral("-colorspace") << QStringLiteral("bt709")
-        << QStringLiteral("-color_primaries") << QStringLiteral("bt709") << QStringLiteral("-color_trc") << QStringLiteral("iec61966-2-1")
-        << QStringLiteral("-g") << QString::number(fps * 2)
-        // The input pipe is CFR. Keep the output policy explicit so a
-        // different FFmpeg default cannot duplicate or drop frames.
-        << QStringLiteral("-fps_mode") << QStringLiteral("cfr");
+    args << QStringLiteral("-map") << QStringLiteral("0:v:0");
+    args += videoEncodingArguments(encoder, crf, fps);
     if (!pcmPath.isEmpty()) args << QStringLiteral("-map") << QStringLiteral("1:a:0") << QStringLiteral("-c:a")
         << QStringLiteral("aac") << QStringLiteral("-b:a") << QStringLiteral("192k");
     // Both raw inputs start at zero and have exactly matching durations.
@@ -235,16 +331,21 @@ bool FfmpegVideoEncoder::writeFrame(const QImage& frame, QString* error)
     }
     const char* data = reinterpret_cast<const char*>(frame.constBits());
     qint64 remaining = frame.sizeInBytes();
+    constexpr qint64 maxPendingBytes = 4 * 1024 * 1024;
+    constexpr qint64 writeChunkBytes = 1024 * 1024;
     QElapsedTimer stalled; stalled.start();
-    while (remaining || m_process.bytesToWrite()) {
+    while (remaining) {
         if (m_canceled && m_canceled->load()) return false;
         collectDiagnostics();
         if (m_process.state() != QProcess::Running) return processError(error);
-        // Limit Qt's internal pending buffer as well as the application's frame pool.
-        if (remaining && m_process.bytesToWrite() < 256 * 1024) {
-            const qint64 count = m_process.write(data, std::min<qint64>(remaining, 64 * 1024));
+        // QProcess copies these bytes, so the source frame can be recycled
+        // without draining the pipe at every frame boundary. finish() flushes EOF.
+        const qint64 available = maxPendingBytes - m_process.bytesToWrite();
+        if (available > 0) {
+            const qint64 count = m_process.write(data, std::min({remaining, writeChunkBytes, available}));
             if (count < 0) return processError(error);
             data += count; remaining -= count;
+            if (count > 0) continue;
         }
         if (m_process.waitForBytesWritten(50)) stalled.restart();
         if (stalled.elapsed() > 30000) { *error = QStringLiteral("FFmpeg 输入管道超时"); return false; }
