@@ -1,3 +1,4 @@
+// 音源设置实现：异步验证候选，展示失败原因，并将结果接入一次性启动检查。
 #include "soundfontsetup.h"
 
 #include "app/playerapplicationservice.h"
@@ -17,6 +18,7 @@ namespace midi_play::presentation::settings {
 void chooseSoundFontFile(QWidget* parent, app::SettingsService* settings,
                          app::PlayerApplicationService* player)
 {
+    // 防止重复选择与加载；保存路径只用于定位文件对话框的初始目录。
     if (!settings || !player || player->isSoundFontLoading()) return;
     const QString current = settings->soundFontPath();
     const QString path = QFileDialog::getOpenFileName(parent, QStringLiteral("选择音源"),
@@ -62,6 +64,7 @@ SoundFontSetupDialog::SoundFontSetupDialog(app::SettingsService* settings,
         chooseSoundFontFile(this, settings, player);
     });
     connect(buttons, &QDialogButtonBox::rejected, this, &SoundFontSetupDialog::reject);
+    // 检查期间同时禁用选择和跳过；成功接受对话框，失败保留窗口供重试。
     connect(player, &app::PlayerApplicationService::soundFontLoadingChanged, this,
         [select, skip, error](bool loading) {
             select->setEnabled(!loading);
@@ -89,8 +92,7 @@ SoundFontSetupDialog::SoundFontSetupDialog(app::SettingsService* settings,
 
 void SoundFontSetupDialog::reject()
 {
-    // A load is not cancellable. Let it finish before continuing startup or
-    // closing the dialog, so command-line song import cannot race the load.
+    // 音源加载不可取消；等待结束后再继续启动，防止命令行曲目导入与加载重叠。
     if (!m_player->isSoundFontLoading()) QDialog::reject();
 }
 
@@ -109,6 +111,7 @@ SoundFontSetup::SoundFontSetup(app::SettingsService* settings, app::PlayerApplic
 
 void SoundFontSetup::start()
 {
+    // 先设置一次性门闩，重复调用不会重开对话框或重复检查保存路径。
     if (m_started) return;
     m_started = true;
     if (m_settings->soundFontPath().isEmpty()) {

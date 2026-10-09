@@ -1,3 +1,4 @@
+// 编码工作线程实现：条件变量协调反压/帧回收，正常收尾与取消中止分别处理。
 #include "ffmpegvideoencoderworker.h"
 #include "ffmpegvideoencoder.h"
 
@@ -44,8 +45,7 @@ bool FfmpegVideoEncoderWorker::open(const QString& executable, const QString& ou
         }
         m_canceled = canceled;
         m_frameSize = size;
-        // Queue capacity plus one consumer and one producer buffer. Allocation
-        // happens once; legacy submitFrame() callers may still provide images.
+        // 一次分配队列容量加生产者/消费者两份图像，兼容直接提交自有图像的调用方。
         for (std::size_t i = 0; i < m_capacity + 2; ++i) {
             QImage frame(size, QImage::Format_RGBA8888);
             if (frame.isNull()) {
@@ -65,6 +65,7 @@ bool FfmpegVideoEncoderWorker::open(const QString& executable, const QString& ou
         return false;
     }
     std::unique_lock lock(m_mutex);
+    // 启动结果由工作线程发布；失败后先解锁再 join，避免清理时竞争同一互斥量。
     m_started.wait(lock, [this] { return m_startedFlag; });
     if (!m_opened) {
         if (error) *error = m_error;
@@ -84,6 +85,7 @@ bool FfmpegVideoEncoderWorker::acquireFrame(QImage& frame, QString* error)
     }
     QElapsedTimer timer;
     if (m_diagnosticsEnabled) timer.start();
+    // 等待时释放互斥量，定期醒来检测外部原子取消；缓冲区不足时限制生产速度。
     while (m_recycledFrames.empty() && !shouldStopLocked())
         m_frameAvailable.wait_for(lock, cancellationPollInterval);
     if (m_diagnosticsEnabled) m_recycledFrameWaitNs += quint64(timer.nsecsElapsed());
@@ -121,6 +123,7 @@ bool FfmpegVideoEncoderWorker::submitFrame(QImage frame, QString* error)
         if (error) *error = m_error;
         return false;
     }
+    // 图像所有权移入 FIFO；唤醒消费者前先解锁，减少双方争用队列锁。
     m_frames.push_back(std::move(frame));
     ++m_submittedFrames;
     if (m_diagnosticsEnabled) m_peakQueueDepth = std::max(m_peakQueueDepth, int(m_frames.size()));
@@ -196,6 +199,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
         m_encoderSelectionNs = encoderDiagnostics.selectionNs;
     }
 
+    // 消费循环中写入进程不持有队列锁，生产者可并行准备/提交下一帧。
     for (;;) {
         QImage frame;
         {
@@ -206,6 +210,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
                 m_frames.clear();
                 break;
             }
+            // finish 设置 stop 但仍排空已有帧；abort/cancel 则直接丢弃队列。
             if (m_frames.empty()) break;
             frame = std::move(m_frames.front());
             m_frames.pop_front();
@@ -250,6 +255,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
         finishRequested = m_finishRequested;
         abortRequested = m_abortRequested;
     }
+    // 只有显式正常收尾才发送 EOF；其他路径由编码器析构终止仍在运行的进程。
     if (finishRequested && !abortRequested && (!canceled || !canceled->load())) {
         error.clear();
         if (!encoder.finish(&error)) {

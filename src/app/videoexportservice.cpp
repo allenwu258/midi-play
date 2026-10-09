@@ -1,3 +1,4 @@
+// 视频导出编排实现：先合成 PCM，再流水渲染/编码，校验后原子提交 MP4。
 #include "videoexportservice.h"
 #include "exporttimeline.h"
 #include "offlineaudiorenderer.h"
@@ -22,11 +23,13 @@
 
 namespace midi_play::app {
 namespace {
+// 累计纳秒舍入到最近毫秒，供任务结果展示。
 qint64 nanosecondsToMilliseconds(quint64 nanoseconds)
 {
     return qint64((nanoseconds + 500'000) / 1'000'000);
 }
 
+// 显式启用诊断并配置路径时追加一条 JSONL；诊断写入失败不影响导出结果。
 void appendVideoDiagnostics(const VideoExportOptions& options, qint64 frameCount,
                             const VideoExportMetrics& metrics,
                             const presentation::visualization::VulkanRenderDiagnostics& renderer,
@@ -109,6 +112,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     const QFileInfo output(options.outputPath);
     if (options.outputPath.trimmed().isEmpty() || output.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive)
         || !output.dir().exists() || output.isDir()) return failure(QStringLiteral("请选择有效的 MP4 输出路径"));
+    // 已存在文件使用规范路径解析链接；不存在的输出使用绝对路径参与覆盖保护。
     const auto identity = [](const QString& path) {
         const QFileInfo info(path); const QString canonical = info.canonicalFilePath();
         return canonical.isEmpty() ? info.absoluteFilePath() : canonical;
@@ -125,7 +129,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     const ExportTimeline timeline(end, options.fps, options.ratePercent, options.tailMilliseconds);
     if (!timeline.valid()) return failure(QStringLiteral("乐曲时长、帧率、速度或尾音参数无效"));
     auto scene = options.scene;
-    // Project from this job's document, never from a potentially changed GUI chart.
+    // 从任务持有的文档独立投影，避免导出期间 GUI 切换乐曲影响场景。
     scene.state.chart = visualization::PlaybackVisualizationProjector().project(*document, 1, {});
     if (!scene.state.chart) return failure(QStringLiteral("无法构建视频场景"));
     scene.state.durationUs = end;
@@ -137,6 +141,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     QString pcmPath;
     quint64 clipped = 0;
     if (options.includeAudio) {
+        // PCM 为交错双声道 float，每帧 8 字节；预留额外空间供临时视频封装使用。
         const QFileInfo font(options.soundFontPath);
         if (!font.isReadable() || !font.isFile()) return failure(QStringLiteral("请先配置有效的 SoundFont"));
         const QStorageInfo storage(output.dir());
@@ -150,6 +155,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
                                         options.includeMetronome, timeline.sampleCount()};
         QElapsedTimer timer;
         timer.start();
+        // 音频覆盖完整视频帧时长；该阶段占总进度的前 20%。
         const auto result = OfflineAudioRenderer::render(document, audio,
             [&pcm, &interleaved](const float* left, const float* right, int count, QString* error) {
                 for (int i = 0; i < count; ++i) { interleaved[i * 2] = left[i]; interleaved[i * 2 + 1] = right[i]; }
@@ -160,8 +166,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         metrics.audioRenderMs = timer.elapsed();
         if (result.status != AudioExportStatus::Success) return failure(result.error);
         if (!pcm.flush()) return failure(pcm.errorString());
-        // Windows may deny a second reader while the writer handle is open.
-        // Close the PCM file before FFmpeg starts consuming it.
+        // Windows 可能拒绝写句柄未关闭时的第二个读者，启动 FFmpeg 前先关闭 PCM。
         pcm.close();
         if (pcm.error() != QFile::NoError) return failure(pcm.errorString());
         if (result.frames != timeline.sampleCount() || QFileInfo(pcmPath).size() != timeline.sampleCount() * 8)
@@ -174,6 +179,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
                       timeline.frameCount(), ExportTimeline::audioSampleRate, canceled, &error))
         return failure(error);
 
+    // 队列保存音乐帧顺序与对应 GPU 票据，按提交顺序回读后送入编码队列。
     struct PendingFrame {
         qint64 index = 0;
         presentation::visualization::VulkanRenderTicket ticket;
@@ -181,6 +187,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     std::deque<PendingFrame> pending;
     QElapsedTimer videoTimer;
     videoTimer.start();
+    // 先取得编码器回收的 QImage，再完成最早 GPU 帧，减少整帧内存重复分配。
     auto completeNext = [&]() {
         if (pending.empty()) return true;
         auto current = std::move(pending.front());
@@ -202,6 +209,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         if (!renderer.beginRender(timeline.musicPositionUs(n), ticket, canceled, &error)) {
             if (!error.isEmpty() || pending.empty()) return failure(error);
             if (!completeNext()) return failure(error);
+            // 无空闲 GPU 槽但没有错误时，完成最早一帧后重试当前绝对帧索引。
             --n;
             continue;
         }
@@ -209,6 +217,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         ++metrics.submittedFrames;
         metrics.peakInFlightFrames = std::max(metrics.peakInFlightFrames, int(pending.size()));
     }
+    // 所有帧提交后排空 GPU 队列，编码器 finish 再等待编码队列并封装收尾。
     while (!pending.empty()) {
         if (isCanceled() || !completeNext()) return failure(error);
     }
@@ -223,6 +232,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     report(90, QStringLiteral("正在检查视频完整性"));
     QElapsedTimer validationTimer;
     validationTimer.start();
+    // ffprobe 可用时校验媒体规格，并始终执行完整解码检查，再允许覆盖最终输出。
     if (!encoding::FfmpegVideoEncoder::validate(ffmpeg.executablePath, temporaryOutput, canceled, &error,
                                                 size, options.fps, timeline.frameCount(), options.includeAudio,
                                                 timeline.videoDurationUs(), ExportTimeline::audioSampleRate))
@@ -232,6 +242,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     QFile source(temporaryOutput);
     QElapsedTimer commitTimer;
     commitTimer.start();
+    // 禁用直接写回退，取消/失败时保留原目标；仅 commit 成功发布新视频。
     QSaveFile destination(output.absoluteFilePath()); destination.setDirectWriteFallback(false);
     if (!source.open(QIODevice::ReadOnly) || !destination.open(QIODevice::WriteOnly))
         return failure(QStringLiteral("无法安全写入输出文件：%1").arg(destination.errorString()));

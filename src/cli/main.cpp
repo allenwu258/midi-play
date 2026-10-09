@@ -1,3 +1,5 @@
+// 命令行入口：提供读入检查、音源试听、音频导出和传统 Qt 单帧渲染检查。
+// 返回码约定：0 为成功，1 为资源/处理失败，2 为命令或参数错误。
 #include "app/audioexportservice.h"
 #include "domain/visualization/playbackscenestate.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
@@ -25,6 +27,7 @@
 
 namespace {
 
+// 向指定标准流输出支持的命令及位置参数约定。
 void printUsage(FILE* stream)
 {
     std::fputs(
@@ -37,12 +40,14 @@ void printUsage(FILE* stream)
         stream);
 }
 
+// 命令共用的读入器装配，按扩展名选择 MusicXML 或 MIDI 适配器。
 void registerReaders(midi_play::readers::MusicReaderRegistry& registry)
 {
     registry.registerReader(std::make_unique<midi_play::readers::MusicXmlReaderAdapter>());
     registry.registerReader(std::make_unique<midi_play::readers::MidiReaderAdapter>());
 }
 
+// 加载音源并试听中央 C；可选替换音源用于检查重复加载，事件循环在 1.5 秒后结束。
 int runAudioTest(const QStringList& arguments, QCoreApplication& application)
 {
     midi_play::audio::FluidSynthEngine engine;
@@ -57,6 +62,7 @@ int runAudioTest(const QStringList& arguments, QCoreApplication& application)
         return 1;
     }
 
+    // 发出按下事件，900 ms 后释放；引擎生存期覆盖整个定时器事件循环。
     midi_play::playback::PlaybackEvent noteOn;
     noteOn.channel = 0;
     noteOn.pitch = 60;
@@ -72,6 +78,7 @@ int runAudioTest(const QStringList& arguments, QCoreApplication& application)
     return application.exec();
 }
 
+// 直接调用 MIDI 读入器，输出轨道数和按文档速度图换算的微秒时长。
 int runMidiTest(const QString& inputPath)
 {
     const auto result = midi_play::midi::MidiReader().read(inputPath);
@@ -85,6 +92,7 @@ int runMidiTest(const QString& inputPath)
     return 0;
 }
 
+// 解析音频导出参数、读入统一文档，再同步调用与 GUI 共用的导出应用服务。
 int runAudioExport(const QStringList& arguments)
 {
     if (arguments.size() < 6) {
@@ -96,6 +104,7 @@ int runAudioExport(const QStringList& arguments)
         ? midi_play::encoding::AudioFileFormat::Wav : midi_play::encoding::AudioFileFormat::Mp3;
     const QString inputPath = arguments.at(2);
     options.outputPath = arguments.at(3);
+    // 节拍器开关不消耗值，其余选项必须成对出现；数值范围由导出服务统一验证。
     for (int index = 4; index < arguments.size();) {
         const QString flag = arguments.at(index++);
         if (flag == QStringLiteral("--metronome")) {
@@ -139,6 +148,7 @@ int runAudioExport(const QStringList& arguments)
         qCritical().noquote() << read.error;
         return 1;
     }
+    // CLI 不传取消标志，以 stderr 报告进度；成功输出样本帧数、峰值与削波统计。
     const auto result = midi_play::app::AudioExportService::exportDocument(
         read.document, options, nullptr, [](int percent) {
             if (percent % 10 == 0) std::fprintf(stderr, "\rExporting: %d%%", percent);
@@ -155,10 +165,12 @@ int runAudioExport(const QStringList& arguments)
     return 1;
 }
 
+// 生成指定音乐位置和尺寸的 PNG；主题/音符色彩选项先提取，再解析剩余位置参数。
 int runRenderTest(QStringList arguments)
 {
     auto mode = midi_play::settings::kDefaultThemeMode;
     auto colorMode = midi_play::settings::kDefaultNoteColorMode;
+    // 选项只能出现一次且位于输入/输出文件之后，移除后保持位置参数下标稳定。
     const int themeArgument = arguments.indexOf(QStringLiteral("--theme"));
     if (themeArgument >= 0) {
         const QString value = arguments.value(themeArgument + 1);
@@ -203,6 +215,7 @@ int runRenderTest(QStringList arguments)
         qCritical().noquote() << result.error;
         return 1;
     }
+    // 从读入文档构建独立图表，无需创建实时播放器或音频设备。
     midi_play::visualization::VisualizationProjectionOptions options;
     options.fallbackTitle = QFileInfo(inputPath).completeBaseName();
     const auto chart = midi_play::visualization::PlaybackVisualizationProjector().project(
@@ -221,10 +234,12 @@ int runRenderTest(QStringList arguments)
     state.transportPositionUs = std::clamp<qint64>(requestedPosition, 0, chart->durationUs());
     state.transportState = midi_play::playback::State::Playing;
     state.updateVisibleWindow();
+    // 查询可见候选并借用局部向量；向量在同步渲染结束前始终有效。
     midi_play::visualization::VisibleNoteIndex index(chart->notes());
     QVector<int> candidates;
     index.query(state.visibleWindowStartUs, state.visibleWindowEndUs, candidates);
     state.candidateNoteIndices = std::span<const int>(candidates.constData(), candidates.size());
+    // 输出尺寸夹取到支持范围，使用传统 QPainter 路径验证布局和绘制结果。
     const int width = arguments.size() > 5 ? std::clamp(arguments.at(5).toInt(), 320, 7680) : 1280;
     const int height = arguments.size() > 6 ? std::clamp(arguments.at(6).toInt(), 240, 4320) : 720;
     QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
@@ -246,6 +261,7 @@ int runRenderTest(QStringList arguments)
     return image.save(outputPath) ? 0 : 1;
 }
 
+// 按扩展名读入并报告文档摘要，用于检查统一读入接口的基本可用性。
 int runReaderSmokeTest(const QString& inputPath)
 {
     midi_play::readers::MusicReaderRegistry registry;
@@ -269,10 +285,12 @@ int runReaderSmokeTest(const QString& inputPath)
 
 } // namespace
 
+// 按命令分派检查或导出操作；只有渲染命令创建具备字体/绘图支持的 GUI 应用对象。
 int main(int argc, char* argv[])
 {
     const bool renderMode = argc > 1 && QByteArray(argv[1]) == QByteArrayLiteral("--render-test");
     std::unique_ptr<QCoreApplication> application;
+    // 图像渲染需要 QGuiApplication 和平台插件，其他命令使用 QCoreApplication。
     if (renderMode) {
         const QString executableDirectory = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();
         const QString bundledPlatforms = QDir(executableDirectory).filePath(QStringLiteral("platforms"));
@@ -287,6 +305,7 @@ int main(int argc, char* argv[])
     application->setOrganizationName(QStringLiteral("MidiPlay"));
     const QStringList arguments = application->arguments();
     const QString command = arguments.value(1);
+    // 无参数等同帮助；未识别的命令或位置参数数量错误按使用错误返回 2。
     if (arguments.size() == 1 || command == QStringLiteral("--help")
         || command == QStringLiteral("-h")) {
         printUsage(stdout);

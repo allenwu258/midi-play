@@ -1,3 +1,4 @@
+// 导出对话框实现：将页面参数校验与文件覆盖确认串联为接受流程。
 #include "exportdialog.h"
 
 #include "audioexportpage.h"
@@ -28,6 +29,7 @@ ExportDialog::ExportDialog(const QString& sourcePath, const QString& soundFontPa
     root->setContentsMargins(12, 12, 12, 12);
     root->setSpacing(12);
 
+    // 两个页面分别保存配置；视频不可用时保留页面并展示具体原因。
     m_tabs = new QTabWidget(this);
     m_tabs->setObjectName(QStringLiteral("exportTabs"));
     m_tabs->tabBar()->setObjectName(QStringLiteral("exportTabBar"));
@@ -62,12 +64,14 @@ app::VideoExportOptions ExportDialog::videoOptions() const
 
 void ExportDialog::acceptExport()
 {
+    // 仅校验当前页，避免另一种导出格式的配置阻塞本次操作。
     const bool video = exportType() == ExportType::Video;
     const QString error = video ? m_videoPage->validationError() : m_audioPage->validationError();
     if (!error.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("导出"), error);
         return;
     }
+    // 在启动后台任务前完成覆盖确认；最终文件写入仍由导出服务负责。
     const QString path = video ? m_videoPage->outputPath() : m_audioPage->outputPath();
     if (QFileInfo::exists(path)
         && QMessageBox::question(this, QStringLiteral("覆盖文件"),

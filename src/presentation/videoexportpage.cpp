@@ -1,3 +1,4 @@
+// 视频导出表单实现：控制音频选项联动，并通过 QtConcurrent 渲染单帧预览。
 #include "videoexportpage.h"
 
 #include <QCheckBox>
@@ -67,6 +68,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     m_rate->setValue(defaults.ratePercent);
     form->addRow(QStringLiteral("播放速度"), m_rate);
 
+    // 未配置音源时禁止启用音乐；节拍器仅能随音频一起导出。
     m_audio = new QCheckBox(QStringLiteral("包含音乐"), m_controls);
     m_audio->setChecked(!defaults.soundFontPath.isEmpty());
     m_audio->setEnabled(!defaults.soundFontPath.isEmpty());
@@ -112,6 +114,7 @@ VideoExportPage::~VideoExportPage()
 
 app::VideoExportOptions VideoExportPage::options() const
 {
+    // 保留场景图表、主题等默认值，仅替换页面实际开放的参数。
     auto result = m_defaults;
     result.scene.outputSize = m_size->currentData().toSize();
     result.fps = m_fps->currentData().toInt();
@@ -131,6 +134,7 @@ QString VideoExportPage::outputPath() const
 
 void VideoExportPage::setAvailability(bool available, const QString& reason)
 {
+    // 不可用时停止旧预览并禁用整个表单，恢复时重新请求预览。
     m_available = available;
     m_unavailableReason = reason;
     m_controls->setEnabled(available);
@@ -158,12 +162,14 @@ void VideoExportPage::updatePreview()
 {
 #if MIDI_PLAY_HAS_VULKAN
     if (!m_available) return;
+    // 取消是协作式请求；版本检查同时防止较早任务覆盖较新的预览。
     if (m_previewCancel) m_previewCancel->store(true);
     m_previewCancel = std::make_shared<std::atomic_bool>(false);
     const auto cancel = m_previewCancel;
     const auto revision = ++m_previewRevision;
     m_preview->setText(QStringLiteral("正在生成预览"));
     auto config = options().scene;
+    // 预览固定按 1024×576 渲染，再缩放到标签；最终导出采用表单分辨率。
     config.outputSize = {1024, 576};
     const qint64 position = m_previewPosition;
     auto* watcher = new QFutureWatcher<QPair<QImage, QString>>(this);
@@ -176,6 +182,7 @@ void VideoExportPage::updatePreview()
         else m_preview->setPixmap(QPixmap::fromImage(result.first).scaled(
             m_preview->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
     });
+    // 工作线程持有独立渲染器和场景副本；带接收者的连接随页面销毁自动断开。
     watcher->setFuture(QtConcurrent::run([config, cancel, position] {
         visualization::VulkanOffscreenRenderer renderer;
         QImage frame;

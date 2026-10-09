@@ -1,3 +1,4 @@
+// 原生窗口装饰实现：保留系统窗口能力，将自定义标题内容扩展到客户区并桥接按钮输入。
 #include "windowchromecontroller.h"
 
 #include "windowchromegeometry.h"
@@ -28,6 +29,7 @@
 
 namespace midi_play::presentation::windowchrome {
 
+// 控制器私有状态：原生修改只在 Windows Qt 平台插件下执行。
 struct WindowChromeController::NativeFrame {
     explicit NativeFrame(WindowChromeController& controller) : owner(controller) {}
 
@@ -36,6 +38,7 @@ struct WindowChromeController::NativeFrame {
     int captionHeight = 0;
 
 #if defined(Q_OS_WIN)
+    // 保存可读取的原始 DWM 属性，退出自定义模式时逐项恢复。
     struct Attribute {
         DWORD id;
         DWORD value = 0;
@@ -51,6 +54,7 @@ struct WindowChromeController::NativeFrame {
     bool customApplied = false;
     QPointer<QToolButton> pressedButton;
 
+    // 用屏幕物理坐标查找可见且启用的系统按钮，返回用于桥接的 Qt 控件。
     QToolButton* captionButtonAt(POINT screenPoint) const
     {
         if (!owner.m_captionButtons || !owner.m_captionButtons->isVisibleTo(owner.m_window)) return nullptr;
@@ -64,6 +68,7 @@ struct WindowChromeController::NativeFrame {
         return nullptr;
     }
 
+    // 清除悬停、按下与捕获状态，取消或切换窗口句柄时均可调用。
     void clearCaptionInput()
     {
         pressedButton = nullptr;
@@ -76,21 +81,24 @@ struct WindowChromeController::NativeFrame {
 
     bool available() const noexcept
     {
-        // Offscreen WIds are opaque tokens, not HWNDs. Never pass them to Win32.
+        // 离屏平台的 WId 是不透明标识，不能作为 HWND 传入 Win32。
         return QGuiApplication::platformName() == QLatin1String("windows");
     }
 
+    // 优先使用 Qt 当前 DPR，窗口句柄未就绪时按 Windows DPI 回退计算。
     qreal scale() const noexcept
     {
         const auto* window = owner.m_window ? owner.m_window->windowHandle() : nullptr;
         return window ? window->devicePixelRatio() : qreal(dpi) / USER_DEFAULT_SCREEN_DPI;
     }
 
+    // 缩放边框包含系统尺寸框架和附加边框，均以物理像素计。
     int frameX() const { return GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi)
                             + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi); }
     int frameY() const { return GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
                             + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi); }
 
+    // 新句柄重新建立原生状态，旧句柄的属性快照不可套用到新窗口。
     void bind(HWND handle)
     {
         if (hwnd == handle) return;
@@ -100,6 +108,7 @@ struct WindowChromeController::NativeFrame {
         for (auto& attribute : attributes) attribute.captured = false;
     }
 
+    // 只记录成功读取的属性，兼容不支持部分新 DWM 属性的系统版本。
     void captureAttributes()
     {
         for (auto& attribute : attributes) {
@@ -108,6 +117,7 @@ struct WindowChromeController::NativeFrame {
         }
     }
 
+    // 动态属性或系统配色变化后重新求值顶栏及子控件的样式选择器。
     void refreshTitleBarStyle()
     {
         if (!owner.m_titleBar) return;
@@ -121,6 +131,7 @@ struct WindowChromeController::NativeFrame {
         owner.m_titleBar->update();
     }
 
+    // 移除系统高对比度覆盖，恢复应用主题继承关系。
     void resetQtAppearance()
     {
         if (owner.m_captionButtons) {
@@ -130,12 +141,12 @@ struct WindowChromeController::NativeFrame {
 
         const bool hadHighContrast = owner.m_titleBar->property("nativeHighContrast").isValid();
         owner.m_titleBar->setProperty("nativeHighContrast", QVariant());
-        // An empty palette removes the widget-local override and restores the
-        // palette inherited from the window/application.
+        // 空调色板清除控件局部覆盖，恢复从窗口或应用继承的颜色。
         owner.m_titleBar->setPalette(QPalette());
         if (hadHighContrast) refreshTitleBarStyle();
     }
 
+    // 清理输入和 Qt 外观，再撤销客户区扩展及成功捕获的 DWM 属性修改。
     void restoreAttributes()
     {
         clearCaptionInput();
@@ -152,6 +163,7 @@ struct WindowChromeController::NativeFrame {
 
     bool fullScreen() const { return owner.m_window && owner.m_window->isFullScreen(); }
 
+    // 同步 DWM 与 Qt 标题栏配色；系统高对比度设置优先于应用深浅主题。
     void applyAppearance()
     {
         const DWMNCRENDERINGPOLICY rendering = DWMNCRP_ENABLED;
@@ -189,6 +201,7 @@ struct WindowChromeController::NativeFrame {
                 refreshTitleBarStyle();
             }
         }
+        // 高对比度时使用系统颜色和默认 DWM 色值，普通模式才应用主题色。
         const BOOL dark = !highContrast && owner.m_theme == midi_play::settings::ThemeMode::Dark;
         DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
 
@@ -204,10 +217,10 @@ struct WindowChromeController::NativeFrame {
         DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
         const DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
         DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
-        // Unsupported Windows 11 attributes return E_INVALIDARG on Windows 10.
-        // The Windows 10 border remains available without Windows 11 attributes.
+        // Windows 10 对不支持的 Windows 11 属性返回 E_INVALIDARG，基础边框能力仍可用。
     }
 
+    // 应用模式并刷新非客户区，空字符串表示成功或当前平台无需处理。
     QString apply()
     {
         if (!available() || !owner.m_window) return {};
@@ -218,6 +231,7 @@ struct WindowChromeController::NativeFrame {
         const bool custom = owner.m_mode == midi_play::settings::TitleBarMode::Custom;
         if (custom) {
             if (fullScreen()) clearCaptionInput();
+            // 自定义模式依赖 DWM 和原生窗口样式；全屏不要求可见标题及厚边框。
             BOOL composition = FALSE;
             if (FAILED(DwmIsCompositionEnabled(&composition)) || !composition)
                 return QStringLiteral("DWM 不可用，已使用原生标题栏");
@@ -234,8 +248,7 @@ struct WindowChromeController::NativeFrame {
             restoreAttributes();
         }
 
-        // Preserve HWND, activation, z-order and WINDOWPLACEMENT. Qt 6.8 reads
-        // the resulting NCCALCSIZE margins into its public frame geometry.
+        // 保持句柄、激活、层级和窗口位置，仅刷新框架；Qt 6.8 会读取 NCCALCSIZE 的结果边距。
         if (!SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
                           | SWP_NOOWNERZORDER | SWP_FRAMECHANGED)) {
@@ -244,6 +257,7 @@ struct WindowChromeController::NativeFrame {
         }
 
         if (custom) {
+            // 扩展高度包括实际顶栏和顶部系统边框，全屏时扩展边距归零。
             const int height = owner.m_titleBar
                 ? qCeil(owner.m_titleBar->height() * scale()) + frameY() : frameY();
             const MARGINS margins {0, 0, fullScreen() ? 0 : height, 0};
@@ -254,6 +268,7 @@ struct WindowChromeController::NativeFrame {
         return {};
     }
 
+    // 将系统按钮区域换算为 Qt 逻辑尺寸，DWM 无有效度量时回退系统尺寸。
     void updateMetrics()
     {
         int width = 0;
@@ -268,8 +283,7 @@ struct WindowChromeController::NativeFrame {
                 && buttons.right > buttons.left && buttons.bottom > buttons.top
                 && GetWindowRect(hwnd, &window) && GetClientRect(hwnd, &client)
                 && ClientToScreen(hwnd, &origin)) {
-                // Caption bounds are window-relative; Qt contents start at the
-                // real client origin, which differs in normal/maximized states.
+                // DWM 按钮区域相对窗口，Qt 内容相对真实客户区原点；最大化前后原点偏移不同。
                 width = qCeil((origin.x + client.right - window.left - buttons.left) / scale());
                 height = std::max(height, qCeil((window.top + buttons.bottom - origin.y) / scale()));
             } else if (width == 0) {
@@ -288,6 +302,7 @@ struct WindowChromeController::NativeFrame {
         }
     }
 
+    // 最大化时为当前显示器的自动隐藏任务栏保留边缘唤出区域。
     void leaveAutoHideTaskbarRevealArea(RECT& rect) const
     {
         MONITORINFO monitor {sizeof(MONITORINFO)};
@@ -297,7 +312,7 @@ struct WindowChromeController::NativeFrame {
             bar.uEdge = edge;
             bar.rc = monitor.rcMonitor;
             if (!SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &bar)) continue;
-            // Only reserve an edge that is not already excluded by rcWork.
+            // 工作区已排除的边缘无需重复扣除；其余边缘预留 2 个物理像素。
             constexpr LONG revealPixels = 2;
             if (edge == ABE_LEFT && rect.left <= monitor.rcMonitor.left) rect.left += revealPixels;
             if (edge == ABE_TOP && rect.top <= monitor.rcMonitor.top) rect.top += revealPixels;
@@ -306,6 +321,7 @@ struct WindowChromeController::NativeFrame {
         }
     }
 
+    // 处理 WM_NCCALCSIZE 的两种参数布局，将标题内容纳入客户区。
     LRESULT calculateClientRect(const MSG& message) const
     {
         RECT& client = message.wParam
@@ -314,9 +330,7 @@ struct WindowChromeController::NativeFrame {
         const RECT proposed = client;
         if (fullScreen()) return 0;
 
-        // Preserve Windows' left/right/bottom frame calculation. Only the
-        // caption is extended into the client. Maximized windows extend their
-        // outer thick frame beyond rcWork; remove that inset on the top too.
+        // 保留系统左、右、下边框计算，只重设顶部；最大化时扣除超出工作区的厚边框。
         DefWindowProcW(hwnd, message.message, message.wParam, message.lParam);
         UINT visibleBorder = std::max(1, MulDiv(1, dpi, USER_DEFAULT_SCREEN_DPI));
         DwmGetWindowAttribute(hwnd, DWMWA_VISIBLE_FRAME_BORDER_THICKNESS,
@@ -326,6 +340,7 @@ struct WindowChromeController::NativeFrame {
         return 0;
     }
 
+    // 将 Qt 控件的逻辑坐标换算为窗口相对物理坐标，包含真实客户区原点偏移。
     QRectF widgetRect(const QWidget* widget) const
     {
         if (!widget || !widget->isVisibleTo(owner.m_window)) return {};
@@ -338,6 +353,7 @@ struct WindowChromeController::NativeFrame {
                       widget->width() * scale(), widget->height() * scale());
     }
 
+    // 先识别系统按钮以支持原生行为，再用通用几何模型检测拖动与缩放区域。
     LRESULT hitTest(const MSG& message) const
     {
         if (fullScreen()) return HTCLIENT;
@@ -355,12 +371,11 @@ struct WindowChromeController::NativeFrame {
         geometry.caption = widgetRect(owner.m_titleBar);
         geometry.systemMenu = widgetRect(owner.m_systemMenuWidget);
         for (const auto& widget : owner.m_interactiveWidgets) {
-            // Disabled controls are still client areas, never draggable chrome.
+            // 禁用操作控件仍属于客户区，不能变成可拖动的标题区域。
             const QRectF region = widgetRect(widget);
             if (!region.isEmpty()) geometry.interactive.append(region);
         }
-        // A disabled caption control remains an ordinary, non-draggable client
-        // region. Its native command must never be emitted by hit testing.
+        // 整个按钮容器排除拖动；禁用系统按钮不会获得原生命中类型或触发系统命令。
         const QRectF controls = widgetRect(owner.m_captionButtons);
         if (!controls.isEmpty()) geometry.interactive.append(controls);
         geometry.resizeBorder = QMargins(frameX(), frameY(), frameX(), frameY());
@@ -387,11 +402,11 @@ struct WindowChromeController::NativeFrame {
 
     void command(WPARAM command) const
     {
-        // Posting avoids deleting a Qt sender during an accessibility action
-        // or re-entering its clicked handler. Qt still handles WM_CLOSE.
+        // 异步投递避免在无障碍动作或 clicked 回调中销毁发送者；关闭仍经过 Qt 的 WM_CLOSE 处理。
         PostMessageW(hwnd, WM_SYSCOMMAND, command, 0);
     }
 
+    // 只接管自定义模式下属于本窗口的 Win32 消息，其余交回 Qt 与默认窗口过程。
     bool process(const QByteArray& eventType, void* message, qintptr* result)
     {
         if (!available() || owner.m_mode != midi_play::settings::TitleBarMode::Custom
@@ -402,13 +417,14 @@ struct WindowChromeController::NativeFrame {
         const auto handle = reinterpret_cast<HWND>(owner.m_window->internalWinId());
         if (!handle || msg.hwnd != handle) return false;
         bind(handle);
+        // 非客户区输入同步到 Qt 按钮状态；捕获后客户区消息也参与同一次按下/释放事务。
         if (!fullScreen() && owner.m_captionButtons) {
             if (msg.message == WM_NCMOUSEMOVE) {
                 POINT point {GET_X_LPARAM(msg.lParam), GET_Y_LPARAM(msg.lParam)};
                 owner.m_captionButtons->setNativeHovered(captionButtonAt(point));
                 TRACKMOUSEEVENT track {sizeof(TRACKMOUSEEVENT), TME_LEAVE | TME_NONCLIENT, hwnd, 0};
                 TrackMouseEvent(&track);
-                // Keep DefWindowProc's non-client mouse processing for Snap.
+                // 保留默认非客户区鼠标处理，以支持系统贴靠布局。
             } else if (msg.message == WM_NCMOUSELEAVE) {
                 owner.m_captionButtons->setNativeHovered(nullptr);
             } else if (msg.message == WM_NCLBUTTONDOWN || msg.message == WM_NCLBUTTONDBLCLK) {
@@ -428,6 +444,7 @@ struct WindowChromeController::NativeFrame {
                 owner.m_captionButtons->setNativeHovered(hovered);
                 owner.m_captionButtons->setNativePressed(hovered == pressedButton ? hovered : nullptr);
                 if (msg.message != WM_MOUSEMOVE) {
+                    // 仅在原按钮内释放时触发 click；先清理捕获，再执行可能改变窗口状态的命令。
                     const QPointer<QToolButton> clicked = hovered == pressedButton ? pressedButton : nullptr;
                     clearCaptionInput();
                     if (clicked) clicked->click();
@@ -447,7 +464,7 @@ struct WindowChromeController::NativeFrame {
             return true;
         case WM_DPICHANGED:
             dpi = HIWORD(msg.wParam);
-            // Let Qt apply the suggested rectangle and update its screen/DPR.
+            // 建议窗口矩形与屏幕/DPR 更新由 Qt 处理，随后再刷新框架度量。
             owner.scheduleRefresh();
             break;
         case WM_DWMCOMPOSITIONCHANGED:
@@ -475,8 +492,7 @@ struct WindowChromeController::NativeFrame {
         default:
             break;
         }
-        // Qt/DefWindowProc retain state, min/max size hints, system menu,
-        // closeEvent, keyboard shortcuts, drag loops and monitor placement.
+        // 未接管的消息保留 Qt/系统对状态、尺寸约束、菜单、关闭、快捷键、拖动和显示器位置的处理。
         return false;
     }
 #endif
@@ -554,10 +570,11 @@ void WindowChromeController::refreshFrame()
 {
 #if defined(Q_OS_WIN)
     if (m_native->available() && m_window) {
-        // Native mode never forces early HWND creation or modifies its theme.
+        // 尚未应用自定义框架的原生模式直接返回，避免提前创建 HWND 或覆盖系统主题。
         if (m_mode == midi_play::settings::TitleBarMode::Native && !m_native->customApplied) return;
         const QString error = m_native->apply();
         if (!error.isEmpty()) {
+            // 恢复捕获的外观与框架，再公布回退结果，主窗口据此同步持久化模式。
             m_mode = midi_play::settings::TitleBarMode::Native;
             m_native->restoreAttributes();
             m_native->apply();
@@ -639,6 +656,7 @@ void WindowChromeController::showSystemMenu()
     const HWND hwnd = m_native->hwnd;
     const HMENU menu = GetSystemMenu(hwnd, FALSE);
     if (!menu) return;
+    // 先让系统更新菜单项状态，再在图标下方显示；所选命令继续异步投递。
     SendMessageW(hwnd, WM_INITMENU, reinterpret_cast<WPARAM>(menu), 0);
     RECT window {};
     GetWindowRect(hwnd, &window);

@@ -1,9 +1,10 @@
+// Qt 样式模板实现：仅替换语义颜色占位符，不在主题切换时改动控件布局。
 #include "widgetstyles.h"
 
 namespace midi_play::presentation::theme {
 namespace {
 
-// Named placeholders keep shared layout rules independent from the palette.
+// 命名占位符将共享布局规则与色表分离，替换结果使用 QColor 的 RGB 文本。
 QString colors(QString style, const WidgetColors& w)
 {
     style.replace(QLatin1StringView("@window@"), w.window.name());

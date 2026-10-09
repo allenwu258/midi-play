@@ -1,3 +1,4 @@
+// 倍率控件实现：协调悬停、编辑焦点与窗口激活，避免影响原生 Vulkan 窗口输入。
 #include "playbackratecontrol.h"
 
 #include "presentation/theme/widgetstyles.h"
@@ -28,9 +29,7 @@ PlaybackRateControl::PlaybackRateControl(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setAccessibleName(QStringLiteral("播放速度"));
 
-    // A Qt::Popup grabs the mouse when opened by hover, breaking delivery to
-    // the trigger and the native Vulkan container. A transient tool window
-    // allows both hover and text input without a modal mouse grab.
+    // Qt::Popup 会抓取鼠标并干扰按钮及原生 Vulkan 容器；工具窗口支持悬停与文本输入。
     m_panel = new QFrame(this, Qt::Tool | Qt::FramelessWindowHint);
     m_panel->setObjectName(QStringLiteral("playbackRatePopup"));
     m_panel->setAttribute(Qt::WA_ShowWithoutActivating);
@@ -54,8 +53,7 @@ PlaybackRateControl::PlaybackRateControl(QWidget* parent)
                        midi_play::settings::kMaximumPlaybackRatePercent);
     m_editor->setSuffix(QStringLiteral("%"));
     m_editor->setFixedWidth(80);
-    // Typing 125 must not momentarily apply 20, 12 or 25 percent. Commit a
-    // complete edit on Enter/focus loss; slider/step buttons still apply live.
+    // 禁止逐字符提交：完整文本在回车或失焦时应用，滑块和步进按钮仍实时生效。
     m_editor->setKeyboardTracking(false);
     m_editor->setAccessibleName(QStringLiteral("播放速度百分比"));
     label->setBuddy(m_editor);
@@ -72,9 +70,7 @@ PlaybackRateControl::PlaybackRateControl(QWidget* parent)
             this, &PlaybackRateControl::applyUserRate);
     connect(qApp, &QGuiApplication::applicationStateChanged, this,
             [this](Qt::ApplicationState state) {
-                // Native activation notifications may arrive after a tool
-                // window has already closed/reopened. Recheck the current
-                // state after the transition settles instead of hiding now.
+                // 原生激活通知可能滞后于面板开关；延迟后重新检查应用的实际状态。
                 if (state != Qt::ApplicationActive && m_panel->isVisible()) m_hideTimer.start();
             });
 
@@ -84,7 +80,7 @@ PlaybackRateControl::PlaybackRateControl(QWidget* parent)
 
 PlaybackRateControl::~PlaybackRateControl()
 {
-    // Remove the application filter before QWidget destroys the child panel.
+    // 在 QWidget 销毁子面板前移除全局过滤器。
     qApp->removeEventFilter(this);
 }
 
@@ -140,6 +136,7 @@ void PlaybackRateControl::showPanel(bool focusEditor)
         const QRect buttonRect(mapToGlobal(QPoint()), size());
         const QScreen* targetScreen = QGuiApplication::screenAt(buttonRect.center());
         if (!targetScreen) targetScreen = screen();
+        // 优先放在按钮上方，空间不足时改到下方，再夹取到屏幕可用边界。
         const QRect available = targetScreen->availableGeometry().adjusted(4, 4, -4, -4);
         QPoint position(buttonRect.center().x() - panelSize.width() / 2,
                         buttonRect.top() - panelSize.height() - 6);
@@ -149,8 +146,7 @@ void PlaybackRateControl::showPanel(bool focusEditor)
         position.setY(std::clamp(position.y(), available.top(),
                                 std::max(available.top(), available.bottom() - panelSize.height() + 1)));
         m_panel->setGeometry(QRect(position, panelSize));
-        // Filter outside clicks (including QWindow events from Vulkan) only
-        // while visible, so normal playback pays no global event-filter cost.
+        // 面板可见期间过滤外部点击，包含 Vulkan QWindow 的鼠标事件。
         qApp->installEventFilter(this);
         m_panel->show();
     }
@@ -175,6 +171,7 @@ void PlaybackRateControl::hidePanelIfInactive()
         return;
     }
     if (containsPointer()) return;
+    // 拖动或按键尚未释放时延后检查，文本编辑器有焦点时持续保留面板。
     if (m_slider->isSliderDown() || QApplication::mouseButtons() != Qt::NoButton) {
         m_hideTimer.start();
         return;
@@ -196,6 +193,7 @@ void PlaybackRateControl::hidePanel(bool commitEditor)
 
 bool PlaybackRateControl::eventFilter(QObject* watched, QEvent* event)
 {
+    // 主窗口布局或状态变化后关闭面板，避免独立工具窗口残留在旧位置。
     if (watched == window()
         && (event->type() == QEvent::Move || event->type() == QEvent::Resize
             || event->type() == QEvent::Hide || event->type() == QEvent::WindowStateChange)) {
@@ -218,6 +216,7 @@ bool PlaybackRateControl::eventFilter(QObject* watched, QEvent* event)
             hidePanel();
         }
     } else if (event->type() == QEvent::KeyPress) {
+        // 只接管按钮及面板内的按键；Esc 撤销文本，Enter 提交并归还主窗口焦点。
         const auto* target = qobject_cast<QWidget*>(watched);
         if (target != this && target != m_panel
             && (!target || !m_panel->isAncestorOf(target))) {

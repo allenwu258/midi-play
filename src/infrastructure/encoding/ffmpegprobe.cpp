@@ -1,3 +1,4 @@
+// FFmpeg 探测实现：验证可执行文件身份、基础编码器及实际 MP4 输出能力。
 #include "ffmpegprobe.h"
 
 #include <QFileInfo>
@@ -9,6 +10,7 @@
 namespace midi_play::encoding {
 namespace {
 
+// 平台对应的程序名，供手动选择安装目录时补全。
 QString executableName()
 {
 #if defined(Q_OS_WIN)
@@ -18,6 +20,7 @@ QString executableName()
 #endif
 }
 
+// 手动输入允许目录或可执行文件，规范化为绝对程序路径。
 QString normalizeCandidate(const QString& configuredPath)
 {
     const QString trimmed = configuredPath.trimmed();
@@ -27,6 +30,7 @@ QString normalizeCandidate(const QString& configuredPath)
     return info.absoluteFilePath();
 }
 
+// 取首行并限制为 240 字符，避免外部进程长输出充满 GUI 错误区域。
 QString firstDiagnosticLine(const QByteArray& bytes)
 {
     const QString text = QString::fromLocal8Bit(bytes).trimmed();
@@ -57,6 +61,7 @@ FfmpegProbeResult probeFfmpeg(const QString& configuredPath, bool usePath)
         return result;
     }
 
+    // 先验证版本输出及正常退出，避免把同名程序或损坏安装当作 FFmpeg。
     QProcess process;
     process.setProgram(result.executablePath);
     process.setArguments({QStringLiteral("-hide_banner"), QStringLiteral("-version")});
@@ -84,6 +89,7 @@ FfmpegProbeResult probeFfmpeg(const QString& configuredPath, bool usePath)
         result.error = QStringLiteral("所选程序不是 FFmpeg");
         return result;
     }
+    // 软件 H.264 和 AAC 是最低能力要求，硬件编码器另由正式导出路径探测。
     process.start(result.executablePath, {QStringLiteral("-hide_banner"), QStringLiteral("-encoders")});
     if (!process.waitForFinished(3000)) {
         process.kill();
@@ -99,9 +105,7 @@ FfmpegProbeResult probeFfmpeg(const QString& configuredPath, bool usePath)
         return result;
     }
 
-    // The encoder list only proves that an implementation is registered. Run
-    // a tiny real encode as well, because builds can still fail at runtime due
-    // to missing muxers, runtime DLLs, or incompatible codec dependencies.
+    // 编码器列表只能证明已注册；实际短编码还会检测封装器、运行库及依赖是否可用。
     QTemporaryDir directory;
     if (!directory.isValid()) {
         result.error = QStringLiteral("无法创建 FFmpeg 检查临时目录");

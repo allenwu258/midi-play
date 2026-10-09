@@ -1,3 +1,4 @@
+// 标题栏按钮实现：绘制物理像素对齐的系统符号，协调主题、激活和原生输入状态。
 #include "captionbuttons.h"
 
 #include "presentation/theme/apptheme.h"
@@ -12,6 +13,7 @@
 namespace midi_play::presentation::windowchrome {
 namespace {
 
+// 单个系统按钮的外观状态；保留 QToolButton 的键盘与无障碍激活行为。
 class CaptionButton final : public QToolButton {
 public:
     CaptionButton(CaptionCommand command, QWidget* parent) : QToolButton(parent), command(command)
@@ -30,18 +32,21 @@ public:
     QColor systemText, systemBackground, systemHighlight, systemHighlightedText;
 
 protected:
+    // Qt 客户区悬停变化时重新绘制，非客户区悬停由控制器另行同步。
     bool event(QEvent* event) override
     {
         if (event->type() == QEvent::Enter || event->type() == QEvent::Leave) update();
         return QToolButton::event(event);
     }
 
+    // 统一绘制背景、命令符号和焦点框；不依赖平台样式的默认按钮图形。
     void paintEvent(QPaintEvent*) override
     {
         const auto& colors = theme::themeFor(theme).widgets;
         const bool hovered = nativeHovered || underMouse();
         QColor foreground = highContrast ? systemText : (active ? colors.text : colors.mutedText);
         QColor background = highContrast ? systemBackground : colors.panel;
+        // 高对比度使用系统选中色；普通主题中关闭按钮具有独立警示色。
         if (!isEnabled()) foreground = highContrast ? systemText : colors.disabledText;
         else if (hovered || isDown()) {
             if (highContrast) {
@@ -57,7 +62,7 @@ protected:
 
         QPainter painter(this);
         painter.fillRect(rect(), background);
-        // Work in physical pixels for crisp 1px strokes at fractional DPI.
+        // 换算到物理像素绘制，使非整数 DPI 下的细线仍与像素网格对齐。
         const qreal dpr = devicePixelRatioF();
         painter.scale(1.0 / dpr, 1.0 / dpr);
         const int extent = std::max(8, qRound(10 * dpr));
@@ -78,6 +83,7 @@ protected:
         } else {
             painter.drawRect(QRect(x, y, extent, extent));
         }
+        // 键盘焦点保留独立虚线框，避免只能依赖鼠标悬停识别当前操作。
         if (hasFocus()) {
             painter.setPen(QPen(foreground, 1, Qt::DotLine));
             painter.drawRect(QRect(3, 3, qRound(width() * dpr) - 7, qRound(height() * dpr) - 7));

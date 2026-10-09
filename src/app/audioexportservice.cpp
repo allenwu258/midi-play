@@ -1,3 +1,4 @@
+// 音频导出实现：校验资源/容量上限，复用离线合成并完成事务性编码输出。
 #include "audioexportservice.h"
 #include "offlineaudiorenderer.h"
 
@@ -15,11 +16,13 @@
 namespace midi_play::app {
 namespace {
 
+// 以长双精度计算后舍入到最近样本帧，避免整秒之外的截断偏移。
 qint64 toFrame(qint64 timeUs, int sampleRate)
 {
     return static_cast<qint64>(std::llround(static_cast<long double>(timeUs) * sampleRate / 1'000'000));
 }
 
+// 构造统一失败结果，不把尚未完成的文件视为成功输出。
 AudioExportResult failure(const QString& error)
 {
     return {AudioExportStatus::Failed, error, 0};
@@ -60,6 +63,7 @@ AudioExportResult AudioExportService::exportDocument(
                                        options.sampleRate);
     const qint64 musicalEndFrame = toFrame(durationUs, options.sampleRate);
     if (totalFrames <= 0) return failure(QStringLiteral("乐曲没有可导出的时长"));
+    // 立体声 16 位 PCM 每帧四字节，标准 RIFF 的 32 位长度字段限制总文件大小。
     if (options.format == encoding::AudioFileFormat::Wav
         && static_cast<quint64>(totalFrames) * 4 > std::numeric_limits<quint32>::max() - 36)
         return failure(QStringLiteral("WAV 超过 4 GB RIFF 格式上限，请使用 MP3"));
@@ -69,6 +73,7 @@ AudioExportResult AudioExportService::exportDocument(
     if (!encoder->open(options.outputPath, options.sampleRate, options.bitrateKbps, &error))
         return failure(error);
 
+    // 独立音频导出固定 100% 倍率，与可变速的视频导出参数区分。
     const OfflineAudioOptions renderOptions {font.absoluteFilePath(), options.sampleRate, 100,
                                             options.includeMetronome, totalFrames};
     const auto result = OfflineAudioRenderer::render(document, renderOptions,
@@ -77,6 +82,7 @@ AudioExportResult AudioExportService::exportDocument(
         }, canceled, std::move(progress));
     if (result.status != AudioExportStatus::Success) return result;
     if (canceled && canceled->load()) return {AudioExportStatus::Canceled, {}, result.frames};
+    // finish 写出尾块/文件头并提交目标文件，此前失败或取消均不发布成品。
     if (!encoder->finish(&error)) return failure(error);
     return result;
 }

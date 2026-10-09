@@ -1,3 +1,4 @@
+// 导出整数时间公式实现，所有取整都从绝对索引计算。
 #include "exporttimeline.h"
 
 namespace midi_play::app {
@@ -6,15 +7,14 @@ ExportTimeline::ExportTimeline(qint64 musicEndUs, int fps, int ratePercent, int 
 {
     if (musicEndUs <= 0 || musicEndUs > maximumMusicUs || (fps != 30 && fps != 60)
         || ratePercent < 20 || ratePercent > 200 || tailMs < 0 || tailMs > 5000) return;
-    // Speed scales musical time; the release tail stays in wall-clock time.
+    // 倍率仅缩放音乐时长，释放尾音保持墙钟时长。
     const qint64 durationNumerator = musicEndUs * 100 + qint64(tailMs) * 1000 * m_rate;
 
-    // Quantize the rational duration once. Rounding to microseconds first
-    // would add a frame at exact boundaries such as 1 s / 120% at 60 FPS.
+    // 有理时长只向上量化一次；先取整微秒会在 1 s/120%、60 FPS 等边界多出一帧。
     const qint64 frameDenominator = 1'000'000LL * m_rate;
     m_frames = (durationNumerator * fps + frameDenominator - 1) / frameDenominator;
     m_videoDurationUs = (m_frames * 1'000'000 + fps - 1) / fps;
-    // 30/60 FPS divide 44.1 kHz exactly. Match PCM to complete video frames.
+    // 44.1 kHz 可被 30/60 FPS 整除，PCM 精确覆盖所有完整视频帧。
     m_audioSamples = m_frames * (audioSampleRate / m_fps);
 }
 qint64 ExportTimeline::musicPositionUs(qint64 frame) const

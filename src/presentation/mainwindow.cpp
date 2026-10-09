@@ -1,3 +1,4 @@
+// 主窗口实现：连接应用服务与界面，维护播放交互、设置同步及异步导出生命周期。
 #include "mainwindow.h"
 
 #include "app/audioexportservice.h"
@@ -46,6 +47,7 @@
 namespace midi_play::presentation {
 namespace {
 
+// 禁用时仍展示工具提示，用于说明导出或播放按钮暂不可用的原因。
 class ReasonToolButton final : public QToolButton {
 public:
     using QToolButton::QToolButton;
@@ -62,6 +64,7 @@ protected:
     }
 };
 
+// 创建使用统一样式对象名的工具栏分隔线。
 QFrame* verticalSeparator(QWidget* parent)
 {
     auto* separator = new QFrame(parent);
@@ -71,6 +74,7 @@ QFrame* verticalSeparator(QWidget* parent)
     return separator;
 }
 
+// 统一普通操作按钮的图标、提示和尺寸；纯图标按钮保持固定点击区域。
 QToolButton* toolButton(QWidget* parent, const QIcon& icon, const QString& text,
                         const QString& tooltip, bool iconOnly = false)
 {
@@ -104,6 +108,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
+    // 顶栏在原生和自定义标题栏模式下复用，窗口装饰控制器处理系统交互。
     auto* topBar = new windowchrome::CustomTitleBar(central);
     m_topBar = topBar;
     m_windowChrome = new windowchrome::WindowChromeController(this);
@@ -116,8 +121,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     m_systemMenuButton = new QToolButton(topBar);
     m_systemMenuButton->setObjectName(QStringLiteral("windowSystemMenuButton"));
     m_systemMenuButton->setAutoRaise(true);
-    // Keep the system-menu hit target generous while giving the bundled icon
-    // enough pixels to remain legible at normal and fractional DPI scales.
+    // 保留足够的系统菜单点击区域和图标像素，以适应普通及非整数 DPI 缩放。
     m_systemMenuButton->setFixedSize(32, 32);
     m_systemMenuButton->setIcon(windowIcon());
     m_systemMenuButton->setIconSize(QSize(28, 28));
@@ -181,9 +185,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     m_visualization = new visualization::FallingNotesView(central);
     root->addWidget(m_visualization, 1);
     if (m_settingsService) {
-        // A missing graphics preference starts with the Vulkan default. Keep
-        // that preference only after the renderer has produced its first
-        // frame; initialization failure records the traditional fallback.
+        // 首次使用以 Vulkan 为默认候选；首帧成功后确认偏好，初始化失败则记录传统模式。
         if (!m_settingsService->graphicsModeConfigured()) {
             connect(m_visualization, &visualization::FallingNotesView::graphicsModeResolved,
                     this, [this](midi_play::settings::GraphicsMode mode) {
@@ -209,6 +211,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_visualization, &visualization::FallingNotesView::setNoteColorMode);
         connect(m_settingsService, &app::SettingsService::graphicsModeChanged,
                 m_visualization, &visualization::FallingNotesView::setGraphicsMode);
+        // 路径或开关变化都重新读取有效背景路径，关闭背景时向视图传入空路径。
         const auto updateBackground = [this] {
             m_visualization->setBackgroundImagePath(m_settingsService->activeBackgroundImagePath());
         };
@@ -222,6 +225,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_visualization, &visualization::FallingNotesView::setBackgroundImageOpacity);
     }
 
+    // 传输栏将固定刻度进度条与播放、倍率、节拍器控制集中在底部。
     auto* transport = new QWidget(central);
     transport->setObjectName(QStringLiteral("transportBar"));
     transport->setFixedHeight(82);
@@ -309,9 +313,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     connect(m_windowChrome, &windowchrome::WindowChromeController::nativeIntegrationFailed,
             this, [this](const QString& reason) {
         m_statusLabel->setText(reason);
-        // A failed custom-frame application has already fallen back to the
-        // native frame. Persist the effective mode so the settings UI and the
-        // next launch do not keep requesting an unavailable integration.
+        // 集成失败时控制器已回退原生装饰；持久化有效模式并同步设置页，避免下次重复失败。
         if (m_settingsService
             && m_settingsService->titleBarMode() != midi_play::settings::TitleBarMode::Native) {
             m_settingsService->setTitleBarMode(midi_play::settings::TitleBarMode::Native);
@@ -338,6 +340,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_metronomeButton->setToolTip(available
                     ? QStringLiteral("跟随乐曲节拍；小节首拍为重音，仅播放时发声") : reason);
             });
+    // 拖动阶段只预览标签；释放时提交一次 seek 并等待精确位置确认。
     connect(m_positionSlider, &QSlider::sliderPressed, this, [this] { m_sliderDragging = true; });
     connect(m_positionSlider, &QSlider::sliderMoved, this, [this](int value) {
         if (m_durationUs <= 0) return;
@@ -357,6 +360,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         m_sliderDragging = false;
     });
 
+    // 新文档重置秒级缓存和 seek 状态；图表就绪信号再安装可视化与元数据缓存。
     connect(m_service, &app::PlayerApplicationService::documentLoaded, this,
             [this](const QString& title, qint64 duration) {
                 m_fileLabel->setText(title);
@@ -386,6 +390,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
             m_playbackRateControl, &PlaybackRateControl::setRatePercent);
     connect(m_service, &app::PlayerApplicationService::playbackRateChanged,
             m_visualization, &visualization::FallingNotesView::setPlaybackRate);
+    // seek、停止等时间跳变清除瞬态特效，防止保留旧位置的粒子状态。
     connect(m_service, &app::PlayerApplicationService::playbackDiscontinuity,
             m_visualization, &visualization::FallingNotesView::resetTransientEffects);
     m_visualization->setPlaybackRate(m_service->playbackRatePercent());
@@ -396,6 +401,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     }
     connect(m_playbackRateControl, &PlaybackRateControl::ratePercentEdited,
             m_service, &app::PlayerApplicationService::setPlaybackRatePercent);
+    // 区分音源检查、导入忙状态和失败；音源检查期间阻止打开文件及开始播放。
     connect(m_service, &app::PlayerApplicationService::soundFontLoaded, this, [this] {
         m_statusLabel->setText(QStringLiteral("音源已加载"));
         m_soundFontErrorLabel->clear();
@@ -514,6 +520,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::openExportDialog()
 {
+    // 视频需要当前 Vulkan 视图已就绪且 FFmpeg 检测通过，音频入口独立可用。
     const auto document = m_service ? m_service->document() : nullptr;
     if (!document || m_exporting) return;
     const bool vulkan = m_visualization && m_visualization->vulkanReady();
@@ -527,6 +534,7 @@ void MainWindow::openExportDialog()
         videoUnavailableReason = m_ffmpegService->unavailableReason();
     else videoUnavailableReason = QStringLiteral("视频导出服务不可用");
 
+    // 在打开参数页前快照主题、图表、背景和字体；最终导出使用独立离屏场景。
     app::VideoExportOptions videoDefaults;
     videoDefaults.ffmpegExecutable = m_ffmpegService ? m_ffmpegService->result().executablePath : QString();
     videoDefaults.sourcePath = m_service->fileName();
@@ -553,6 +561,7 @@ void MainWindow::openExportDialog()
 
 void MainWindow::startAudioExport(const app::AudioExportOptions& options)
 {
+    // 导出持有只读文档快照，后续切换播放曲目不影响当前任务。
     const auto document = m_service ? m_service->document() : nullptr;
     if (!document || m_exporting) return;
     m_exporting = true;
@@ -571,6 +580,7 @@ void MainWindow::startAudioExport(const app::AudioExportOptions& options)
     progress->show();
 
     auto* watcher = new QFutureWatcher<app::AudioExportResult>(this);
+    // 工作线程只写原子进度，GUI 每 80 ms 采样一次，避免跨线程访问控件。
     auto renderedPercent = std::make_shared<std::atomic_int>(0);
     auto* progressTimer = new QTimer(this);
     progressTimer->setInterval(80);
@@ -581,6 +591,7 @@ void MainWindow::startAudioExport(const app::AudioExportOptions& options)
     progressTimer->start();
     connect(watcher, &QFutureWatcher<app::AudioExportResult>::finished, this,
             [this, watcher, progressTimer, options] {
+        // 先释放任务相关界面状态，再按成功、取消或失败反馈结果。
         const auto result = watcher->result();
         watcher->deleteLater();
         progressTimer->stop();
@@ -602,6 +613,7 @@ void MainWindow::startAudioExport(const app::AudioExportOptions& options)
             QMessageBox::warning(this, QStringLiteral("音频导出失败"), result.error);
         }
     });
+    // 所需数据均按值捕获；窗口关闭后任务仍能读取共享取消标志。
     watcher->setFuture(QtConcurrent::run([document, options, cancel, renderedPercent] {
         return app::AudioExportService::exportDocument(document, options, cancel.get(),
             [renderedPercent](int percent) { renderedPercent->store(percent); });
@@ -624,6 +636,7 @@ void MainWindow::startVideoExport(const app::VideoExportOptions& options)
     Q_UNUSED(options)
     return;
 #else
+    // 与音频导出共享单任务入口；独立文档快照供后台渲染和编码使用。
     const auto document = m_service ? m_service->document() : nullptr;
     if (!document || m_exporting) return;
     m_exporting = true;
@@ -633,6 +646,7 @@ void MainWindow::startVideoExport(const app::VideoExportOptions& options)
     m_exportProgress = progress;
     const auto cancel = m_exportCancel;
     auto* watcher = new QFutureWatcher<app::VideoExportResult>(this);
+    // 进度仅通过原子整数传递到 GUI，阶段描述由应用服务生成但此处不展示。
     auto stage = std::make_shared<std::atomic_int>(0);
     auto* timer = new QTimer(this); timer->setInterval(80);
     connect(timer, &QTimer::timeout, this, [this, stage] { if (m_exportProgress) m_exportProgress->setValue(stage->load()); });
@@ -646,6 +660,7 @@ void MainWindow::startVideoExport(const app::VideoExportOptions& options)
         else if (result.status == app::VideoExportStatus::Canceled) m_statusLabel->setText(QStringLiteral("已取消视频导出"));
         else { m_statusLabel->setText(QStringLiteral("视频导出失败")); QMessageBox::warning(this, QStringLiteral("视频导出失败"), result.error); }
     });
+    // 强引用保留本次文档，当前播放会话随后切换也不会替换导出数据。
     const auto frozenDocument = document;
     watcher->setFuture(QtConcurrent::run([frozenDocument, options, cancel, stage] {
         return app::VideoExportService::exportDocument(frozenDocument, options, cancel.get(),
@@ -670,9 +685,7 @@ void MainWindow::updatePosition(qint64 position, qint64 duration, qint64 sampled
     m_positionUs = std::clamp<qint64>(position, 0, std::max<qint64>(0, duration));
     m_durationUs = std::max<qint64>(0, duration);
 
-    // Position signals already queued before a blocking seek can arrive after
-    // the mouse release. Keep the release point authoritative until the seek
-    // transaction publishes its exact position.
+    // seek 前排队的位置通知可能在鼠标释放后到达；精确目标发布前维持用户松开位置。
     if (m_seekPending) {
         if (m_positionUs != m_pendingSeekUs) {
             return;
@@ -687,6 +700,7 @@ void MainWindow::updatePosition(qint64 position, qint64 duration, qint64 sampled
         updateTimeDisplay(m_positionUs, m_durationUs);
         updateMetadata(m_positionUs);
     }
+    // 采样时刻一并交给视图，用于连续播放期间按播放倍率外推当前位置。
     m_visualization->setTransportPosition(m_positionUs, m_durationUs, sampledAtUs);
 }
 
@@ -744,8 +758,7 @@ void MainWindow::updateTimeDisplay(qint64 positionUs, qint64 durationUs)
 
 void MainWindow::updateResponsiveVisibility()
 {
-    // Keep the title bar usable on narrow windows. The detailed musical
-    // metadata is hidden before it competes with the file and action controls.
+    // 窄窗口优先保留文件信息和操作按钮，隐藏详细音乐元数据。
     const bool showMetadata = width() >= 860;
     m_keyLabel->setVisible(showMetadata);
     m_timeSignatureLabel->setVisible(showMetadata);

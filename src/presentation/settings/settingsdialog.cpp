@@ -1,3 +1,4 @@
+// 设置窗口实现：建立控件与设置模型的双向绑定，协调资源验证和后端能力联动。
 #include "settingsdialog.h"
 #include "soundfontsetup.h"
 
@@ -29,6 +30,7 @@
 namespace midi_play::presentation::settings {
 namespace {
 
+// 仅用于界面选项，区别于领域特效档位的持久化值。
 constexpr int kVisualEffectsDisabledUiValue = -1;
 
 } // namespace
@@ -39,6 +41,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                                app::FfmpegService* ffmpegService)
     : QDialog(parent), m_settingsService(settingsService), m_playerService(playerService)
 {
+    // 共用服务可复用探测结果；独立打开设置视图时也能自行检测编码器。
     m_ffmpegService = ffmpegService ? ffmpegService : new app::FfmpegService(settingsService, this);
     setWindowTitle(QStringLiteral("设置"));
     setWindowFlag(Qt::Window, true);
@@ -59,6 +62,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     form->setHorizontalSpacing(14);
     form->setVerticalSpacing(10);
 
+    // 普通设置选项使用用户数据保存领域值，显示文案不参与解析。
     m_themeCombo = new QComboBox(this);
     m_themeCombo->setObjectName(QStringLiteral("themeModeCombo"));
     m_themeCombo->addItem(QStringLiteral("深色"), int(midi_play::settings::ThemeMode::Dark));
@@ -133,6 +137,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     }
     form->addRow(QStringLiteral("标题栏样式"), m_titleBarModeCombo);
 
+    // 音源路径只读，通过文件选择和异步加载验证后更新，避免写入未验证候选。
     auto* soundFontEditor = new QWidget(this);
     auto* soundFontLayout = new QVBoxLayout(soundFontEditor);
     soundFontLayout->setContentsMargins(0, 0, 0, 0);
@@ -154,6 +159,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     soundFontLayout->addLayout(soundFontActions);
     form->addRow(QStringLiteral("音源"), soundFontEditor);
 
+    // 编码器配置区分 PATH 搜索与手动目录，状态随检测服务结果变化。
     auto* ffmpegEditor = new QWidget(this);
     auto* ffmpegLayout = new QVBoxLayout(ffmpegEditor);
     ffmpegLayout->setContentsMargins(0, 0, 0, 0);
@@ -190,6 +196,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     }
     updateFfmpegControls();
 
+    // 背景开关独立于图片路径；关闭时隐藏相关参数，保存路径仍可供再次启用。
     m_backgroundModeCombo = new QComboBox(this);
     m_backgroundModeCombo->setObjectName(QStringLiteral("backgroundModeCombo"));
     m_backgroundModeCombo->addItem(QStringLiteral("无背景"), false);
@@ -281,6 +288,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     if (themeController)
         connect(themeController, &theme::ThemeController::themeChanged, this, &SettingsDialog::applyTheme);
     if (m_settingsService) {
+        // 先用模型初始化，再连接用户编辑；回填方法通过 QSignalBlocker 防止递归保存。
         updateThemeSelection(m_settingsService->themeMode());
         connect(m_themeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
             m_errorLabel->hide();
@@ -370,6 +378,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::showSaveError);
         if (!m_settingsService->lastLoadWarning().isEmpty())
             showSaveError(m_settingsService->lastLoadWarning());
+        // 复用上一次加载/保存错误，确保窗口晚于失败打开时仍能展示原因。
         if (m_playerService) {
             connect(m_playerService, &app::PlayerApplicationService::soundFontLoadFailed,
                     this, &SettingsDialog::showSaveError);
@@ -405,6 +414,7 @@ void SettingsDialog::applyRefreshRateFromUi()
         return;
     }
 
+    // 自定义项不保存哨兵 0，实际提交数值编辑器当前值。
     const int refreshRate = m_refreshRateCombo->currentData().toInt();
     if (refreshRate == 0) {
         m_customRefreshRateLabel->setVisible(true);
@@ -459,6 +469,7 @@ void SettingsDialog::applyVisualEffectsFromUi()
         m_settingsService->setVisualEffectsEnabled(false);
         return;
     }
+    // 先更新档位再启用，避免新启用状态短暂使用旧档位。
     m_settingsService->setVisualEffectsLevel(
         midi_play::settings::visualEffectLevelFromPersistentValue(value));
     m_settingsService->setVisualEffectsEnabled(true);
@@ -475,6 +486,7 @@ void SettingsDialog::chooseFfmpegDirectory()
     const QString directory = QFileDialog::getExistingDirectory(this, QStringLiteral("选择 FFmpeg 目录"),
                                                                  m_settingsService->ffmpegPath());
     if (directory.isEmpty()) return;
+    // 相同目录不会触发模型变更信号，显式 refresh 可重新检测目录内新安装的程序。
     const bool unchanged = directory == m_settingsService->ffmpegPath();
     m_settingsService->setFfmpegPath(directory);
     if (unchanged) m_ffmpegService->refresh();
@@ -504,6 +516,7 @@ void SettingsDialog::chooseBackgroundImage()
         QStringLiteral("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*)"));
     if (path.isEmpty()) return;
     QString error;
+    // 校验解码能力后再保存，失败保留原设置并显示解码器原因。
     if (!visualization::canReadBackgroundImage(path, &error)) {
         showSaveError(QStringLiteral("无法读取背景图片：%1").arg(error));
         return;
@@ -575,7 +588,7 @@ void SettingsDialog::updateGraphicsModeSelection(midi_play::settings::GraphicsMo
 {
     if (!m_graphicsModeCombo) return;
 #if !MIDI_PLAY_HAS_VULKAN
-    // Display the available backend without overwriting the saved preference.
+    // 当前构建无 Vulkan 时只显示可用后端，此次回填不改写保存的图形模式偏好。
     mode = midi_play::settings::GraphicsMode::Traditional;
 #endif
     const int index = m_graphicsModeCombo->findData(
@@ -621,6 +634,7 @@ void SettingsDialog::updateVisualEffectsControl(midi_play::settings::GraphicsMod
     const bool vulkan = false;
 #endif
 
+    // 特效只由 Vulkan 实现，切换到传统后端时同步关闭模型中的启用状态。
     if (!vulkan && m_settingsService && m_settingsService->visualEffectsEnabled())
         m_settingsService->setVisualEffectsEnabled(false);
     rebuildVisualEffectsOptions(vulkan);
@@ -670,7 +684,7 @@ void SettingsDialog::updateSoundFontPath(const QString& path)
     m_soundFontPathEdit->setText(path);
     m_soundFontPathEdit->setToolTip(path.isEmpty() ? QStringLiteral("尚未配置音源") : path);
     m_soundFontPathEdit->setAccessibleDescription(QStringLiteral("用户选择的音源文件"));
-    // Keep the file name visible when the absolute path is wider than the editor.
+    // 长绝对路径超出编辑框时将光标移到末尾，使文件名保持可见。
     m_soundFontPathEdit->setCursorPosition(path.size());
 }
 
@@ -718,9 +732,7 @@ void SettingsDialog::setSoundFontLoading(bool loading)
         m_errorLabel->setText(QStringLiteral("正在加载音源..."));
         m_errorLabel->show();
     } else {
-        // The loading message is transient. A failed request emits its real
-        // error immediately after this state transition, while a successful
-        // request leaves the settings page clean.
+        // 清除临时加载状态；失败请求随后发布具体错误，成功则保持错误区域为空。
         m_errorLabel->clear();
         m_errorLabel->hide();
     }

@@ -1,3 +1,4 @@
+// INI 设置适配实现：逐字段恢复、规范化和警告聚合，不直接驱动界面。
 #include "qsettingsstore.h"
 
 #include <QDir>
@@ -12,6 +13,7 @@
 namespace midi_play::infrastructure::settings {
 namespace {
 
+// 将 QSettings 状态转换为界面可展示的存储错误文本。
 QString statusMessage(QSettings::Status status)
 {
     switch (status) {
@@ -58,6 +60,7 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
                                                        midi_play::settings::kDefaultGraphicsMode));
     result.graphicsMode = midi_play::settings::graphicsModeFromPersistentValue(
         graphicsModeValue.toInt());
+    // 键是否存在与键的取值分别判断，首轮图形后端确认需要此标志。
     result.graphicsModeConfigured = hasGraphicsMode;
     result.showNotationStrip = file.value(QStringLiteral("General/showNotationStrip"),
         midi_play::settings::kDefaultShowNotationStrip).toBool();
@@ -89,6 +92,7 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     result.ffmpegUsePath = file.value(QStringLiteral("Video/ffmpegUsePath"), true).toBool();
     result.backgroundImagePath =
         file.value(QStringLiteral("Visualization/backgroundImagePath")).toString().trimmed();
+    // 兼容只保存背景路径的旧配置：未提供开关时按路径非空推导启用状态。
     result.backgroundImageEnabled = file.value(
         QStringLiteral("Visualization/backgroundImageEnabled"), !result.backgroundImagePath.isEmpty()).toBool();
     const bool hasBackgroundAlignment = file.contains(QStringLiteral("Visualization/backgroundImageAlignment"));
@@ -123,11 +127,13 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         ? midi_play::settings::visualEffectLevelFromPersistentValue(configuredVisualEffectsLevel)
         : midi_play::settings::kDefaultVisualEffectLevel;
 
+    // 存储级错误优先；提供 warning 时返回默认快照，随后只聚合字段级问题。
     const QString readStatus = statusMessage(file.status());
     if (!readStatus.isEmpty() && warning) {
         *warning = QStringLiteral("%1: %2，已使用默认设置").arg(readStatus, m_settingsPath);
         return {};
     }
+    // 转换失败与数值越界分别报告，其他字段警告使用分隔符追加。
     if (hasRefreshRate && !refreshRateConversionOk && warning) {
         *warning = QStringLiteral("设置文件中的刷新率不是整数，已回退到 60 FPS");
     } else if (hasRefreshRate
@@ -209,6 +215,7 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
                   midi_play::settings::noteColorModePersistentValue(settings.noteColorMode));
     file.setValue(QStringLiteral("General/titleBarMode"),
                   midi_play::settings::titleBarModePersistentValue(settings.titleBarMode));
+    // 空路径移除键，其他启用/检测开关独立保存，以便禁用后恢复原路径。
     if (settings.soundFontPath.isEmpty()) {
         file.remove(QStringLiteral("Audio/soundFontPath"));
     } else {
@@ -233,6 +240,7 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
     file.setValue(QStringLiteral("Visualization/visualEffectsEnabled"), settings.visualEffectsEnabled);
     file.setValue(QStringLiteral("Visualization/visualEffectsLevel"),
                   midi_play::settings::visualEffectLevelPersistentValue(settings.visualEffectsLevel));
+    // 必须 sync 后检查状态，不能把仅写入内存缓存当作成功落盘。
     file.sync();
 
     const QString writeStatus = statusMessage(file.status());

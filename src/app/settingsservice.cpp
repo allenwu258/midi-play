@@ -1,3 +1,4 @@
+// 设置服务实现：按能力约束外观状态，在变更通知之后执行持久化。
 #include "settingsservice.h"
 
 #include "isettingsstore.h"
@@ -28,6 +29,7 @@ void SettingsService::load()
     }
 
     QString warning;
+    // 存储实现的校验不替代应用约束；完整规范化后一次替换快照，不逐字段发布变化。
     auto loadedSettings = m_store->load(&warning);
     loadedSettings.visualizationRefreshRate =
         settings::normalizeVisualizationRefreshRate(loadedSettings.visualizationRefreshRate);
@@ -40,9 +42,7 @@ void SettingsService::load()
     if (loadedSettings.graphicsMode == settings::GraphicsMode::Traditional)
         loadedSettings.visualEffectsEnabled = false;
 #if !MIDI_PLAY_HAS_VULKAN
-    // A traditional-only build may still read a settings file created by a
-    // Vulkan build. Keep the preference for a future Vulkan build, but never
-    // expose an enabled effect state to the current renderer.
+    // 传统构建可读取 Vulkan 构建的配置，保留后端偏好，但不向当前渲染器开放增强效果。
     loadedSettings.visualEffectsEnabled = false;
 #endif
     loadedSettings.soundFontPath = normalizeSoundFontPath(loadedSettings.soundFontPath);
@@ -76,6 +76,7 @@ void SettingsService::setGraphicsMode(settings::GraphicsMode mode)
 {
     const auto normalizedMode = settings::normalizeGraphicsMode(mode);
     const bool modeChanged = m_settings.graphicsMode != normalizedMode;
+    // 首次确认即使与默认模式相同也需通知并保存，记录已确定的后端选择。
     const bool modeNeedsResolution = !m_settings.graphicsModeConfigured;
     const bool effectsChanged = normalizedMode == settings::GraphicsMode::Traditional
         && m_settings.visualEffectsEnabled;
@@ -204,6 +205,7 @@ void SettingsService::setBackgroundImageOpacity(int opacity)
 
 void SettingsService::setVisualEffectsEnabled(bool enabled)
 {
+    // 构建能力和当前后端共同限制开关；不能仅凭用户请求开启未实现的渲染效果。
 #if !MIDI_PLAY_HAS_VULKAN
     enabled = false;
 #else
@@ -260,8 +262,7 @@ void SettingsService::persistSettings()
         emit settingsSaveFailed(error.isEmpty() ? QStringLiteral("无法保存设置") : error);
         return;
     }
-    // Once a repaired configuration is safely stored, a future settings
-    // dialog must not present the load-time warning as a current error.
+    // 修复后的配置已安全落盘，后续设置对话框不再把启动警告显示为当前错误。
     m_lastLoadWarning.clear();
 }
 

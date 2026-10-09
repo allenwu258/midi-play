@@ -1,3 +1,4 @@
+// 音频导出表单实现：提供格式联动、路径选择和提交前的轻量校验。
 #include "audioexportpage.h"
 
 #include <QCheckBox>
@@ -51,6 +52,7 @@ AudioExportPage::AudioExportPage(const QString& sourcePath, const QString& sound
         m_bitrate->addItem(QStringLiteral("%1 kbps").arg(value), value);
     m_bitrate->setCurrentIndex(2);
     form->addRow(QStringLiteral("MP3 码率"), m_bitrate);
+    // WAV 使用固定 PCM 格式，无需 MP3 码率；保留码率选择便于切回 MP3。
     connect(m_format, &QComboBox::currentIndexChanged, m_bitrate,
             [this](int index) { m_bitrate->setEnabled(index == 0); });
 
@@ -82,6 +84,7 @@ AudioExportPage::AudioExportPage(const QString& sourcePath, const QString& sound
     pathLayout->addWidget(browse);
     form->addRow(QStringLiteral("输出文件"), pathRow);
 
+    // 只替换已知音频后缀，其他手工输入交由提交校验处理。
     connect(m_format, &QComboBox::currentIndexChanged, this, [this](int index) {
         const QFileInfo current(m_path->text());
         if (current.suffix().compare(QStringLiteral("mp3"), Qt::CaseInsensitive) == 0
@@ -101,6 +104,7 @@ AudioExportPage::AudioExportPage(const QString& sourcePath, const QString& sound
 
 app::AudioExportOptions AudioExportPage::options() const
 {
+    // 下拉框的用户数据保存实际数值，显示文字不参与参数解析。
     app::AudioExportOptions result;
     result.format = m_format->currentIndex() == 0
         ? encoding::AudioFileFormat::Mp3 : encoding::AudioFileFormat::Wav;
@@ -120,6 +124,7 @@ QString AudioExportPage::outputPath() const
 
 QString AudioExportPage::validationError() const
 {
+    // 此处不打开音源或输出文件；完整验证在应用层执行。
     if (!hasSoundFont()) return QStringLiteral("请先在设置中选择 SF2/SF3 音源。");
     const auto selected = options();
     const QString expectedSuffix = selected.format == encoding::AudioFileFormat::Mp3

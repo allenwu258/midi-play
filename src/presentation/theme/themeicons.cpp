@@ -1,3 +1,4 @@
+// QIconEngine 图标实现：按目标尺寸缩放固定逻辑图形，并匹配禁用/悬停颜色。
 #include "themeicons.h"
 
 #include <QIconEngine>
@@ -7,11 +8,14 @@
 namespace midi_play::presentation::theme {
 namespace {
 
+// 引擎保存颜色副本，避免 QIcon 的延后绘制借用已变更的主题对象。
 class ThemeIconEngine final : public QIconEngine {
 public:
     ThemeIconEngine(IconGlyph glyph, const WidgetColors& colors) : m_glyph(glyph), m_colors(colors) {}
+    // 满足 Qt 图标隐式共享时的引擎复制契约。
     QIconEngine* clone() const override { return new ThemeIconEngine(*this); }
 
+    // 传输图标使用 26 单位填充图形，其他图标使用 18 单位线描。
     void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State) override
     {
         const bool transport = m_glyph == IconGlyph::Play || m_glyph == IconGlyph::Pause || m_glyph == IconGlyph::Stop;
@@ -67,6 +71,7 @@ public:
         painter->restore();
     }
 
+    // 在透明位图上复用同一 paint 路径，保持模式和尺寸行为一致。
     QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override
     {
         QPixmap result(size);

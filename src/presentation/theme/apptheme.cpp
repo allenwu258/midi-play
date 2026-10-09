@@ -1,8 +1,10 @@
+// 主题色表实现：构建两套固定语义色，并生成原生 Qt 控件调色板。
 #include "apptheme.h"
 
 namespace midi_play::presentation::theme {
 namespace {
 
+// 每个命名角色按明暗主题选择颜色，透明叠加元素另设 alpha。
 AppTheme makeTheme(midi_play::settings::ThemeMode mode)
 {
     AppTheme theme;
@@ -78,6 +80,7 @@ AppTheme makeTheme(midi_play::settings::ThemeMode mode)
     w.handleHover = color("#a9f5d8", "#197747");
     w.onAccent = QColor("#f7faf8");
     w.iconDisabled = color("#65706b", "#89988d");
+    // 可视化复用文本/背景角色，其网格、琴键和遮罩具有独立透明度。
     auto& v = theme.visualization;
     v.background = w.window;
     v.keyboardBackground = color("#101214", "#cbd3cc");
@@ -117,6 +120,7 @@ QPalette widgetPalette(const AppTheme& theme)
 {
     const auto& w = theme.widgets;
     QPalette palette;
+    // 三种激活状态都显式填充；禁用状态替换文字和按钮色，其他角色保持主题基调。
     for (auto group : {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
         const bool disabled = group == QPalette::Disabled;
         const auto text = disabled ? w.disabledText : w.text;

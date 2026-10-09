@@ -1,3 +1,4 @@
+// 播放应用服务实现：在资源验证与完整模型构建成功后发布新的当前状态。
 #include "playerapplicationservice.h"
 
 #include "infrastructure/audio/fluidsynthengine.h"
@@ -14,6 +15,7 @@
 namespace midi_play::app {
 namespace {
 
+// 后台导入结果同时携带音乐文档、视觉投影及各自错误，避免发布半成品。
 struct LoadedProject {
     music::ReadResult readResult;
     visualization::VisualChartPtr visualChart;
@@ -64,6 +66,7 @@ void PlayerApplicationService::openFile(const QString& path)
     connect(watcher, &QFutureWatcher<LoadedProject>::finished, this, [this, watcher, path, generation] {
         const auto result = watcher->result();
         watcher->deleteLater();
+        // 新请求使旧结果失去发布资格；旧任务仍可自行完成和释放 watcher。
         if (generation != m_loadGeneration) return;
         m_documentLoading = false;
         emit busyChanged(false);
@@ -76,6 +79,7 @@ void PlayerApplicationService::openFile(const QString& path)
                 ? QStringLiteral("无法建立播放可视化") : result.visualizationError);
             return;
         }
+        // 先构建独立控制器及线程音频适配器，成功初始化后再替换当前会话。
         auto engine = std::make_unique<audio::FluidSynthEngine>();
         auto fluidsynthService = std::make_unique<audio::FluidSynthAudioService>(std::move(engine));
         auto audioService = std::make_unique<audio::ThreadedPlaybackAudioService>(std::move(fluidsynthService));
@@ -92,8 +96,7 @@ void PlayerApplicationService::openFile(const QString& path)
         QString soundFontError;
         if (!m_soundFontPath.isEmpty()
             && !newController->loadSoundFont(m_soundFontPath, &soundFontError)) {
-            // Keep the parsed score available even when the external font has
-            // disappeared. A later selection can initialize this same session.
+            // 外部音源失效时仍保留已解析乐曲，用户可为同一会话重新选择音源。
             m_soundFontPath.clear();
             if (soundFontError.isEmpty()) soundFontError = QStringLiteral("无法为乐曲加载音源");
         }
@@ -107,6 +110,7 @@ void PlayerApplicationService::openFile(const QString& path)
         m_positionUs = 0;
         m_durationUs = session()->durationMicroseconds();
         m_playbackState = playback::State::Ready;
+        // 先发布图表，再发布文档与传输状态，使 GUI 的后续位置更新已有可视数据。
         emit visualizationReady(result.visualChart);
         emit documentLoaded(result.readResult.document->title().isEmpty()
                                 ? QFileInfo(path).fileName() : result.readResult.document->title(),
@@ -115,6 +119,7 @@ void PlayerApplicationService::openFile(const QString& path)
         emit playbackStateChanged(m_playbackState);
         if (!soundFontError.isEmpty()) reportSoundFontFailure(soundFontError);
     });
+    // 后台顺序完成读入与视觉投影；GUI 回调统一验证结果后再发布新会话。
     watcher->setFuture(QtConcurrent::run([reader, path, generation] {
         LoadedProject result;
         result.generation = generation;
@@ -150,6 +155,7 @@ void PlayerApplicationService::requestSoundFontLoad(const QString& path)
         return;
     }
 
+    // 无乐曲会话时只验证音源可加载性，成功后保存选择供后续会话使用。
     m_soundFontValidationWatcher.setFuture(QtConcurrent::run([normalizedPath] {
         audio::FluidSynthEngine validator;
         QString error;
@@ -186,6 +192,7 @@ bool PlayerApplicationService::loadSoundFont(const QString& path)
     const QString previousPath = m_soundFontPath;
     QString error;
     if (!m_controller->loadSoundFont(normalizedPath, &error)) {
+        // 新音源加载可能改变合成器状态，失败后尝试恢复先前有效选择。
         QString recoveryError;
         if (!previousPath.isEmpty() && previousPath != normalizedPath
             && !m_controller->loadSoundFont(previousPath, &recoveryError)) {
@@ -274,6 +281,7 @@ void PlayerApplicationService::setPlaybackRatePercent(int percent)
     const int normalized = settings::normalizePlaybackRatePercent(percent);
     if (m_playbackRatePercent == normalized) return;
 
+    // 控制器可能拒绝当前状态下的倍率事务，重新发布旧值使控件回到实际倍率。
     if (m_controller && !m_controller->setPlaybackRatePercent(normalized)) {
         emit playbackRateChanged(m_playbackRatePercent);
         return;
@@ -302,8 +310,7 @@ void PlayerApplicationService::play()
         reportSoundFontFailure(QStringLiteral("正在检查或加载音源，请稍后再播放。"));
         return;
     }
-    // Re-check readability/container on playback so moved or damaged external
-    // files yield an actionable inline error instead of silent transport.
+    // 每次播放重新检查外部音源的可读性/容器，及时报告移动或损坏的文件。
     if (!validateSoundFontFile(m_soundFontPath, nullptr)) return;
     if (m_controller) m_controller->play();
 }
@@ -337,6 +344,7 @@ void PlayerApplicationService::connectSession()
 
 void PlayerApplicationService::completeSoundFontLoad(bool success, const QString& error)
 {
+    // 消费候选并先结束加载状态；随后发具体失败或成功信号，供界面与启动流程接续。
     const QString path = m_pendingSoundFontPath;
     m_pendingSoundFontPath.clear();
     if (success) {

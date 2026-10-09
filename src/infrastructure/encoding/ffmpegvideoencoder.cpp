@@ -1,3 +1,4 @@
+// FFmpeg 视频进程实现：编码器选择缓存、管道压力控制及媒体完整性校验。
 #include "ffmpegvideoencoder.h"
 #include <QDir>
 #include <QElapsedTimer>
@@ -15,6 +16,7 @@
 
 namespace {
 
+// 默认软件编码器，只有实际 NVENC 探测通过才标记硬件加速。
 struct VideoEncoderSelection {
     QString name = QStringLiteral("libx264");
     bool hardwareAccelerated = false;
@@ -23,6 +25,7 @@ struct VideoEncoderSelection {
 QMutex encoderSelectionMutex;
 QHash<QString, VideoEncoderSelection> encoderSelectionCache;
 
+// 编码能力与尺寸/帧率/质量/环境覆盖项有关，缓存身份覆盖这些输入。
 QString encoderCacheKey(const QString& executable, QSize size, int fps, int crf,
                         const QString& preference)
 {
@@ -31,12 +34,12 @@ QString encoderCacheKey(const QString& executable, QSize size, int fps, int crf,
         .arg(fps).arg(crf).arg(preference);
 }
 
+// 探测与正式编码共用参数，保持质量排序、颜色转换和 CFR 约定一致。
 QStringList videoEncodingArguments(const VideoEncoderSelection& encoder, int crf, int fps)
 {
     QStringList args {QStringLiteral("-c:v"), encoder.name};
     if (encoder.hardwareAccelerated) {
-        // CQ and CRF are different rate controls. Preserve the quality ordering
-        // of the existing UI while using NVENC's quality-targeted VBR mode.
+        // CQ 与 CRF 控制方式不同；NVENC 使用质量目标 VBR，保持 GUI 质量档位顺序。
         args << QStringLiteral("-preset") << QStringLiteral("p4")
              << QStringLiteral("-rc") << QStringLiteral("vbr")
              << QStringLiteral("-cq") << QString::number(crf)
@@ -45,9 +48,8 @@ QStringList videoEncodingArguments(const VideoEncoderSelection& encoder, int crf
         args << QStringLiteral("-preset") << QStringLiteral("medium")
              << QStringLiteral("-crf") << QString::number(crf);
     }
-    // B-frames can produce MP4 edit lists which some players handle poorly.
-    // Keep the existing zero-origin, non-negative decode timeline for both
-    // encoders and use the same color conversion in the probe and the export.
+    // 关闭 B 帧以减少部分播放器对 MP4 编辑列表的兼容问题。
+    // 两种视频编码器都保持零起点/非负解码时间，并共用全范围 RGB 到电视范围 BT.709 的转换。
     args << QStringLiteral("-bf") << QStringLiteral("0")
          << QStringLiteral("-vf") << QStringLiteral("scale=in_range=full:out_range=tv:out_color_matrix=bt709,format=yuv420p")
          << QStringLiteral("-color_range") << QStringLiteral("tv")
@@ -59,6 +61,7 @@ QStringList videoEncodingArguments(const VideoEncoderSelection& encoder, int crf
     return args;
 }
 
+// 以目标尺寸真实编码两帧到空封装，轮询取消，最多约十秒。
 bool probeVideoEncoder(const QString& executable, const VideoEncoderSelection& encoder,
                        QSize size, int fps, int crf, const std::atomic_bool* canceled)
 {
@@ -94,9 +97,8 @@ bool probeVideoEncoder(const QString& executable, const VideoEncoderSelection& e
 VideoEncoderSelection selectVideoEncoder(const QString& executable, QSize size, int fps, int crf,
                                          const std::atomic_bool* canceled)
 {
-    // An internal override permits reproducible software/hardware comparisons.
-    // Only implemented profiles are accepted; arbitrary FFmpeg codec names do
-    // not share NVENC's quality parameters.
+    // 环境变量便于复现软/硬件比较；空值、auto、h264_nvenc 尝试 NVENC，其余值使用软件路径。
+    // 任意编码器名并不共享 NVENC 质量参数，因此不直接透传给 FFmpeg。
     const QString preference = qEnvironmentVariable("MIDI_PLAY_VIDEO_ENCODER").trimmed().toLower();
     if (!preference.isEmpty() && preference != QStringLiteral("auto")
         && preference != QStringLiteral("h264_nvenc")) return {};
@@ -106,6 +108,7 @@ VideoEncoderSelection selectVideoEncoder(const QString& executable, QSize size, 
         const auto cached = encoderSelectionCache.constFind(key);
         if (cached != encoderSelectionCache.constEnd()) return *cached;
     }
+    // 外部探测放在全局缓存锁之外，避免其他导出任务被长时间持锁阻塞。
     const VideoEncoderSelection hardware {QStringLiteral("h264_nvenc"), true};
     const auto selected = probeVideoEncoder(executable, hardware, size, fps, crf, canceled)
         ? hardware : VideoEncoderSelection{};
@@ -116,6 +119,7 @@ VideoEncoderSelection selectVideoEncoder(const QString& executable, QSize size, 
     return selected;
 }
 
+// 优先使用 FFmpeg 同目录的 ffprobe，找不到时再查询 PATH。
 QString siblingFfprobe(const QString& ffmpeg)
 {
     const QFileInfo executable(ffmpeg);
@@ -128,6 +132,7 @@ QString siblingFfprobe(const QString& ffmpeg)
     return QStandardPaths::findExecutable(QStringLiteral("ffprobe"));
 }
 
+// ffprobe 时间字段按字符串解析，拒绝缺失、非数值及 NaN/Inf。
 bool readTimestamp(const QJsonObject& stream, const QString& key, double* value)
 {
     if (!value) return false;
@@ -138,6 +143,7 @@ bool readTimestamp(const QJsonObject& stream, const QString& key, double* value)
     return true;
 }
 
+// 可选 ffprobe 元数据校验；未请求规格或无 ffprobe 时交由后续解码检查。
 bool validateMetadata(const QString& ffmpeg, const QString& path, QSize expectedSize,
                       int expectedFps, qint64 expectedFrames, bool expectAudio,
                       qint64 expectedDurationUs, int expectedAudioSampleRate,
@@ -208,8 +214,7 @@ bool validateMetadata(const QString& ffmpeg, const QString& path, QSize expected
         *error = QStringLiteral("视频完整性检查失败：音频流数量与请求不一致");
         return false;
     }
-    // start_time is presentation time. Negative AAC priming PTS and H.264
-    // reorder DTS are valid packets; MP4 edit lists compensate for them.
+    // 校验流的呈现起点；AAC 预填充负 PTS、H.264 重排 DTS 可由 MP4 编辑列表补偿。
     for (const auto& stream : {video, audio}) {
         if (stream.isEmpty()) continue;
         const bool isAudio = stream.value(QStringLiteral("codec_type")).toString() == QStringLiteral("audio");
@@ -221,7 +226,7 @@ bool validateMetadata(const QString& ffmpeg, const QString& path, QSize expected
         }
         if (expectedDurationUs <= 0) continue;
         double duration = 0.0;
-        // AAC can expose one final padded packet in some FFmpeg builds.
+        // 部分 FFmpeg 构建暴露 AAC 最后一个填充包，音频时长容许一个 1024 样本包误差。
         const double tolerance = isAudio ? 1024.0 / expectedAudioSampleRate : 0.0001;
         if (!readTimestamp(stream, QStringLiteral("duration"), &duration)
             || std::abs(duration - expectedDurationUs / 1'000'000.0) > tolerance) {
@@ -308,10 +313,8 @@ bool FfmpegVideoEncoder::open(const QString& executable, const QString& output, 
     args += videoEncodingArguments(encoder, crf, fps);
     if (!pcmPath.isEmpty()) args << QStringLiteral("-map") << QStringLiteral("1:a:0") << QStringLiteral("-c:a")
         << QStringLiteral("aac") << QStringLiteral("-b:a") << QStringLiteral("192k");
-    // Both raw inputs start at zero and have exactly matching durations.
-    // Drain each input through EOF without a separate stop condition.  Keep
-    // AAC encoder delay in packet timestamps so the MP4 edit list can remove
-    // the priming samples without changing the musical start time.
+    // 两个原始输入从零开始且时长相同，各自读取到 EOF，不另设截断条件。
+    // 保留 AAC 延迟包时间戳，由 MP4 编辑列表去掉预填充样本，保持音乐呈现起点。
     args << QStringLiteral("-avoid_negative_ts") << QStringLiteral("disabled")
         << QStringLiteral("-use_editlist") << QStringLiteral("1")
         << QStringLiteral("-movflags") << QStringLiteral("+faststart") << QStringLiteral("-f") << QStringLiteral("mp4") << output;
@@ -338,8 +341,8 @@ bool FfmpegVideoEncoder::writeFrame(const QImage& frame, QString* error)
         if (m_canceled && m_canceled->load()) return false;
         collectDiagnostics();
         if (m_process.state() != QProcess::Running) return processError(error);
-        // QProcess copies these bytes, so the source frame can be recycled
-        // without draining the pipe at every frame boundary. finish() flushes EOF.
+        // QProcess 复制输入字节，写入完成后可回收源图像，无需每帧排空管道。
+        // 未写出缓存最多 4 MiB，每次提交最多 1 MiB；finish 关闭输入并等待进程结束。
         const qint64 available = maxPendingBytes - m_process.bytesToWrite();
         if (available > 0) {
             const qint64 count = m_process.write(data, std::min({remaining, writeChunkBytes, available}));
@@ -359,6 +362,7 @@ bool FfmpegVideoEncoder::finish(QString* error)
         *error = QStringLiteral("视频帧数不足，无法完成封装");
         return false;
     }
+    // 输入关闭发送 EOF，FFmpeg 排空缓存并完成编码及 MP4 索引收尾。
     m_process.closeWriteChannel();
     QElapsedTimer timer; timer.start();
     while (m_process.state() != QProcess::NotRunning) {
@@ -378,6 +382,7 @@ bool FfmpegVideoEncoder::validate(const QString& executable, const QString& path
     if (!validateMetadata(executable, path, expectedSize, expectedFps, expectedFrames,
                           expectAudio, expectedDurationUs, expectedAudioSampleRate,
                           canceled, error)) return false;
+    // -xerror 将解码错误视为失败；进度输出用于判断是否仍有处理活动。
     QProcess process;
     process.start(executable, {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-xerror"),
         QStringLiteral("-nostdin"), QStringLiteral("-nostats"), QStringLiteral("-progress"), QStringLiteral("pipe:1"),

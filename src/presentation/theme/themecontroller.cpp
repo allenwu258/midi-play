@@ -1,3 +1,4 @@
+// 全局主题应用实现，避免首窗口出现时短暂使用另一套调色板。
 #include "themecontroller.h"
 
 #include <QApplication>
@@ -8,7 +9,7 @@ namespace midi_play::presentation::theme {
 ThemeController::ThemeController(midi_play::settings::ThemeMode mode, QObject* parent)
     : QObject(parent), m_mode(midi_play::settings::normalizeThemeMode(mode))
 {
-    // Apply even the default mode before the first window is constructed.
+    // 即使采用默认主题，也应在首窗口构造前完成全局外观设置。
     applyApplicationPalette();
 }
 
