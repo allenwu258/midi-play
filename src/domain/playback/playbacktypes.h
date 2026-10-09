@@ -1,5 +1,6 @@
 #pragma once
 
+// 播放域共享值对象、事件类型、排序规则和状态索引定义。
 #include "domain/music/musicdocument.h"
 
 #include <QString>
@@ -12,13 +13,17 @@
 
 namespace midi_play::playback {
 
+// 播放会话的生命周期状态。Empty 表示尚未绑定文档，Ready 表示已创建会话，
+// Playing/Paused/Stopped 对应传输状态，Error 表示音频后端或恢复流程失败。
 enum class State { Empty, Ready, Playing, Paused, Stopped, Error };
 
+// 可被音频后端加载的音源资源；soundFontId 由具体后端在加载后填充。
 struct AudioResource {
     QString path;
     int soundFontId = -1;
 };
 
+// 音源资源的展示元数据和扩展属性。
 struct AudioResourceMeta {
     QString id;
     QString vendor;
@@ -28,6 +33,7 @@ struct AudioResourceMeta {
     QHash<QString, QString> attributes;
 };
 
+// 一个可选的音色预置，使用 MIDI bank/program 标识。
 struct SoundPreset {
     QString id;
     QString name;
@@ -35,12 +41,14 @@ struct SoundPreset {
     int program = 0;
 };
 
+// 文档或轨道选择音源时使用的稳定配置值。
 struct PlaybackSetupData {
     QString soundId = QStringLiteral("piano");
     QString musicXmlSoundId;
     bool supportsSingleNoteDynamics = false;
 };
 
+// 播放事件的协议类型。事件按微秒时间戳进入调度器，具体编码由音频后端完成。
 enum class PlaybackEventKind {
     NoteOn,
     NoteOff,
@@ -53,6 +61,7 @@ enum class PlaybackEventKind {
     AllNotesOff
 };
 
+// 单音符表达控制的语义类型。
 enum class NoteExpressionType {
     Pressure,
     Timbre,
@@ -60,6 +69,7 @@ enum class NoteExpressionType {
     Volume
 };
 
+// 由记谱或导入信息应用到音符上的演奏法。
 enum class ArticulationType {
     Staccato,
     Accent,
@@ -69,6 +79,7 @@ enum class ArticulationType {
     Tremolo
 };
 
+// 一个演奏法对时值、力度的修正结果。
 struct ArticulationAppliedData {
     ArticulationType type = ArticulationType::Tenuto;
     double durationFactor = 1.0;
@@ -76,17 +87,22 @@ struct ArticulationAppliedData {
     int velocityOffset = 0;
 };
 
+// 表达曲线中的相对时间点；offsetUs 相对于所属音符起始时间。
 struct ExpressionCurvePoint {
     qint64 offsetUs = 0;
     float value = 0.0F;
 };
 
+// 音符的表达上下文，既可被支持 per-note expression 的后端消费，
+// 也可由渲染器转换为传统 MIDI 控制事件。
 struct NoteExpressionContext {
     QVector<ArticulationAppliedData> articulations;
     QVector<ExpressionCurvePoint> pitchCurve;
     QVector<ExpressionCurvePoint> expressionCurve;
 };
 
+// 调度器向音频后端提交的统一事件对象。
+// NoteOn 的 durationUs 用于生成明确的 NoteOff；其他事件通常为瞬时事件。
 struct PlaybackEvent {
     qint64 timestampUs = 0;
     qint64 durationUs = 0;
@@ -109,8 +125,7 @@ struct PlaybackEvent {
     bool marcato = false;
     bool tremolo = false;
     NoteExpressionContext expression;
-    // MIDI Bank Select is represented separately from the 7-bit program.
-    // Keeping both bytes on the event makes seek/state replay lossless.
+    // Bank Select 的两个控制器与 7 位 program 分开保存，使跳转后的状态重放无损。
     int bankMsb = 0;
     int bankLsb = 0;
     bool keyReleased = false;
@@ -121,9 +136,9 @@ struct PlaybackEvent {
     bool isNoteOff() const { return kind == PlaybackEventKind::NoteOff; }
 };
 
-// Events sharing a timestamp must be delivered in protocol order. In
-// particular, Bank Select is part of the Program Change transaction and must
-// be observed by the synth before the program is selected.
+// 判断同一时间戳事件的 MIDI 协议优先级。
+// NoteOff 先于音符重触发，Bank Select 先于 Program Change，保证合成器观察到
+// 正确的通道状态顺序。
 inline int playbackEventPriority(const PlaybackEvent& event)
 {
     if (event.kind == PlaybackEventKind::NoteOff || event.kind == PlaybackEventKind::AllNotesOff) return 0;
@@ -140,12 +155,14 @@ inline int playbackEventPriority(const PlaybackEvent& event)
 
 class PlaybackEventMap final {
 public:
+    // 清除事件和用于二分查找的时间戳索引。
     void clear()
     {
         m_events.clear();
         m_timestamps.clear();
     }
 
+    // 用已有事件替换容器；调用方应在 finalize() 后使用 lowerBound()。
     void assign(const QVector<PlaybackEvent>& events)
     {
         m_events = events;
@@ -156,11 +173,13 @@ public:
         }
     }
 
+    // 追加一个尚未排序的事件，适用于模型构建阶段。
     void insert(PlaybackEvent event)
     {
         m_events.push_back(std::move(event));
     }
 
+    // 按时间戳、协议优先级和序号排序，并重建时间戳索引。
     void finalize()
     {
         std::sort(m_events.begin(), m_events.end(), [](const auto& left, const auto& right) {
@@ -175,11 +194,16 @@ public:
         for (const auto& event : m_events) m_timestamps.push_back(event.timestampUs);
     }
 
+    // 返回已完成排序的事件序列。
     const QVector<PlaybackEvent>& events() const { return m_events; }
+    // 判断事件流是否为空。
     bool isEmpty() const { return m_events.isEmpty(); }
+    // 返回事件数量。
     int size() const { return m_events.size(); }
+    // 以边界检查方式访问事件。
     const PlaybackEvent& at(int index) const { return m_events.at(index); }
 
+    // 返回第一个时间戳不小于目标值的事件下标。
     int lowerBound(qint64 timestampUs) const
     {
         return static_cast<int>(std::lower_bound(m_timestamps.cbegin(), m_timestamps.cend(), timestampUs)
@@ -191,6 +215,7 @@ private:
     QVector<qint64> m_timestamps;
 };
 
+// 跳转或恢复播放时需要重建的单个 MIDI 通道状态。
 struct ChannelState {
     bool initialized = false;
     int program = 0;
@@ -210,6 +235,7 @@ struct ChannelState {
     QHash<int, int> controllers;
 };
 
+// 快照时刻仍处于发声状态的音符及其踏板锁存信息。
 struct ActiveNoteState {
     qint64 noteId = -1;
     int channel = 0;
@@ -222,6 +248,8 @@ struct ActiveNoteState {
     bool sostenutoLatched = false;
 };
 
+// 在某一时间点保存的通道状态、活动音符和全局事件下标。
+// PlaybackSession 使用它减少 seek 时需要重放的事件数量。
 struct PlaybackStateSnapshot {
     qint64 timestampUs = 0;
     int eventIndex = 0;
@@ -229,14 +257,17 @@ struct PlaybackStateSnapshot {
     QVector<ActiveNoteState> activeNotes;
 };
 
+// 仅保存事件时间戳的只读索引，用于快速定位 seek 起点。
 class PlaybackEventIndex final {
 public:
+    // 从已经按时间排序的事件构建索引。
     explicit PlaybackEventIndex(const QVector<PlaybackEvent>& events)
     {
         m_timestamps.reserve(events.size());
         for (const auto& event : events) m_timestamps.push_back(event.timestampUs);
     }
 
+    // 返回第一个不早于目标时间的事件下标。
     int lowerBound(qint64 timestampUs) const
     {
         return static_cast<int>(std::lower_bound(m_timestamps.cbegin(), m_timestamps.cend(), timestampUs) - m_timestamps.cbegin());
@@ -246,6 +277,7 @@ private:
     QVector<qint64> m_timestamps;
 };
 
+// 一个逻辑播放轨道（通常是 staff/voice 分组）及其主事件流、NoteOff 流和快照。
 struct PlaybackData {
     QString trackId;
     PlaybackSetupData setupData;

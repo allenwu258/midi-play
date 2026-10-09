@@ -1,14 +1,13 @@
 #include "playbackpositionthrottler.h"
 
+// 实现带序列一致性校验的位置采样发布和消费。
 #include <chrono>
 
 namespace midi_play::playback {
 
+// 以奇数序列标记写入中、偶数序列标记写入完成，消费者据此进行一致性校验。
 void PlaybackPositionThrottler::publish(qint64 positionUs, qint64 durationUs) noexcept
 {
-    // A single producer brackets each update with an odd/even sequence.
-    // Sequential consistency prevents a consumer accepting a future payload
-    // under the preceding sequence, including its new clock timestamp.
     m_sequence.fetch_add(1);
     m_positionUs.store(positionUs);
     m_durationUs.store(durationUs);
@@ -31,8 +30,8 @@ bool PlaybackPositionThrottler::takeLatest(Snapshot& snapshot) noexcept
         const qint64 sampledAtUs = m_sampledAtUs.load();
         const quint64 after = m_sequence.load();
         if (before != after) {
-            // A producer update raced the read. Retry so a torn pair of
-            // position/duration values can never be exposed to the UI.
+            // 生产者在读取期间更新了数据；重试，避免把不同采样的
+            // position/duration 或时间戳组合后暴露给 UI。
             continue;
         }
 

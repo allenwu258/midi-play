@@ -1,9 +1,11 @@
 #include "playbacksession.h"
+// 实现播放会话的生命周期、实时调度、seek 恢复和音源切换。
 #include <algorithm>
 #include <QHash>
 
 namespace midi_play::playback {
 
+// 构建播放模型、事件调度器和节拍器时间线；所有重计算均在会话启动前完成。
 PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> document,
                                  std::unique_ptr<IPlaybackAudioService> audioService,
                                  QObject* parent)
@@ -14,6 +16,7 @@ PlaybackSession::PlaybackSession(std::shared_ptr<const music::MusicDocument> doc
     , m_audioCapabilities(m_audioService->capabilities())
     , m_durationUs(m_playbackModel.durationUs())
 {
+    // 2 ms 精确定时器只负责推进调度；UI 位置发布由控制器单独节流。
     m_timer = new QTimer(this);
     m_timer->setInterval(2);
     m_timer->setTimerType(Qt::PreciseTimer);
@@ -31,6 +34,7 @@ PlaybackSession::~PlaybackSession() = default;
 
 bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
 {
+    // 切换音源前保存播放状态；播放中必须先停止事件和节拍器，避免新旧后端重叠。
     if (error) error->clear();
     const bool wasPlaying = m_state == State::Playing;
     qint64 resumePositionUs = m_positionUs;
@@ -39,6 +43,7 @@ bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
         m_positionUs = resumePositionUs;
         m_timer->stop();
         m_audioService->stopMetronome();
+        // 消费当前位置之前的点击，恢复后不会重复补发旧节拍。
         m_metronomeScheduler.takeDue(*m_metronomeTimeline, resumePositionUs, m_playHead.rate());
         advanceEventGeneration();
         flushActiveNotes();
@@ -53,6 +58,7 @@ bool PlaybackSession::loadSoundFont(const QString& path, QString* error)
         return false;
     }
     prepareMetronome();
+    // 音源加载成功后逐轨注册事件数据；任一轨失败都按原播放位置恢复旧事务。
     for (const auto& track : m_playbackModel.tracks()) {
         if (!m_audioService->addTrack(track, error)) {
             if (wasPlaying) {
@@ -76,6 +82,7 @@ void PlaybackSession::loadSoundFontAsync(const QString& path)
 
 bool PlaybackSession::resumeAfterSoundFontChange(qint64 positionUs, QString* error)
 {
+    // 音源切换后的恢复与普通 play 相同，但必须保留调用前的播放位置。
     m_positionUs = std::clamp<qint64>(positionUs, 0, m_durationUs);
     if (!m_audioService->start()) {
         if (error) *error = QStringLiteral("无法在切换音源后恢复音频引擎");
@@ -96,6 +103,7 @@ bool PlaybackSession::resumeAfterSoundFontChange(qint64 positionUs, QString* err
 
 void PlaybackSession::play()
 {
+    // 已在播放或文档非法时不重复启动后端。
     if (m_state == State::Playing || !m_document || !m_document->isValid()) {
         return;
     }
@@ -104,6 +112,7 @@ void PlaybackSession::play()
 
 bool PlaybackSession::startPlaybackFromCurrentPosition()
 {
+    // 启动顺序固定为后端 start -> 设置传输位置 -> 重建 MIDI 状态 -> 启动播放头。
     if (!m_document || !m_document->isValid()) {
         return false;
     }
@@ -127,19 +136,18 @@ void PlaybackSession::pause()
         return;
     }
     if (m_audioCapabilities.usesAudioClock()) {
+        // 硬件时钟优先于软件估算，暂停前先采样最后一个音频位置。
         updateAudioClockPosition();
     }
     m_positionUs = m_playHead.positionUs();
     m_timer->stop();
     m_audioService->stopMetronome();
     m_metronomeScheduler.takeDue(*m_metronomeTimeline, m_positionUs, m_playHead.rate());
-    // Explicit note-off events are dispatched by this session. Flush them on
-    // pause and reconstruct the exact state when play() resumes.
+    // 会话负责显式 NoteOff；暂停时冲刷活动音符，恢复时再重建精确状态。
     flushActiveNotes();
     m_audioService->pause();
     m_playHead.pause(m_positionUs);
-    // Pause is a transport boundary. Publish the exact final position before
-    // the state transition so throttled consumers do not retain a stale frame.
+    // 暂停是传输边界，先发布最终位置，再发送状态变化，避免 UI 保留旧帧。
     emitPosition();
     setState(State::Paused);
 }
@@ -149,6 +157,7 @@ void PlaybackSession::stop()
     if (m_state == State::Empty) {
         return;
     }
+    // stop 同时取消节拍器、提升事件代次并冲刷后端，确保旧队列不能回流。
     m_timer->stop();
     m_audioService->stopMetronome();
     advanceEventGeneration();
@@ -168,6 +177,7 @@ void PlaybackSession::seek(qint64 microseconds)
     if (!m_document) {
         return;
     }
+    // 播放中的 seek 暂停推进，完成后重新 start；暂停中的 seek 只更新位置。
     const bool resume = m_state == State::Playing;
     if (resume) {
         m_timer->stop();
@@ -176,6 +186,7 @@ void PlaybackSession::seek(qint64 microseconds)
     advanceEventGeneration();
     flushActiveNotes();
     m_positionUs = std::clamp<qint64>(microseconds, 0, m_durationUs);
+    // 后端、播放头、事件游标和节拍器游标必须在同一事务中定位。
     m_audioService->seek(m_positionUs);
     m_clockBaseUs = m_positionUs;
     m_playHead.seek(m_positionUs);
@@ -194,8 +205,8 @@ bool PlaybackSession::setPlaybackRatePercent(int percent)
     if (m_playbackRatePercent == normalized) return true;
     if (!supportsPlaybackRate()) return false;
 
-    // Keep scheduler cursors, note state and generation intact. Both MIDI
-    // dispatch and visualization continue to consume the same musical time.
+    // 只调整传输时钟倍率；调度游标、音符状态和代次保持不变，
+    // MIDI 与可视化继续消费同一音乐时间。
     m_playbackRatePercent = normalized;
     m_playHead.setRate(static_cast<double>(normalized) / 100.0);
     if (m_state == State::Playing) {
@@ -215,6 +226,7 @@ void PlaybackSession::setMetronomeEnabled(bool enabled)
         return;
     }
 
+    // 开启时从当前传输位置重新定位，关闭时只停止点击，不影响 MIDI。
     const qint64 position = m_state == State::Playing
         ? m_playHead.positionUs() : m_positionUs;
     m_metronomeScheduler.seek(*m_metronomeTimeline, position);
@@ -225,6 +237,7 @@ void PlaybackSession::onTimer()
     if (m_state != State::Playing || !m_document) {
         return;
     }
+    // 每个 tick 先解析权威位置，再收集事件；带时间戳后端预排约 30 ms。
     if (m_audioCapabilities.usesAudioClock()) {
         updateAudioClockPosition();
     }
@@ -236,6 +249,7 @@ void PlaybackSession::onTimer()
         m_audioService->submitBatch(window.events, window.generation);
     }
     if (m_positionUs >= m_durationUs) {
+        // 到达时长后通过统一 stop 流程清理后端和游标。
         stop();
         return;
     }
@@ -245,6 +259,7 @@ void PlaybackSession::onTimer()
 
 void PlaybackSession::dispatchMetronome(qint64 positionUs)
 {
+    // 节拍器点击与 MIDI 事件共享代次；关闭或不可用时不进入后端。
     if (!m_metronomeEnabled || !m_metronomeAvailable) return;
     if (const auto beat = m_metronomeScheduler.takeDue(*m_metronomeTimeline,
                                                       positionUs, m_playHead.rate())) {
@@ -255,6 +270,7 @@ void PlaybackSession::dispatchMetronome(qint64 positionUs)
 
 void PlaybackSession::prepareMetronome()
 {
+    // 节拍器是可选能力：网格、后端声明和资源准备任一失败都只影响节拍器。
     QString reason;
     if (!m_metronomeTimeline->available()) reason = m_metronomeTimeline->unavailableReason();
     else if (!m_audioCapabilities.supportsMetronome()) reason = QStringLiteral("当前音频后端不支持节拍器");
@@ -267,6 +283,7 @@ void PlaybackSession::prepareMetronome()
 
 void PlaybackSession::rebuildAudioState(qint64 targetUs)
 {
+    // seek/恢复时从最近快照开始重放到 targetUs，重建通道控制器和活动音符。
     m_scheduler.seek(targetUs);
 
     const auto& globalEvents = m_playbackModel.globalEvents();
@@ -283,13 +300,13 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
         snapshot = &candidate;
     }
     if (snapshot) {
+        // 快照先恢复已知通道状态和仍在发声的音符，再重放快照之后的事件。
         start = std::min(snapshot->eventIndex, end);
         for (auto channelIt = snapshot->channels.cbegin(); channelIt != snapshot->channels.cend(); ++channelIt) {
             const int channel = channelIt.key();
             const auto& state = channelIt.value();
             if (!state.initialized) continue;
-            // Bank Select is a two-controller message and must precede
-            // Program Change when restoring a channel after seek.
+            // Bank Select 由两个控制器组成，恢复通道时必须先于 Program Change。
             for (const int controller : {0, 32}) {
                 if (!state.controllers.contains(controller)) continue;
                 PlaybackEvent control;
@@ -313,12 +330,12 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             }
             const auto controllerPriority = [](int controller) {
                 switch (controller) {
-                case 101: return 0; // RPN MSB
-                case 100: return 1; // RPN LSB
-                case 99: return 2;  // NRPN MSB
-                case 98: return 3;  // NRPN LSB
-                case 6: return 4;   // Data Entry MSB
-                case 38: return 5;  // Data Entry LSB
+                case 101: return 0; // RPN MSB（最高有效字节）
+                case 100: return 1; // RPN LSB（最低有效字节）
+                case 99: return 2;  // NRPN MSB（最高有效字节）
+                case 98: return 3;  // NRPN LSB（最低有效字节）
+                case 6: return 4;   // Data Entry MSB（最高有效字节）
+                case 38: return 5;  // Data Entry LSB（最低有效字节）
                 default: return 100 + controller;
                 }
             };
@@ -355,6 +372,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             }
         }
         for (const auto& active : snapshot->activeNotes) {
+            // 将快照中的活动音符暂时重建为 targetUs 之前开始的 NoteOn。
             PlaybackEvent resumed;
             resumed.timestampUs = targetUs - 1;
             resumed.durationUs = active.endTimestampUs - targetUs + 1;
@@ -384,9 +402,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
                 if (activeNotes[key].isEmpty()) activeNotes.remove(key);
             }
         } else {
-            // State events after the selected global snapshot are replayed in
-            // canonical score order; no track can overwrite another track's
-            // shared channel state out of order.
+            // 快照后的状态事件按全局规范顺序重放，避免不同轨道无序覆盖共享通道。
             replayEvents.push_back(event);
         }
     }
@@ -402,6 +418,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             resumed.durationUs = endUs - targetUs;
             replayEvents.push_back(resumed);
             if (active.keyReleased) {
+                // 已释放但被踏板保持的音符需要立即补发 NoteOff，维持释放语义。
                 PlaybackEvent released = resumed;
                 released.durationUs = 0;
                 released.kind = PlaybackEventKind::NoteOff;
@@ -416,11 +433,13 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
 
 void PlaybackSession::flushActiveNotes()
 {
+    // 后端 flush 是暂停、停止、seek 和音源切换的共同清理边界。
     m_audioService->flush();
 }
 
 void PlaybackSession::advanceEventGeneration()
 {
+    // 代次递增后，后端和调度窗口都会拒绝此前生成的异步事件。
     ++m_eventGeneration;
     m_scheduler.setGeneration(m_eventGeneration);
     m_audioService->setEventGeneration(m_eventGeneration);
@@ -428,6 +447,7 @@ void PlaybackSession::advanceEventGeneration()
 
 void PlaybackSession::updateAudioClockPosition()
 {
+    // 音频时钟不可用时清除旧值，避免继续使用过期硬件位置。
     const qint64 audioClockUs = m_audioService->clockPositionUs();
     if (audioClockUs >= 0) m_playHead.setAudioPositionUs(audioClockUs);
     else m_playHead.clearAudioPosition();
@@ -442,6 +462,7 @@ void PlaybackSession::setState(State state)
     emit stateChanged(m_state);
 }
 
+// 位置通知只携带会话当前精确值，控制器负责跨线程节流。
 void PlaybackSession::emitPosition()
 {
     emit positionChanged(m_positionUs, m_durationUs);

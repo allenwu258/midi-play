@@ -1,12 +1,15 @@
 #include "playbackmodel.h"
 #include "domain/music/playbacksegmentbounds.h"
 
+// 实现轨道事件投影、表达渲染、NoteOff 分流和状态快照构建。
 #include <algorithm>
 
 namespace midi_play::playback {
 
 namespace {
 
+// 每秒生成一个快照，记录 MIDI 通道状态和仍在发声的音符。
+// 这些快照使 seek 可以从最近检查点恢复，而不必从曲首重放全部事件。
 void buildStateSnapshots(const QVector<PlaybackEvent>& events,
                          QVector<PlaybackStateSnapshot>& snapshots)
 {
@@ -15,6 +18,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
     QVector<QVector<qint64>> sustainReleaseTimes(16);
     QVector<QVector<qint64>> sostenutoReleaseTimes(16);
     snapshots.clear();
+    // 预收集 sustain/sostenuto 释放时刻，NoteOff 处理时可快速找到后续释放点。
     for (const auto& event : events) {
         if (event.kind == PlaybackEventKind::ControlChange
             && (event.controller == 64 || event.controller == 66) && event.value < 64
@@ -30,6 +34,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
     constexpr qint64 snapshotIntervalUs = 1'000'000;
 
     auto appendSnapshot = [&](qint64 timestampUs) {
+        // 快照中的 eventIndex 指向该时刻之后第一个待重放事件。
         PlaybackStateSnapshot snapshot;
         snapshot.timestampUs = timestampUs;
         snapshot.eventIndex = processedEvents;
@@ -43,6 +48,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
     };
 
     for (const auto& event : events) {
+        // 时间戳跨过检查点时先保存当前状态，再应用当前事件。
         while (event.timestampUs >= nextSnapshotUs) {
             appendSnapshot(nextSnapshotUs);
             nextSnapshotUs += snapshotIntervalUs;
@@ -52,6 +58,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
             channels[channel].initialized = true;
             channels[channel].program = event.program;
         } else if (event.kind == PlaybackEventKind::ControlChange) {
+            // 控制器既要保留原值，也要更新 bank、RPN/NRPN 和踏板派生状态。
             channels[channel].initialized = true;
             channels[channel].controllers.insert(event.controller, event.value);
             if (event.controller == 0) {
@@ -79,6 +86,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
             default: break;
             }
             if (event.controller == 64 && event.value < 64) {
+                // 松开 sustain 后，已释放且未被 sostenuto 锁存的音符立即结束。
                 auto activeIt = active.begin();
                 while (activeIt != active.end()) {
                     auto& notes = activeIt.value();
@@ -91,12 +99,14 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
                 }
             }
             if (event.controller == 66 && event.value >= 64) {
+                // sostenuto 按下瞬间只捕获当时尚未释放的音符。
                 for (auto activeIt = active.begin(); activeIt != active.end(); ++activeIt) {
                     for (auto& note : activeIt.value()) {
                         if (!note.keyReleased) note.sostenutoCaptured = true;
                     }
                 }
             } else if (event.controller == 66 && event.value < 64) {
+                // 松开 sostenuto 后清理未被 sustain 保持的已释放音符。
                 auto activeIt = active.begin();
                 while (activeIt != active.end()) {
                     auto& notes = activeIt.value();
@@ -120,6 +130,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
             channels[channel].initialized = true;
             channels[channel].polyPressure.insert(event.pitch, event.value);
         } else if (event.kind == PlaybackEventKind::NoteOn) {
+            // 同一 noteId 允许多个重叠实例，因此按 key 保存栈。
             const qint64 noteKey = event.noteId >= 0 ? event.noteId
                                                      : qint64(channel * 128 + event.pitch);
             ActiveNoteState note;
@@ -130,6 +141,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
             note.endTimestampUs = event.timestampUs + event.durationUs;
             active[noteKey].push_back(note);
         } else if (event.kind == PlaybackEventKind::NoteOff) {
+            // NoteOff 可能只释放琴键；踏板按下时音符继续保持活动。
             const qint64 noteKey = event.noteId >= 0 ? event.noteId
                                                      : qint64(channel * 128 + event.pitch);
             auto it = active.find(noteKey);
@@ -172,6 +184,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
 PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> document)
     : m_document(std::move(document))
 {
+    // 文档为空时保留空模型；其余派生对象均由定稿文档一次性构建。
     if (!m_document) return;
     m_timeline = std::make_shared<music::PlaybackTimeline>(m_document);
     m_scoreDom = music::ScorePlaybackDom::build(*m_document);
@@ -180,6 +193,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
     const auto& segments = m_timeline->segments();
     const auto continuousEnds = music::continuousPlaybackEnds(segments);
     for (const auto& track : m_document->tracks()) {
+        // 按 track/staff/voice 拆分，保证同一播放数据组中的和弦关系稳定。
         QMap<QString, QVector<const music::NoteEvent*>> voiceGroups;
         for (const auto& note : track.notes) {
             const QString key = QStringLiteral("%1/staff%2/voice%3").arg(track.id).arg(note.staff).arg(note.voice);
@@ -191,6 +205,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
             data.setupData.soundId = track.program == 0 ? QStringLiteral("piano") : QStringLiteral("midi-program-%1").arg(track.program);
         for (int segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
             const auto& segment = segments[segmentIndex];
+            // 仅投影当前反复段覆盖的源事件；segmentDuration 在不连续边界截断。
             for (const auto* note : group.value()) {
                 if (note->start < segment.sourceStart || note->start >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (note->start - segment.sourceStart);
@@ -199,6 +214,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 const qint64 timestamp = m_timeline->outputTickToMicroseconds(outputTick);
                 const qint64 end = m_timeline->outputTickToMicroseconds(outputTick + segmentDuration);
                 PlaybackEvent event;
+                // 事件时间改用输出时间线，音符内容和演奏法沿用音乐域派生字段。
                 event.timestampUs = timestamp;
                 event.durationUs = qMax<qint64>(1'000, end - timestamp);
                 event.channel = note->channel;
@@ -281,9 +297,8 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
         }
         data.events = renderer.render(data);
 
-        // Keep note-off events in the same timestamp-ordered stream as note-on
-        // and controller events. The audio backend must receive explicit note-off
-        // commands; scheduling them with a UI timer introduces unbounded jitter.
+        // NoteOff 与 NoteOn/控制事件共用时间排序流。后端必须收到明确 NoteOff，
+        // 不能通过 UI 定时器释放，否则会引入不可控抖动。
         QVector<PlaybackEvent> noteOffEvents;
         noteOffEvents.reserve(data.events.size());
         for (const auto& event : data.events) {
@@ -297,6 +312,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
             noteOff.sequence = event.sequence + 1;
             noteOffEvents.push_back(noteOff);
         }
+        // 主流和 NoteOff 流分别建立索引；合并流用于快照和全局状态重建。
         data.offEvents = noteOffEvents;
         data.mainStream.assign(data.events);
         data.mainStream.finalize();
@@ -319,9 +335,8 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
         }
     }
 
-    // Build one canonical event stream for score-wide state reconstruction.
-    // Track-local streams remain the scheduling source, while this stream is
-    // the authoritative seek/playback context for shared MIDI channels.
+    // 建立全曲唯一事件流用于共享通道状态重建。轨道局部流负责调度，
+    // 全局流负责 seek/playback 上下文，避免不同轨道覆盖顺序不稳定。
     quint64 globalSequence = 0;
     for (const auto& track : m_tracks) {
         for (const auto& sourceEvent : track.events) {
@@ -343,6 +358,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
 
 const PlaybackData* PlaybackModel::track(const QString& id) const
 {
+    // 轨道数量通常较少，线性查找可保持构建顺序并避免额外索引存储。
     for (const auto& track : m_tracks) if (track.trackId == id) return &track;
     return nullptr;
 }
