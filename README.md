@@ -371,6 +371,9 @@ MP3 码率支持 128、160、192、256、320 kbps；采样率支持 44100 和 48
 
 ## 架构概览
 
+详细的模块职责、线程模型、数据流、端到端操作流程和扩展边界见
+[中文架构文档](docs/architecture-cn.md)。本节保留面向快速了解项目的架构摘要。
+
 ~~~mermaid
 flowchart LR
     A[MusicXML / MIDI / KAR] --> B[MusicReaderRegistry]
