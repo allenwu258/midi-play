@@ -1,5 +1,6 @@
 #include "midinormalizer.h"
 
+// 实现通道事件归一化与踏板状态机；输出区分按键时值和可听延音时值。
 #include <QSet>
 #include <QMap>
 
@@ -9,6 +10,7 @@
 namespace midi_play::midi {
 namespace {
 
+// 尚未遇到 NoteOff 的按键，保存按下时的音色和事件序号。
 struct PendingNote {
     music::Tick start = 0;
     int velocity = 90;
@@ -16,16 +18,17 @@ struct PendingNote {
     quint64 sequence = 0;
 };
 
+// 将控制器负载约束到 MIDI 的 7 位范围。
 int controllerValue(const MidiRawEvent& event)
 {
     return std::clamp(event.data2, 0, 127);
 }
 
+// 读取三字节每四分音符微秒数，并把 format 2 的局部时间平移到全局时间。
 void appendTempo(const MidiRawEvent& event, const MidiFileHeader& header, music::Tick sequenceOffset,
                  QVector<music::TempoChange>& tempos)
 {
-    // SMPTE-timed files use a fixed tick rate; tempo meta-events do not alter
-    // that rate and therefore must not override the synthetic 60 BPM map.
+    // SMPTE 使用固定时间速率，忽略 tempo 元事件，以免覆盖用于绝对时间换算的 60 BPM。
     if (header.smpte || event.kind != MidiMessageKind::Meta || event.metaType != 0x51
         || event.payload.size() != 3) return;
     const auto* bytes = reinterpret_cast<const unsigned char*>(event.payload.constData());
@@ -37,6 +40,7 @@ void appendTempo(const MidiRawEvent& event, const MidiFileHeader& header, music:
 
 } // namespace
 
+// 用统一的 division 比例换算 tick；非法分辨率返回零。
 music::Tick MidiNormalizer::scaleTick(music::Tick sourceTick, const MidiFileHeader& header)
 {
     if (header.division <= 0) return 0;
@@ -44,6 +48,7 @@ music::Tick MidiNormalizer::scaleTick(music::Tick sourceTick, const MidiFileHead
                                                  * music::MusicDocument::kPpq / header.division));
 }
 
+// 按物理轨道和端口/通道分别配对消息，最后汇总全局时间与速度变化。
 MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) const
 {
     auto result = std::make_shared<MidiNormalizedFile>();
@@ -57,7 +62,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
         if (source.header.format == 2) {
             const auto start = scaleTick(sequenceOffset, source.header);
             result->sequenceStarts.push_back(start);
-            // Independent format-2 sequences reset their tempo and meter.
+            // format 2 的轨道是独立序列；拼接起点重置速度和默认 4/4 拍号。
             tempos.push_back({start, source.header.smpte ? 60.0 : 120.0});
             MidiRawEvent meter;
             meter.kind = MidiMessageKind::Meta;
@@ -69,6 +74,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
         }
         music::Tick rawTrackEnd = 0;
         for (const auto& rawEvent : rawTrack.events) rawTrackEnd = std::max(rawTrackEnd, rawEvent.tick);
+        // 同一物理轨道可能含多个端口/通道，分组后各自维护音符和踏板状态。
         QMap<QPair<int, int>, QVector<const MidiRawEvent*>> byPortChannel;
         for (const auto& rawEvent : rawTrack.events) {
             MidiRawEvent normalized = rawEvent;
@@ -94,6 +100,8 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
             track.name = rawTrack.name.isEmpty() ? track.id : rawTrack.name;
             track.percussion = channel == 9;
 
+            // pending 按音高保存重叠按键；sustained 保存已松键但被踏板保持的音符下标。
+            // sostenuto 只捕获踩下瞬间仍按着的音符，以源序号区分同音高实例。
             QHash<int, QVector<PendingNote>> pending;
             QVector<int> sustained;
             QSet<quint64> sostenutoCaptured;
@@ -104,6 +112,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
             int bankLsb = 0;
             music::Tick lastTick = 0;
 
+            // 关闭按键区间并保证至少一 tick；踏板可以随后延长 audibleEnd。
             auto appendClosedNote = [&](int pitch, const PendingNote& pendingNote,
                                         music::Tick keyRelease, music::Tick audibleEnd) {
                 MidiNoteSpan span;
@@ -121,6 +130,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                 return track.notes.size() - 1;
             };
 
+            // CC123 保留踏板保持语义，CC120 则强制结束当前按键的可听区间。
             auto closePendingNotes = [&](music::Tick tick, bool forceAudibleEnd) {
                 for (auto pendingIt = pending.begin(); pendingIt != pending.end(); ++pendingIt) {
                     for (const PendingNote& pendingNote : pendingIt.value()) {
@@ -134,6 +144,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                 pending.clear();
             };
 
+            // 仅释放已不被任一踏板保持的音符，两个踏板叠加时不能提前截断延音。
             auto releaseHeld = [&](music::Tick tick) {
                 for (const int index : sustained) {
                     if (index < 0 || index >= track.notes.size()) continue;
@@ -167,6 +178,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                         ++result->diagnostics.orphanNoteOffs;
                         continue;
                     }
+                    // 同音高重叠按键按后进先出配对；孤立 NoteOff 只计入诊断。
                     const PendingNote note = pendingIt->takeLast();
                     if (pendingIt->isEmpty()) pending.erase(pendingIt);
                     const int noteIndex = appendClosedNote(event.data1, note, tick, tick);
@@ -183,6 +195,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                 case MidiMessageKind::ControlChange:
                     if (event.data1 == 0) bankMsb = controllerValue(event);
                     if (event.data1 == 32) bankLsb = controllerValue(event);
+                    // CC64 持续踏板与 CC66 选择性延音踏板均以 64 为开关阈值。
                     if (event.data1 == 64) {
                         const bool wasDown = sustainDown;
                         sustainDown = controllerValue(event) >= 64;
@@ -219,6 +232,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                 }
             }
 
+            // 缺失 NoteOff 的按键在通道最后消息处补齐，并记录隐式释放诊断。
             for (auto pendingIt = pending.cbegin(); pendingIt != pending.cend(); ++pendingIt) {
                 for (const PendingNote& note : pendingIt.value()) {
                     const int noteIndex = appendClosedNote(pendingIt.key(), note, lastTick, lastTick);
@@ -244,10 +258,12 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
             if (!track.notes.isEmpty()) result->tracks.push_back(std::move(track));
         }
         if (source.header.format == 2) {
+            // 独立序列顺次拼接；format 0/1 的各轨道则共享零偏移时间轴。
             sequenceOffset += rawTrackEnd;
         }
     }
 
+    // 全局消息按时间/序号排序；同 tick 的速度变化采用最后一条。
     std::sort(result->globalEvents.begin(), result->globalEvents.end(), [](const auto& left, const auto& right) {
         if (left.tick != right.tick) return left.tick < right.tick;
         return left.sequence < right.sequence;
@@ -260,6 +276,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
     }
     result->tempos = std::move(dedupedTempos);
     if (result->tempos.isEmpty()) {
+        // 普通 MIDI 默认 120 BPM；SMPTE 用 60 BPM 配合缩放后的 tick 表示绝对时间。
         const double bpm = source.header.smpte ? 60.0 : 120.0;
         result->tempos.push_back({0, bpm});
     }

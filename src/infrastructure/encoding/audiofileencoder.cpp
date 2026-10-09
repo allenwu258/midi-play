@@ -1,5 +1,6 @@
 #include "audiofileencoder.h"
 
+// 实现 WAV/MP3 分块编码，以 QSaveFile 在编码完成前保护既有目标文件。
 #include <QDataStream>
 #include <QSaveFile>
 #include <lame/lame.h>
@@ -13,6 +14,7 @@
 namespace midi_play::encoding {
 namespace {
 
+// 处理部分写入，直到完整负载写出；零进展或 I/O 错误立即失败。
 bool writeBytes(QSaveFile& file, const char* data, qint64 size, QString* error)
 {
     qint64 written = 0;
@@ -27,8 +29,10 @@ bool writeBytes(QSaveFile& file, const char* data, qint64 size, QString* error)
     return true;
 }
 
+// 将浮点左右声道量化为小端 16 位交错 PCM，结束时回填 RIFF 数据长度。
 class WavEncoder final : public AudioFileEncoder {
 public:
+    // 创建暂存输出并写入空数据头，采样内容在后续 write 中追加。
     bool open(const QString& path, int sampleRate, int, QString* error) override
     {
         m_file.setFileName(path);
@@ -40,6 +44,7 @@ public:
         return writeHeader(0, error);
     }
 
+    // 每帧左右各两个字节；标准 RIFF 使用 32 位长度，不能越过约 4 GB 上限。
     bool write(const float* left, const float* right, int frames, QString* error) override
     {
         const quint64 bytes = static_cast<quint64>(frames) * 4;
@@ -49,12 +54,14 @@ public:
         }
         m_pcm.resize(static_cast<size_t>(bytes));
         for (int i = 0; i < frames; ++i) {
+            // 裁剪到 [-1, 1]，正负端点分别映射 32767 和 -32768。
             const auto quantize = [](float value) {
                 const float limited = std::clamp(value, -1.0f, 1.0f);
                 return static_cast<qint16>(std::lround(limited * (limited < 0 ? 32768.0f : 32767.0f)));
             };
             const quint16 samples[2] {static_cast<quint16>(quantize(left[i])),
                                        static_cast<quint16>(quantize(right[i]))};
+            // 显式写小端字节，避免依赖宿主机字节序。
             for (int channel = 0; channel < 2; ++channel) {
                 m_pcm[4 * i + 2 * channel] = static_cast<char>(samples[channel] & 0xff);
                 m_pcm[4 * i + 2 * channel + 1] = static_cast<char>(samples[channel] >> 8);
@@ -65,6 +72,7 @@ public:
         return true;
     }
 
+    // 先回填文件头，再由 QSaveFile 提交；失败时不发布半成品。
     bool finish(QString* error) override
     {
         if (!m_file.seek(0) || !writeHeader(static_cast<quint32>(m_dataBytes), error)) {
@@ -77,6 +85,7 @@ public:
     }
 
 private:
+    // 固定 44 字节 PCM 头：两个声道、16 位样本、每帧四字节。
     bool writeHeader(quint32 dataBytes, QString* error)
     {
         QByteArray header;
@@ -99,10 +108,13 @@ private:
     quint64 m_dataBytes = 0;
 };
 
+// 使用 LAME 编码固定码率立体声，并保存时长、编码延迟与填充信息。
 class Mp3Encoder final : public AudioFileEncoder {
 public:
+    // 销毁 LAME 上下文；QSaveFile 同时管理尚未提交的输出。
     ~Mp3Encoder() override { if (m_lame) lame_close(m_lame); }
 
+    // 初始化立体声 CBR 参数；参数准备成功后才打开输出文件。
     bool open(const QString& path, int sampleRate, int bitrateKbps, QString* error) override
     {
         m_lame = lame_init();
@@ -123,8 +135,10 @@ public:
         return false;
     }
 
+    // LAME 接受分离声道的 IEEE 浮点 PCM，返回当前块产生的编码字节数。
     bool write(const float* left, const float* right, int frames, QString* error) override
     {
+        // 按 LAME 推荐的 1.25 * 帧数 + 7200 容量准备输出缓冲区。
         m_buffer.resize(static_cast<size_t>(frames * 5 / 4 + 7200));
         const int bytes = lame_encode_buffer_ieee_float(m_lame, left, right, frames,
                                                         m_buffer.data(), static_cast<int>(m_buffer.size()));
@@ -135,6 +149,7 @@ public:
         return writeBytes(m_file, reinterpret_cast<const char*>(m_buffer.data()), bytes, error);
     }
 
+    // 刷出编码尾部，回填 LAME 标签，再提交完整文件。
     bool finish(QString* error) override
     {
         std::vector<unsigned char> buffer(7200);
@@ -143,6 +158,7 @@ public:
             if (bytes < 0 && error) *error = QStringLiteral("LAME 结束编码失败: %1").arg(bytes);
             return false;
         }
+        // 首帧标签只有编码结束后才具备完整时长和延迟信息。
         const size_t tagSize = lame_get_lametag_frame(m_lame, nullptr, 0);
         if (tagSize > 0) {
             std::vector<unsigned char> tag(tagSize);
@@ -167,6 +183,7 @@ private:
 
 } // namespace
 
+// 将格式选择集中在工厂，调用方只需持有公共编码接口。
 std::unique_ptr<AudioFileEncoder> createAudioFileEncoder(AudioFileFormat format)
 {
     if (format == AudioFileFormat::Wav) return std::make_unique<WavEncoder>();

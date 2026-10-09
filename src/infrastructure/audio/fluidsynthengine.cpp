@@ -1,5 +1,6 @@
 #include "fluidsynthengine.h"
 
+// 实现动态符号加载、合成器生命周期、音源事务及实时/离线 PCM 输出。
 #include <QtGlobal>
 #include <QCoreApplication>
 #include <QDebug>
@@ -13,30 +14,34 @@
 namespace midi_play::audio {
 namespace {
 
+// 捕获列表按线程隔离；安装日志回调和加载音源则由进程级互斥量串行化。
 thread_local QStringList* s_activeFluidLogs = nullptr;
 std::mutex s_fluidLoadMutex;
 
+// FluidSynth 日志回调；只有处于音源加载捕获范围的线程才记录诊断。
 void fluidLogHandler(int level, const char* message, void*)
 {
     const QString text = QString::fromUtf8(message ? message : "").trimmed();
     if (text.isEmpty()) return;
-    // Do not log from FluidSynth's realtime audio thread. During a guarded
-    // load operation the caller owns the TLS capture and receives diagnostics
-    // in its error result instead.
+    // 实时音频线程没有此 TLS 捕获列表，不向 Qt 日志输出消息。
+    // 加载线程收集警告以上消息，严重错误同时写入应用日志。
     if (s_activeFluidLogs) {
         if (level <= 2) s_activeFluidLogs->push_back(text);
         if (level <= 1) qWarning().noquote() << "FluidSynth:" << text;
     }
 }
 
+// RAII 管理当前线程的捕获目标，允许嵌套调用并在退出时恢复上一目标。
 class ScopedFluidLogCapture final {
 public:
+    // 安装本次音源加载的诊断容器。
     explicit ScopedFluidLogCapture(QStringList* logs)
         : m_previous(s_activeFluidLogs)
     {
         s_activeFluidLogs = logs;
     }
 
+    // 无论加载成功或失败，都恢复原 TLS 状态。
     ~ScopedFluidLogCapture()
     {
         s_activeFluidLogs = m_previous;
@@ -46,6 +51,7 @@ private:
     QStringList* m_previous = nullptr;
 };
 
+// 去重并保留最多三条诊断，控制用户错误信息的长度。
 QString conciseFluidLogs(const QStringList& logs)
 {
     QStringList unique;
@@ -56,6 +62,7 @@ QString conciseFluidLogs(const QStringList& logs)
     return unique.join(QStringLiteral("；"));
 }
 
+// 仅识别明确的 SF3 未编译/不可用日志，避免把坏文件误判为运行时能力缺失。
 bool logsIndicateMissingSf3Support(const QStringList& logs)
 {
     for (const QString& message : logs) {
@@ -69,6 +76,7 @@ bool logsIndicateMissingSf3Support(const QStringList& logs)
     return false;
 }
 
+// 为 SF3 缺少解码能力提供针对性诊断，其他失败组合路径与精简库日志。
 QString soundFontLoadError(const QString& path, SoundFontFormat format,
                            const QStringList& logs)
 {
@@ -89,21 +97,25 @@ QString soundFontLoadError(const QString& path, SoundFontFormat format,
 
 } // namespace
 
+// 延迟初始化外部资源，使对象创建不依赖动态库或音频设备可用。
 FluidSynthEngine::FluidSynthEngine(QObject* parent)
     : QObject(parent)
 {
 }
 
+// 先停止原生回调，再释放其访问的资源。
 FluidSynthEngine::~FluidSynthEngine()
 {
     release();
 }
 
+// 加载平台候选库，解析函数表；缺少必需符号时卸载库并报告失败。
 bool FluidSynthEngine::resolveSymbols(QString* error)
 {
     if (m_library.isLoaded()) return true;
 
 #ifdef Q_OS_WIN
+    // 优先使用发行目录中的库；该文件存在却加载失败时不切换到系统中的其他版本。
     const QString deployedLibrary = QDir(QCoreApplication::applicationDirPath())
         .filePath(QStringLiteral("libfluidsynth-3.dll"));
     const bool deployedLibraryExists = QFileInfo::exists(deployedLibrary);
@@ -137,6 +149,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
         return false;
     }
 
+    // 通过同一动态库解析 C ABI；可选控制和节拍器符号允许为空。
     auto resolve = [this](const char* name) { return m_library.resolve(name); };
     m_newSettings = reinterpret_cast<NewSettings>(resolve("new_fluid_settings"));
     m_deleteSettings = reinterpret_cast<DeleteSettings>(resolve("delete_fluid_settings"));
@@ -165,6 +178,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     m_setChannelType = reinterpret_cast<SetChannelType>(resolve("fluid_synth_set_channel_type"));
     m_allSoundsOff = reinterpret_cast<AllSoundsOff>(resolve("fluid_synth_all_sounds_off"));
 
+    // 先确认合成、音源及核心 MIDI API；实时驱动 API 在 load 路径另行检查。
     if (!m_newSettings || !m_deleteSettings || !m_newSynth || !m_deleteSynth || !m_sfload
         || !m_programSelect || !m_noteOn || !m_noteOff || !m_systemReset
         || !m_settingsSetNum || !m_process) {
@@ -180,6 +194,7 @@ bool FluidSynthEngine::resolveSymbols(QString* error)
     return true;
 }
 
+// 清理旧资源后建立新合成器，失败路径按统一 release 顺序回收已创建部分。
 bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* error,
                                        bool dynamicSampleLoading, int sampleRate, bool metronome)
 {
@@ -198,9 +213,8 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
         return false;
     }
     if (m_settingsSetInt) {
-        // Playback uses on-demand decoding to bound startup time and memory.
-        // Standalone validation passes false so FluidSynth eagerly decodes all
-        // samples and catches codec/data errors before the user presses Play.
+        // 播放按需解码以控制启动耗时和内存；独立验证预加载全部采样，
+        // 提前发现编码器缺失或采样数据损坏。
         m_settingsSetInt(m_settings, "synth.dynamic-sample-loading",
                          dynamicSampleLoading ? 1 : 0);
     }
@@ -219,9 +233,10 @@ bool FluidSynthEngine::initializeSynth(const QString& soundFontPath, QString* er
     return true;
 }
 
+// 尽力创建独立点击声部池；缺少可选符号或配置失败不影响歌曲合成器。
 void FluidSynthEngine::initializeMetronomeSynth()
 {
-    // An optional feature must never reduce song polyphony or prevent playback.
+    // 使用独立合成器保持歌曲复音数；两个合成器采样率必须一致才能直接混音。
     if (!m_process || !m_settingsSetInt || !m_settingsSetNum
         || !m_settingsGetNum || !m_setChannelType || !m_allSoundsOff || !m_cc) return;
     double sampleRate = 0;
@@ -238,13 +253,13 @@ void FluidSynthEngine::initializeMetronomeSynth()
     if (!m_metronomeSynth) releaseMetronomeSynth();
 }
 
+// 原生驱动回调，只进行输出路由和合成，不分配中间缓冲区或等待控制线程。
 int FluidSynthEngine::renderAudio(void* context, int frames, int effectCount,
                                   float** effects, int outputCount, float** outputs) noexcept
 {
     auto& engine = *static_cast<FluidSynthEngine*>(context);
-    // FluidSynth drivers supply zeroed buffers. process() ADDS samples, so two
-    // synths need no intermediate buffers, allocation, locks or Qt calls here.
-    // Preserve song reverb/chorus on drivers with no separate effect outputs.
+    // 驱动提供清零的输出，process 累加采样，两次处理即可直接混合歌曲与点击。
+    // 驱动没有独立效果输出时，将歌曲混响/合唱路由到主输出。
     float* mixedEffects[2] {};
     if (effectCount == 0 && outputCount >= 2) {
         mixedEffects[0] = outputs[0];
@@ -254,12 +269,13 @@ int FluidSynthEngine::renderAudio(void* context, int frames, int effectCount,
     }
     const int songResult = engine.m_process(engine.m_synth, frames, effectCount, effects,
                                              outputCount, outputs);
-    // The click synth has no effects and a single stereo output group.
+    // 点击合成器无效果，仅向首组立体声输出累加采样。
     const int clickResult = engine.m_process(engine.m_metronomeSynth, frames, 0, nullptr,
                                               std::min(outputCount, 2), outputs);
     return songResult == 0 && clickResult == 0 ? 0 : -1;
 }
 
+// 在无设备模式下完整解码音源；检查结束即释放，不保留验证用合成器。
 bool FluidSynthEngine::validateSoundFont(const QString& soundFontPath, QString* error)
 {
     if (error) error->clear();
@@ -268,6 +284,7 @@ bool FluidSynthEngine::validateSoundFont(const QString& soundFontPath, QString* 
     return valid;
 }
 
+// 首次加载创建实时输出；已有合成器则采用候选音源先加载的切换路径。
 bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
 {
     if (error) error->clear();
@@ -281,7 +298,7 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
         return false;
     }
 
-    // FluidSynth owns the realtime audio thread through its native driver.
+    // 原生驱动拥有实时音频线程。混音驱动失败时释放点击合成器并回退歌曲驱动。
     if (m_metronomeSynth) {
         m_driver = m_newAudioDriver2(m_settings, &FluidSynthEngine::renderAudio, this);
         if (!m_driver) releaseMetronomeSynth();
@@ -296,6 +313,7 @@ bool FluidSynthEngine::load(const QString& soundFontPath, QString* error)
     return true;
 }
 
+// 离线模式只创建合成资源；若明确要求节拍器，准备失败则整个初始化失败。
 bool FluidSynthEngine::loadOffline(const QString& soundFontPath, int sampleRate,
                                    bool metronome, QString* error)
 {
@@ -313,12 +331,14 @@ bool FluidSynthEngine::loadOffline(const QString& soundFontPath, int sampleRate,
     return true;
 }
 
+// 调用方每次拉取一个采样块；使用相同输出缓冲区合并歌曲效果和点击。
 bool FluidSynthEngine::renderOffline(int frames, float* left, float* right, QString* error)
 {
     if (!m_loaded || !m_synth || frames <= 0 || !left || !right) {
         if (error) *error = QStringLiteral("离线音频引擎尚未准备好");
         return false;
     }
+    // process 采用累加语义，必须先清零，避免前一块 PCM 污染本块。
     std::fill_n(left, frames, 0.0f);
     std::fill_n(right, frames, 0.0f);
     float* outputs[2] {left, right};
@@ -330,11 +350,13 @@ bool FluidSynthEngine::renderOffline(int frames, float* left, float* right, QStr
     return true;
 }
 
+// 按值返回探测结果，调用方不持有内部状态的可写引用。
 FluidSynthCapabilities FluidSynthEngine::capabilities() const
 {
     return m_capabilities;
 }
 
+// 在同一合成器与驱动上切换音源，失败时仍可继续使用旧 SoundFont。
 bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath, QString* error)
 {
     if (!m_synth || !m_sfload) {
@@ -342,9 +364,7 @@ bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath
         return false;
     }
 
-    // Keep the active synth and audio driver alive while FluidSynth parses the
-    // replacement. A malformed file therefore cannot silence the previous
-    // source or force the audio device through a second open/close cycle.
+    // 候选加载不重置音色，也不销毁旧资源；加载成功后才更新活动音源 ID。
     int candidateId = -1;
     if (!loadIntoSynth(m_synth, soundFontPath, 0, &candidateId, error)) {
         return false;
@@ -353,13 +373,13 @@ bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath
     const int previousId = m_soundFontId;
     m_soundFontId = candidateId;
     if (previousId >= 0 && m_sfunload && m_sfunload(m_synth, previousId, 0) != 0) {
-        // The new source is usable. Retaining an old source is safer than
-        // undoing a successful switch; FluidSynth will release it on teardown.
+        // 新音源已经可用；旧音源卸载失败时仍保留切换结果，残留资源在析构时释放。
         if (error) error->clear();
     }
     return true;
 }
 
+// 容器预检通过后执行真正的 FluidSynth 加载，记录格式能力和面向用户的错误。
 bool FluidSynthEngine::loadIntoSynth(fluid_synth_t* synth, const QString& soundFontPath, int resetPresets,
                                      int* soundFontId, QString* error)
 {
@@ -371,9 +391,8 @@ bool FluidSynthEngine::loadIntoSynth(fluid_synth_t* synth, const QString& soundF
         return false;
     }
 
-    // fluid_set_log_function is process-global in FluidSynth. Serialize
-    // callback installation and sfload so concurrent validators cannot race
-    // on the global callback while their thread-local captures are active.
+    // 日志回调是 FluidSynth 进程级状态；安装回调与 sfload 必须串行执行，
+    // 防止并发验证在 TLS 捕获期间竞争全局回调。
     const std::lock_guard<std::mutex> loadGuard(s_fluidLoadMutex);
     if (m_setLogFunction) {
         for (int level = 0; level <= 4; ++level) {
@@ -394,6 +413,7 @@ bool FluidSynthEngine::loadIntoSynth(fluid_synth_t* synth, const QString& soundF
     return true;
 }
 
+// SF3 加载成功可确认支持；只有明确的缺失能力日志才能确认不支持。
 void FluidSynthEngine::updateFormatCapability(SoundFontFormat format, bool loaded,
                                                const QStringList& logs)
 {
@@ -405,6 +425,7 @@ void FluidSynthEngine::updateFormatCapability(SoundFontFormat format, bool loade
     }
 }
 
+// 配置初始 bank 0 音色；运行中的 bank/program 变化由事件分派处理。
 bool FluidSynthEngine::configureTrack(int channel, int program, QString* error)
 {
     if (!m_loaded || !m_programSelect) {
@@ -419,18 +440,23 @@ bool FluidSynthEngine::configureTrack(int channel, int program, QString* error)
     return true;
 }
 
+// 即时后端的驱动持续运行；传输开始/暂停只检查就绪，停止/跳转则清理合成状态。
 bool FluidSynthEngine::start() { return m_loaded; }
 bool FluidSynthEngine::pause() { return m_loaded; }
 bool FluidSynthEngine::stop() { return flush(); }
 bool FluidSynthEngine::seek(qint64) { return flush(); }
+// 内部没有时间事件队列，无需保存会话的传输位置。
 bool FluidSynthEngine::setTransportPosition(qint64) { return m_loaded; }
+// 不提供音频设备位置或定时事件契约，播放会话负责软件时钟调度。
 qint64 FluidSynthEngine::clockPositionUs() const { return -1; }
 bool FluidSynthEngine::supportsTimedEvents() const { return false; }
+// 与服务层的静态能力声明不同，此处返回资源的实际准备状态。
 bool FluidSynthEngine::supportsMetronome() const
 {
     return m_loaded && m_metronomeReady;
 }
 
+// Qt 资源需提取成文件供 sfload 使用；临时文件与点击合成器共同存活。
 bool FluidSynthEngine::prepareMetronome(QString* error)
 {
     if (error) error->clear();
@@ -453,8 +479,7 @@ bool FluidSynthEngine::prepareMetronome(QString* error)
         }
         const QString path = file->fileName();
         file->close();
-        // The click synth eagerly loads these tiny samples off the audio thread.
-        // Keep its backing file alive until the synth is released.
+        // 小型点击采样在非实时路径预加载，音源文件保留到合成器释放之后。
         if (!loadIntoSynth(m_metronomeSynth, path, 0, &m_metronomeSoundFontId, error)) return false;
         m_metronomeFile = std::move(file);
     }
@@ -463,11 +488,11 @@ bool FluidSynthEngine::prepareMetronome(QString* error)
     return m_metronomeReady;
 }
 
+// 初始化点击专用通道，使用户音源、踏板和歌曲效果不会改变节拍器音色。
 bool FluidSynthEngine::configureMetronomeChannel()
 {
     if (!m_metronomeSynth || m_metronomeSoundFontId < 0) return false;
-    // This bank/preset exists only in the bundled font. Always select by font
-    // ID, bypassing the ordinary channel % 16 path and user SoundFont fallback.
+    // bank 128/program 127 仅存在于内置音源，必须按其 SoundFont ID 显式选择。
     if (m_setChannelType(m_metronomeSynth, kMetronomeChannel, 1) != 0
         || m_programSelect(m_metronomeSynth, kMetronomeChannel, m_metronomeSoundFontId, 128, 127) != 0) return false;
     for (int controller : {64, 66, 91, 93}) {
@@ -477,19 +502,22 @@ bool FluidSynthEngine::configureMetronomeChannel()
         && m_cc(m_metronomeSynth, kMetronomeChannel, 11, 127) == 0;
 }
 
+// 强拍与弱拍分别使用内置音高 60/61，在独立声部池触发。
 void FluidSynthEngine::submitMetronomeClick(bool accent)
 {
     if (!supportsMetronome()) return;
-    // Finite, non-looping 60 ms samples need no delayed note-off task.
+    // 无循环的 60 ms 采样自行结束，无需创建延迟 NoteOff 任务。
     m_noteOn(m_metronomeSynth, kMetronomeChannel, accent ? 60 : 61, 100);
 }
 
+// 强制结束所有点击声部，包括仍处于采样播放中的点击。
 void FluidSynthEngine::stopMetronome()
 {
     if (m_metronomeSynth && m_allSoundsOff)
         m_allSoundsOff(m_metronomeSynth, kMetronomeChannel);
 }
 
+// 同时清理点击和歌曲状态；歌曲使用 system_reset 以便后续精确重建控制器。
 bool FluidSynthEngine::flush()
 {
     if (!m_loaded) return false;
@@ -498,6 +526,7 @@ bool FluidSynthEngine::flush()
     return reset;
 }
 
+// 将统一播放事件翻译为即时 API 调用，不根据事件时间戳自行等待。
 void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
 {
     if (!m_loaded) return;
@@ -524,8 +553,7 @@ void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
         polyPressure(event.channel, event.pitch, event.value);
         break;
     case playback::PlaybackEventKind::NoteExpression:
-        // FluidSynth exposes channel-level controls; apply the closest MIDI
-        // operation while preserving the richer domain event.
+        // 以最接近的通道级 MIDI 控制近似单音符表达；不改写领域事件本身。
         switch (event.expressionType) {
         case playback::NoteExpressionType::Pitch: pitchBend(event.channel, event.value); break;
         case playback::NoteExpressionType::Pressure: channelPressure(event.channel, event.value); break;
@@ -539,16 +567,19 @@ void FluidSynthEngine::submit(const playback::PlaybackEvent& event)
     }
 }
 
+// 音符触发由会话保证顺序；这里只映射通道并检查后端是否加载。
 void FluidSynthEngine::noteOn(int channel, int pitch, int velocity)
 {
     if (m_loaded && m_noteOn) m_noteOn(m_synth, channel % 16, pitch, velocity);
 }
 
+// 显式释放音符，踏板及尾音由 FluidSynth 当前通道状态决定。
 void FluidSynthEngine::noteOff(int channel, int pitch)
 {
     if (m_loaded && m_noteOff) m_noteOff(m_synth, channel % 16, pitch);
 }
 
+// 组合 14 位 bank 编号，始终在当前活动 SoundFont 中查找音色。
 void FluidSynthEngine::programChange(int channel, int program, int bankMsb, int bankLsb)
 {
     if (m_loaded && m_programSelect) {
@@ -558,21 +589,25 @@ void FluidSynthEngine::programChange(int channel, int program, int bankMsb, int 
     }
 }
 
+// 可选控制器 API 缺失时忽略消息，保留基础音符播放能力。
 void FluidSynthEngine::controlChange(int channel, int controller, int value)
 {
     if (m_loaded && m_cc) m_cc(m_synth, channel % 16, controller % 128, value % 128);
 }
 
+// 弯音值限制在 14 位范围，8192 表示中心位置。
 void FluidSynthEngine::pitchBend(int channel, int value)
 {
     if (m_loaded && m_pitchBend) m_pitchBend(m_synth, channel % 16, std::clamp(value, 0, 16383));
 }
 
+// 通道压力使用 7 位值，缺少可选符号时跳过。
 void FluidSynthEngine::channelPressure(int channel, int value)
 {
     if (m_loaded && m_channelPressure) m_channelPressure(m_synth, channel % 16, std::clamp(value, 0, 127));
 }
 
+// 按键压力保留目标音高，音高和值都限制到 MIDI 范围。
 void FluidSynthEngine::polyPressure(int channel, int pitch, int value)
 {
     if (m_loaded && m_keyPressure) {
@@ -580,6 +615,7 @@ void FluidSynthEngine::polyPressure(int channel, int pitch, int value)
     }
 }
 
+// 先销毁驱动并等待原生回调结束，再释放歌曲、点击及它们依赖的设置。
 void FluidSynthEngine::release()
 {
     m_loaded = false;
@@ -593,6 +629,7 @@ void FluidSynthEngine::release()
     m_soundFontId = -1;
 }
 
+// 驱动不再访问点击对象后才可调用；先销毁合成器，最后删除临时音源。
 void FluidSynthEngine::releaseMetronomeSynth()
 {
     if (m_metronomeSynth && m_deleteSynth) m_deleteSynth(m_metronomeSynth);

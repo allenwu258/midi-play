@@ -1,4 +1,5 @@
 #include "mididocumentbuilder.h"
+// 将归一化 MIDI 数据映射到领域轨道，并构建可共享的音乐时间索引。
 #include "domain/music/musicanalysis.h"
 
 #include "midinormalizer.h"
@@ -8,12 +9,14 @@
 namespace midi_play::midi {
 namespace {
 
+// 提取全局拍号、调号、标记和歌词；谱表级拍号/调号写入首个保留轨道。
 void appendMeta(const MidiNormalizedFile& source, music::MusicDocument& document)
 {
     for (const auto& event : source.globalEvents) {
         if (event.kind != MidiMessageKind::Meta) continue;
         if (event.metaType == 0x58 && event.payload.size() >= 2) {
             const int beats = static_cast<unsigned char>(event.payload.at(0));
+            // MIDI 拍号分母以 2 的指数编码；过大指数用零标记为非法。
             const int denominatorPower = static_cast<unsigned char>(event.payload.at(1));
             const music::TimeSignatureChange change {event.tick, beats,
                                                       denominatorPower <= 10 ? 1 << denominatorPower : 0,
@@ -39,11 +42,13 @@ void appendMeta(const MidiNormalizedFile& source, music::MusicDocument& document
 
 } // namespace
 
+// 构建轨道与控制事件，再补齐文档元数据和分析结果。
 music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) const
 {
     auto document = std::make_shared<music::MusicDocument>();
     document->setTitle(source.title);
     document->tempos() = source.tempos;
+    // SMPTE 文档仍可播放，但没有可信的音乐拍点，不能据此启用节拍器网格。
     document->setMusicalTimebase(!source.header.smpte);
     document->sequenceStarts() = source.sequenceStarts;
     quint64 nextNoteId = 1;
@@ -58,6 +63,7 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
 
         int bankMsb = 0;
         int bankLsb = 0;
+        // Bank Select 是通道状态；每次 Program Change 都携带当时生效的两个 bank 字节。
         for (const auto& event : normalizedTrack.events) {
             switch (event.kind) {
             case MidiMessageKind::ControlChange:
@@ -88,6 +94,7 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
             }
         }
 
+        // duration 只表示按键时值，sustainEnd 保留踏板导致的可听结束时间。
         for (const auto& note : normalizedTrack.notes) {
             const music::Tick end = std::max(note.start + 1, note.keyRelease);
             music::NoteEvent event;
@@ -108,11 +115,13 @@ music::ReadResult MidiDocumentBuilder::build(const MidiNormalizedFile& source) c
             if (left.velocity != right.velocity) return left.velocity < right.velocity;
             return left.sequence < right.sequence;
         });
+        // 不保留纯控制轨道；全局元数据仍由 globalEvents 单独提取。
         if (!track.notes.isEmpty()) document->tracks().push_back(std::move(track));
     }
 
     appendMeta(source, *document);
     document->setDuration(std::max<music::Tick>(1, source.duration));
+    // 完成可供播放与可视化共享的网格、速度积分和派生音乐语义。
     document->rebuildMeasureGrid();
     document->rebuildTempoMap();
     music::MusicAnalyzer().analyze(*document);
