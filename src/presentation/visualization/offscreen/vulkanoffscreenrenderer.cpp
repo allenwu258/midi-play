@@ -1,3 +1,4 @@
+// 离屏导出实现：独立图形队列提交、三槽流水处理及同步 RGBA 回读。
 #include <vulkan/vulkan.h>
 #include "vulkanoffscreenrenderer.h"
 #include "presentation/visualization/vulkanscene.h"
@@ -11,11 +12,13 @@
 
 namespace midi_play::presentation::visualization {
 namespace {
+// Vulkan 失败统一抛出带操作上下文的异常，由公开接口转换为错误字符串。
 void check(VkResult result, const char* operation)
 {
     if (result != VK_SUCCESS)
         throw std::runtime_error(QStringLiteral("%1 (Vulkan %2)").arg(QString::fromLatin1(operation)).arg(result).toStdString());
 }
+// 持久映射的主机可见缓冲；一致性影响 flush/invalidate，缓存性影响回读性能。
 struct Buffer {
     VkBuffer handle = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -24,6 +27,7 @@ struct Buffer {
     bool coherent = false;
     bool cached = false;
 };
+// 图像、内存、视图与上传暂存缓冲的所有权集合；uploaded 追踪已有采样布局。
 struct Texture {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -32,6 +36,7 @@ struct Texture {
     bool uploaded = false;
 };
 
+// 将设备类别转换为诊断标签，不参与设备优先级选择。
 QString physicalDeviceTypeName(VkPhysicalDeviceType type)
 {
     switch (type) {
@@ -44,6 +49,7 @@ QString physicalDeviceTypeName(VkPhysicalDeviceType type)
 }
 }
 
+// 单线程资源所有者；每帧可变资源按槽隔离，共享纹理更新由 fence 等待保护。
 class VulkanOffscreenRenderer::Impl {
 public:
     ~Impl() { cleanup(); }
@@ -53,6 +59,8 @@ public:
     bool render(qint64 position, QImage& frame, const std::atomic_bool* canceled);
     VulkanRenderDiagnostics diagnostics() const { return m_diagnostics; }
 private:
+    // 槽位从 beginRender 成功提交到 completeRender 结束一直被占用。
+    // GPU 已完成也不会自动释放，保证调用方仍可按票据顺序回读。
     struct FrameSlot {
         Texture target;
         VkFramebuffer framebuffer = VK_NULL_HANDLE;
@@ -61,23 +69,33 @@ private:
         Buffer notes;
         Buffer staticUi;
         Buffer dynamicUi;
-        Buffer readback;
+        Buffer readback; // 接收输出图像的紧密 RGBA 像素，优先使用 HOST_CACHED 内存。
         quint64 notesRevision = 0;
         quint64 staticUiRevision = 0;
         bool inFlight = false;
-        uint32_t timestampQueryBase = 0;
+        uint32_t timestampQueryBase = 0; // 每槽两个查询：命令开始、回读命令结束。
     };
+    // 查找兼容内存类型，优先满足 preferred，允许退回仅满足 required 的类型。
     uint32_t memoryType(uint32_t bits, VkMemoryPropertyFlags required, VkMemoryPropertyFlags preferred);
+    // 空闲槽或初始化阶段可扩容；保持映射，最小分配 4096 字节。
     void reserve(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage,
                  VkMemoryPropertyFlags preferred = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    // 写入预留容量中的数据，非一致内存显式 flush。
     void write(Buffer& buffer, const void* data, VkDeviceSize size);
+    // 下列释放方法要求资源不再被在途 GPU 命令引用。
     void destroy(Buffer& buffer);
     void destroy(Texture& texture);
+    // 创建单采样 RGBA8 最优布局图像，优先分配设备本地内存。
     void createImage(Texture& texture, QSize size, VkImageUsageFlags usage);
+    // 将图片经暂存缓冲上传，显式转换传输与片元采样布局。
     void uploadTexture(Texture& texture, const QImage& image, VkCommandBuffer command);
+    // 更新共享描述符的指定组合采样绑定，纹理上传在后续命令中完成。
     void bindTexture(const Texture& texture, uint32_t binding);
+    // 绑定实例缓冲，按给定层范围绘制每实例六个顶点。
     void draw(VkCommandBuffer command, Buffer& buffer, VulkanInstanceRange range);
+    // 等待在途 GPU 使用结束，但保留票据和 inFlight，以便随后按顺序回读。
     void waitForAllSlots();
+    // 等待设备后按依赖顺序释放，兼容只完成部分初始化的状态。
     void cleanup();
     ExportSceneConfig m_config;
     VulkanScene m_scene;
@@ -96,10 +114,10 @@ private:
     VkSampler m_sampler = VK_NULL_HANDLE;
     VkQueryPool m_timestampQueries = VK_NULL_HANDLE;
     float m_timestampPeriod = 0.0f;
-    Texture m_atlas, m_background;
+    Texture m_atlas, m_background; // 所有帧槽共享，修改内容前需等待各槽 fence。
     std::vector<FrameSlot> m_slots;
     quint64 m_atlasRevision = 0;
-    float m_scale = 1, m_offsetX = 0, m_offsetY = 0;
+    float m_scale = 1, m_offsetX = 0, m_offsetY = 0; // 导出裁剪区等比缩放及物理像素偏移。
     VkRect2D m_scissor {};
     VulkanRenderDiagnostics m_diagnostics;
 };
@@ -134,6 +152,7 @@ void VulkanOffscreenRenderer::Impl::reserve(Buffer& buffer, VkDeviceSize size, V
     check(vkCreateBuffer(m_device, &info, nullptr, &buffer.handle), "create buffer");
     VkMemoryRequirements requirements;
     vkGetBufferMemoryRequirements(m_device, buffer.handle, &requirements);
+    // 上传侧首选 coherent；回读侧传入 cached，两者均允许 HOST_VISIBLE 备选。
     const auto type = memoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                                  preferred);
     VkMemoryAllocateInfo allocation {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
@@ -207,6 +226,7 @@ void VulkanOffscreenRenderer::Impl::uploadTexture(Texture& texture, const QImage
     vkCmdPipelineBarrier(command, texture.uploaded ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
     VkBufferImageCopy copy {};
+    // 使用 QImage 的实际行跨度，避免将行尾填充误认为连续像素。
     copy.bufferRowLength = uint32_t(image.bytesPerLine() / 4);
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.imageExtent = {uint32_t(image.width()), uint32_t(image.height()), 1};
@@ -223,10 +243,12 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     m_diagnostics = {};
     m_diagnostics.enabled = qEnvironmentVariableIntValue("MIDI_PLAY_VIDEO_DIAGNOSTICS") > 0;
     m_config = config;
+    // 导出自行建立可见索引，不借用实时视图的候选 span；按播放态生成完整视觉效果。
     m_config.state.candidateNoteIndices = {};
     m_config.state.loading = false; m_config.state.errorMessage.clear();
     m_config.state.transportState = playback::State::Playing;
     m_config.state.effectsStartUs = 0;
+    // 兼容 Vulkan 1.0 loader，同时将实例请求版本限制在本实现使用的 1.2 以内。
     if (const auto enumerateInstanceVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
             vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"))) {
         enumerateInstanceVersion(&m_instanceApiVersion);
@@ -242,6 +264,7 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     check(vkEnumeratePhysicalDevices(m_instance, &count, devices.data()), "enumerate GPUs");
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     uint32_t family = 0;
+    // 选择枚举顺序中第一个具有图形队列的设备；离屏流程不要求呈现支持。
     for (auto candidate : devices) {
         uint32_t families = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, nullptr);
@@ -273,6 +296,7 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
         if (m_memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
             m_diagnostics.deviceLocalHeapBytes += quint64(m_memory.memoryHeaps[i].size);
     }
+    // 多种 HOST_VISIBLE 内存类型可能共享同一 heap，统计容量时只计一次。
     std::vector<bool> countedHostHeaps(m_memory.memoryHeapCount, false);
     for (uint32_t i = 0; i < m_memory.memoryTypeCount; ++i) {
         if (!(m_memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
@@ -284,6 +308,7 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     }
     const uint32_t apiMajor = VK_VERSION_MAJOR(properties.apiVersion);
     const uint32_t apiMinor = VK_VERSION_MINOR(properties.apiVersion);
+    // 时间戳诊断需实例/设备 1.2、队列有效位和有效周期；不满足时仅保留 CPU 诊断。
     m_diagnostics.gpuTimestamps = m_diagnostics.enabled
         && m_instanceApiVersion >= VK_API_VERSION_1_2
         && (apiMajor > 1 || (apiMajor == 1 && apiMinor >= 2))
@@ -308,6 +333,7 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     VkAttachmentReference reference {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkSubpassDescription subpass {}; subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1; subpass.pColorAttachments = &reference;
+    // 前后依赖分别衔接前次传输读取、颜色写入和本次传输回读。
     VkSubpassDependency dependencies[2] {};
     dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL; dependencies[0].dstSubpass = 0;
     dependencies[0].srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -350,17 +376,20 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     m_pipeline = createScenePipeline(m_device, m_layout, m_pass);
     createImage(m_atlas, {2048, 2048}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     bindTexture(m_atlas, 0);
+    // 背景转换为未预乘 RGBA；空背景复用图集视图，保证两个描述符始终有效。
     if (!config.background.isNull()) {
         m_config.background = config.background.convertToFormat(QImage::Format_RGBA8888);
         createImage(m_background, m_config.background.size(), VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
         bindTexture(m_background, 1);
     } else bindTexture(m_atlas, 1);
+    // 有界三槽允许 CPU 准备后续帧与此前 GPU 工作重叠，不无限堆积显存资源。
     constexpr int slotCount = 3;
     m_slots.resize(slotCount);
     if (m_diagnostics.gpuTimestamps) {
         VkQueryPoolCreateInfo query {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
         query.queryType = VK_QUERY_TYPE_TIMESTAMP;
         query.queryCount = uint32_t(slotCount * 2);
+        // 诊断查询池创建失败只关闭 GPU 计时，不阻止正常导出。
         if (vkCreateQueryPool(m_device, &query, nullptr, &m_timestampQueries) != VK_SUCCESS) {
             m_timestampQueries = VK_NULL_HANDLE;
             m_diagnostics.gpuTimestamps = false;
@@ -390,8 +419,7 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         framebuffer.pAttachments = &slot.target.view;
         check(vkCreateFramebuffer(m_device, &framebuffer, nullptr, &slot.framebuffer), "create frame framebuffer");
-        // Uploads favor coherent writes; readback favors cached CPU reads.
-        // A host-visible fallback remains valid on devices without HOST_CACHED.
+        // 上传优先 coherent 写入，回读优先 cached CPU 读取；无 cached 类型时可退回主机可见内存。
         reserve(slot.readback, readbackBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
         m_diagnostics.readbackHostCached = slot.readback.cached;
@@ -400,8 +428,10 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
         config.state.lookAheadUs, config.state.showNotationStrip);
     const qreal left = geometry.pianoRect.isEmpty() ? geometry.drumRect.left() : geometry.pianoRect.left();
     const qreal right = geometry.drumRect.isEmpty() ? geometry.pianoRect.right() : geometry.drumRect.right();
+    // 只导出有效钢琴/打击乐区域，去掉左侧标记余量，保留落音区及完整键盘。
     const QRectF crop(left, 0, right - left, geometry.keyboardRect.bottom());
     if (crop.isEmpty()) throw std::runtime_error("Empty export scene");
+    // 等比适配并居中；scissor 限制在输出边界内，保留宽高比带来的背景边距。
     m_scale = float(std::min(config.outputSize.width() / crop.width(), config.outputSize.height() / crop.height()));
     const qreal marginX = (config.outputSize.width() - crop.width() * m_scale) / 2;
     const qreal marginY = (config.outputSize.height() - crop.height() * m_scale) / 2;
@@ -441,6 +471,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     for (int i = 0; i < int(m_slots.size()); ++i) {
         if (!m_slots[size_t(i)].inFlight) { slotIndex = i; break; }
     }
+    // 无空闲槽时交给调用方先 completeRender，不能覆盖仍持有票据的已完成帧。
     if (slotIndex < 0) return false;
     auto& slot = m_slots[size_t(slotIndex)];
     auto state = m_config.state;
@@ -450,8 +481,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     m_scene.prepare(state, m_config.logicalSize, m_scale, m_config.font, !m_config.background.isNull(),
                     m_config.background.size(), 1);
     if (m_diagnostics.enabled) m_diagnostics.scenePrepareNs += quint64(timer.nsecsElapsed());
-    // A slot owns all buffers written by this frame. This allows the next
-    // frame to prepare and upload while an earlier command buffer is running.
+    // 本帧只写入所选槽的缓冲，因此其他在途槽可继续读取自己的实例副本。
     const auto upload = [this](Buffer& buffer, const QVector<VulkanQuad>& quads) {
         const auto bytes = VkDeviceSize(quads.size()) * sizeof(VulkanQuad);
         reserve(buffer, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT); write(buffer, quads.constData(), bytes);
@@ -470,9 +500,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
 
     const bool atlasChanged = m_atlasRevision != m_scene.atlasRevision();
     const bool backgroundChanged = m_background.image && !m_background.uploaded;
-    // Texture updates are shared by all slots. Wait for the old sampling
-    // commands before changing their contents, while keeping their tickets
-    // alive for ordered readback.
+    // 所有槽共享纹理；覆盖图集/暂存数据前先等待旧采样命令完成，票据仍保留供顺序回读。
     if (atlasChanged || backgroundChanged) waitForAllSlots();
 
     if (m_diagnostics.enabled) timer.restart();
@@ -481,6 +509,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(slot.command, &begin), "begin frame command buffer");
     if (m_diagnostics.gpuTimestamps) {
+        // 查询随槽复用；从本帧命令开始到图像回读及屏障结束计算 GPU 时间。
         vkCmdResetQueryPool(slot.command, m_timestampQueries, slot.timestampQueryBase, 2);
         vkCmdWriteTimestamp(slot.command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                             m_timestampQueries, slot.timestampQueryBase);
@@ -503,6 +532,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     vkCmdBindPipeline(slot.command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
     vkCmdBindDescriptorSets(slot.command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_layout, 0, 1, &m_descriptor, 0, nullptr);
     const auto& g = m_scene.geometry(); const auto& effects = m_scene.effectsProfile();
+    // m_scale 作为离屏 DPR，同时使用物理像素偏移将逻辑裁剪区域居中到输出帧。
     const FrameConstants constants {float(size.width()), float(size.height()),
         float((position - m_scene.timeOriginUs()) / 1'000'000.0), float(g.strikeLineY),
         float(g.pixelsPerMicrosecond * 1'000'000), float(g.fallingRect.top()), float(g.fallingRect.bottom()), m_scale,
@@ -510,6 +540,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
         effects.strikeGlowStrength, effects.keyGlowStrength, effects.particleStrength,
         m_offsetX, m_offsetY, float(std::fmod(position / 1'000'000.0, 250.0))};
     vkCmdPushConstants(slot.command, m_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(constants), &constants);
+    // 与实时后端采用同一层序，每层先静态后动态，保证白键/黑键遮挡正确。
     const auto layer = [this, &slot](VulkanUiLayer layer) {
         draw(slot.command, slot.staticUi, m_scene.staticUi().range(layer));
         draw(slot.command, slot.dynamicUi, m_scene.dynamicUi().range(layer));
@@ -521,6 +552,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     VkBufferImageCopy copy {}; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.imageExtent = {uint32_t(size.width()), uint32_t(size.height()), 1};
     vkCmdCopyImageToBuffer(slot.command, slot.target.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot.readback.handle, 1, &copy);
+    // GPU 传输写入必须对后续 CPU 读取可见；CPU 仍需等待 fence 并按内存属性 invalidate。
     VkBufferMemoryBarrier barrier {VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
     barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -538,6 +570,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     if (m_diagnostics.enabled) timer.restart();
     check(vkQueueSubmit(m_queue, 1, &submit, slot.fence), "submit frame");
     if (m_diagnostics.enabled) m_diagnostics.queueSubmitNs += quint64(timer.nsecsElapsed());
+    // 只有提交成功才占用槽并发放票据；GPU 完成不会自动清除 inFlight。
     slot.inFlight = true;
     if (m_diagnostics.enabled) ++m_diagnostics.submittedFrames;
     ticket.slot = slotIndex;
@@ -554,12 +587,15 @@ bool VulkanOffscreenRenderer::Impl::completeRender(VulkanRenderTicket& ticket, Q
     if (!slot.inFlight) throw std::runtime_error("Render ticket is no longer in flight");
     QElapsedTimer timer;
     if (m_diagnostics.enabled) timer.start();
+    // fence 等待最多十秒，当前实现不会在等待过程中轮询取消。
     check(vkWaitForFences(m_device, 1, &slot.fence, VK_TRUE, 10'000'000'000ULL), "wait for frame");
     if (m_diagnostics.enabled) m_diagnostics.fenceWaitNs += quint64(timer.nsecsElapsed());
+    // GPU 已完成后先释放槽与票据；取消仅跳过像素回读，不中断已提交命令。
     slot.inFlight = false;
     ticket.slot = -1;
     if (canceled && canceled->load()) return false;
     if (m_diagnostics.enabled) timer.restart();
+    // 非一致内存需让 CPU 缓存失效；HOST_CACHED 属性不能代替此可见性处理。
     if (!slot.readback.coherent) {
         VkMappedMemoryRange range {VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
         range.memory = slot.readback.memory; range.size = VK_WHOLE_SIZE;
@@ -570,12 +606,14 @@ bool VulkanOffscreenRenderer::Impl::completeRender(VulkanRenderTicket& ticket, Q
         quint64 timestamps[2] = {};
         const VkResult result = vkGetQueryPoolResults(m_device, m_timestampQueries,
             slot.timestampQueryBase, 2, sizeof(timestamps), timestamps, sizeof(quint64), VK_QUERY_RESULT_64_BIT);
+        // 查询失败或时间戳倒序时不累计，诊断失败不影响输出帧。
         if (result == VK_SUCCESS && timestamps[1] >= timestamps[0]) {
             m_diagnostics.gpuFrameNs += quint64(double(timestamps[1] - timestamps[0]) * double(m_timestampPeriod));
         }
     }
     const QSize size = m_config.outputSize;
     if (m_diagnostics.enabled) timer.restart();
+    // 复用尺寸/格式相同的 QImage；像素复制后帧不再借用 GPU 映射内存。
     if (frame.size() != size || frame.format() != QImage::Format_RGBA8888) frame = QImage(size, QImage::Format_RGBA8888);
     if (frame.isNull()) throw std::runtime_error("Cannot allocate video frame");
     std::memcpy(frame.bits(), slot.readback.mapped, size_t(size.width()) * size.height() * 4);
@@ -586,6 +624,7 @@ bool VulkanOffscreenRenderer::Impl::completeRender(VulkanRenderTicket& ticket, Q
     return true;
 }
 
+// 同步组合路径，适用于调用方无需交错提交与回读的场景。
 bool VulkanOffscreenRenderer::Impl::render(qint64 position, QImage& frame, const std::atomic_bool* canceled)
 {
     VulkanRenderTicket ticket;
@@ -595,6 +634,7 @@ bool VulkanOffscreenRenderer::Impl::render(qint64 position, QImage& frame, const
 void VulkanOffscreenRenderer::Impl::cleanup()
 {
     if (m_device) {
+        // 独立设备由本实现管理，销毁前必须等待所有已提交槽，不依赖 Qt 窗口回调。
         vkDeviceWaitIdle(m_device);
         if (m_pipeline) vkDestroyPipeline(m_device, m_pipeline, nullptr);
         for (auto& slot : m_slots) {
@@ -619,6 +659,7 @@ void VulkanOffscreenRenderer::Impl::cleanup()
 }
 VulkanOffscreenRenderer::VulkanOffscreenRenderer() = default;
 VulkanOffscreenRenderer::~VulkanOffscreenRenderer() = default;
+// 公开包装层负责异常转错误；初始化失败销毁部分构建的实现。
 bool VulkanOffscreenRenderer::initialize(const ExportSceneConfig& config, QString* error)
 {
     try { m_impl = std::make_unique<Impl>(); m_impl->initialize(config); return true; }

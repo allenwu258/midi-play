@@ -1,14 +1,14 @@
 #pragma once
 
+// QWidget 栅格绘制提示的统一策略。
 class QPainter;
 
 namespace midi_play::presentation::visualization {
 
-// Defines the render-hint contract for the QWidget raster backend. Geometry
-// is intentionally aliased for predictable, low-cost axis-aligned drawing;
-// text keeps its independent antialiasing path for readability.
+// 轴对齐几何使用非抗锯齿路径控制开销，文字保留独立抗锯齿以维持可读性。
 class RasterRenderPolicy final {
 public:
+    // 应用几何、图像缩放和文字的固定 render hint 组合。
     static void apply(QPainter& painter);
 };
 

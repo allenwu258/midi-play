@@ -1,6 +1,9 @@
 #version 450
+// 场景片元着色器：计算覆盖率、材质特效与纹理采样，最终输出预乘 alpha。
+// binding 0 为文字 alpha 图集，binding 1 为未预乘 RGBA 背景图片。
 layout(set=0,binding=0) uniform sampler2D atlas;
 layout(set=0,binding=1) uniform sampler2D background;
+// 与顶点着色器及 C++ FrameConstants 共享同一 push constant 布局。
 layout(push_constant) uniform Frame {
     float width; float height; float position; float strike;
     float scale; float clipTop; float clipBottom; float dpr;
@@ -22,7 +25,9 @@ layout(location=5) flat in vec4 shape;
 layout(location=6) flat in vec4 flags;
 layout(location=0) out vec4 outputColor;
 
+// 按图元类型分派；UI 纹理、椭圆及边框按后续分支的优先级解释。
 void main() {
+    // 仅音符图元使用落音区域裁剪，键盘与覆盖层保留自己的完整范围。
     if (shape.w>0 && (world.y<frame.clipTop || world.y>=frame.clipBottom)) discard;
     vec4 c=color;
     if (shape.w < 0.0) {
@@ -35,17 +40,13 @@ void main() {
         bool glass = flags.z > 0.5;
         vec2 normalized = clamp(local / shape.xy, 0.0, 1.0);
         if (glass) {
-            // Tails are narrow and tall, so the same halo width reads much
-            // brighter than it does on a note body. Keep their solid color
-            // and fade unchanged while reducing only the glass accents.
+            // 尾部窄长，同宽光晕显得更亮；只减弱材质特效，保留原有颜色与衰减。
             float effectScale = shape.w == 1.0 ? 0.5 : 1.0;
             float padding = max(1.0, flags.x);
             vec2 coreSize = max(shape.xy - vec2(padding * 2.0), vec2(0.001));
             vec2 coreLocal = local - vec2(padding);
             normalized = clamp(coreLocal / coreSize, 0.0, 1.0);
-            // Keep the note silhouette strictly rectangular. The halo uses
-            // the same box distance, so the glow follows the square corners
-            // instead of reintroducing a rounded cap.
+            // 用方框有符号距离求主体与外部光晕覆盖率，保持音符的直角轮廓。
             float radius = 0.0;
             vec2 centered = coreLocal - coreSize * 0.5;
             vec2 q = abs(centered) - (coreSize * 0.5 - vec2(radius));
@@ -68,10 +69,7 @@ void main() {
                             * (shape.w == 3.0 ? 1.08 : 0.82));
             c.a = min(1.0, c.a + rim * 0.11 * frame.noteEdgeStrength * effectScale);
 
-            // Keep the moving reflection on the leading edge. A full-height
-            // diagonal band reads as a detached white flare, especially on
-            // long notes; this small glint keeps the material alive without
-            // changing coverage or creating a second bright note in the body.
+            // 移动反光仅限前沿小区域，避免长音主体内出现额外的高亮色带。
             float glintCenter = fract(frame.animationSeconds * 0.12 + flags.w);
             float glintDistance = abs(fract(normalized.x - glintCenter + 0.5) - 0.5);
             float glint = 1.0 - smoothstep(0.0, 0.075, glintDistance);
@@ -80,19 +78,17 @@ void main() {
             c.rgb = mix(c.rgb, edgeHighlight,
                         glint * frame.noteSheenStrength * glintScale * effectScale);
 
-            // Keep a restrained luminous core inside the colored body. This
-            // gives narrow lanes a readable center even when the surrounding
-            // halo is composited over a bright background.
+            // 主体内部保留弱亮条，提升窄子道在明亮背景上的辨识度。
             float coreStripe = 1.0 - smoothstep(0.0, 0.18,
                 abs(normalized.x - 0.28));
             c.rgb = mix(c.rgb, vec3(1.0), coreStripe * 0.065 * effectScale);
         } else {
-            // Independent box coverage preserves the original renderer when
-            // enhanced effects are disabled.
+            // 关闭增强特效时独立计算方框边缘覆盖率，保持基础材质表现。
             vec2 coverage=clamp(local*frame.dpr+.5,0,1)
                          -clamp((local-shape.xy)*frame.dpr+.5,0,1);
             c.a*=coverage.x*coverage.y;
         }
+        // 尾部沿纵向淡变，主体沿横向使用与 CPU 材质一致的三段透明度。
         if (shape.w==1) {
             c.a*=mix(.16,1,normalized.y);
         } else if (shape.w==2) {
@@ -100,9 +96,11 @@ void main() {
             c.a*=u<.32 ? mix(.66,1,u/.32) : mix(1,.78,(u-.32)/.68);
         }
     } else if (shape.w==4) {
+        // 震音以对角细线表示，矩形范围中其余片元不产生输出。
         float distanceToLine=abs(local.y-(6-6*local.x/max(shape.x,1)));
         if (distanceToLine>.7) discard;
     } else if (flags.z>0) {
+        // 背景读取完整 RGBA；文字只使用图集 alpha，颜色来自 UI 实例。
         if (flags.z > 1.5) c *= texture(background, texcoord);
         else c.a *= texture(atlas,texcoord).a;
     } else if (flags.w>0) {
@@ -116,11 +114,13 @@ void main() {
             bool vertical=min(local.x,shape.x-local.x)<shape.z;
             float along=vertical ? local.y : local.x;
             if (flags.y==0 || mod(along/max(shape.z,1),6)<4) {
+                // 边框与填充先执行 source-over，此分支已预乘，直接输出避免重复预乘。
                 c=vec4(edge.rgb*edge.a+c.rgb*c.a*(1-edge.a),edge.a+c.a*(1-edge.a));
                 outputColor=c;
                 return;
             }
         }
     }
+    // 与管线 ONE/ONE_MINUS_SRC_ALPHA 混合匹配，只在输出边界预乘一次。
     outputColor=vec4(c.rgb*c.a,c.a);
 }

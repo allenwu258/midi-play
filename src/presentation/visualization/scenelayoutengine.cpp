@@ -1,10 +1,12 @@
 #include "scenelayoutengine.h"
 
+// 实现钢琴/鼓区分配、虚拟白键延伸和音乐时间到垂直像素的比例。
 #include <algorithm>
 
 namespace midi_play::presentation::visualization {
 namespace {
 
+// 将负音级规范化后判断七个自然音级。
 bool isWhitePitchClass(int pitchClass)
 {
     switch ((pitchClass + 12) % 12) {
@@ -23,11 +25,13 @@ bool isWhitePitchClass(int pitchClass)
 
 } // namespace
 
+// 在同一音级规则上派生黑键属性。
 bool SceneLayoutEngine::isBlackKey(int pitch)
 {
     return !isWhitePitchClass(pitch % 12);
 }
 
+// 所有布局值为逻辑像素，视口高度决定键盘及简谱条的受限尺寸。
 PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
                                                 const midi_play::visualization::VisualChart* chart,
                                                 qint64 lookAheadUs,
@@ -48,6 +52,7 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
     if (showNotationStrip) {
         geometry.notationStripRect = QRectF(0.0, geometry.strikeLineY, width, notationHeight);
     }
+    // lookAheadUs 对应下落区高度，分母与比例下限避免空尺寸和零时长。
     geometry.pixelsPerMicrosecond = std::max<qreal>(0.000001,
         (geometry.strikeLineY - geometry.fallingRect.top()) / std::max<qint64>(1, lookAheadUs));
 
@@ -59,6 +64,7 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
                                                      });
     qreal drumWidth = 0.0;
     qreal gap = 0.0;
+    // 混合曲保留右侧鼓区；纯鼓曲使用除小节标签边栏外的全部宽度。
     if (drumCount > 0) {
         if (hasMelodicNotes) {
             drumWidth = std::clamp(width * 0.19, 112.0, 250.0);
@@ -80,9 +86,8 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
     }
     whiteCount = std::max(1, whiteCount);
 
-    // Solve for the smallest number of complete white keys that covers the
-    // old measure-label gutter. The real piano starts after that extension;
-    // its right edge and the strike-line/time coordinates stay unchanged.
+    // 用最少完整白键覆盖小节标签边栏；真实键盘从延伸区之后开始，
+    // 保持键盘右边界和击键线的时间坐标不变。
     int extraWhiteKeys = 0;
     qreal whiteWidth = showPiano ? melodicWidth / whiteCount : 0.0;
     if (showPiano) {
@@ -105,6 +110,7 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
     }
 
     whiteWidth = showPiano ? geometry.pianoRect.width() / whiteCount : 0.0;
+    // 实际音高使用固定 128 槽；白键依次铺排，黑键中心落在相邻白键边界。
     geometry.pitches.resize(128);
     int whiteOrdinal = 0;
     for (int pitch = minimumPitch; pitch <= maximumPitch; ++pitch) {
@@ -128,12 +134,8 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
         }
     }
 
-    // Build a visual-only continuation of the white-key run. These slots do
-    // not enter the MIDI-indexed array and therefore can never receive notes
-    // or active-key highlights. The continuation intentionally omits black
-    // keys: it is only a left-edge fill used to cover the measure-label
-    // gutter, and carrying the pitch pattern into that area creates a
-    // visually detached partial octave.
+    // 左侧延伸区只填充白键，不进入 MIDI 音高数组，不能接收音符或高亮。
+    // 不补黑键，避免标签边栏出现与真实音域脱离的局部八度。
     if (extraWhiteKeys > 0 && !geometry.leftKeyboardExtensionRect.isEmpty()) {
         QVector<int> preceding;
         int pitch = minimumPitch - 1;
@@ -167,6 +169,7 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
     }
 
     if (drumCount > 0) {
+        // 鼓道等宽分布，布局下标与图表稳定道编号一致。
         const qreal laneWidth = geometry.drumRect.width() / drumCount;
         geometry.drumSlots.reserve(drumCount);
         for (int lane = 0; lane < drumCount; ++lane) {

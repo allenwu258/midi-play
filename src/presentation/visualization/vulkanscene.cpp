@@ -1,3 +1,4 @@
+// Vulkan 场景构建实现：以缓存版本控制静态上传，以播放时间求值动态装饰。
 #include "vulkanscene.h"
 #include "backgroundimageplacement.h"
 
@@ -7,12 +8,15 @@
 
 namespace midi_play::presentation::visualization {
 namespace {
+// 保留未预乘颜色分量；最终预乘由片元着色器统一执行。
 std::array<float, 4> rgba(const QColor& c)
 {
     return {float(c.redF()), float(c.greenF()), float(c.blueF()), float(c.alphaF())};
 }
+// 先以整数微秒减去时间基准，再转成浮点秒，减小长曲目的精度损失。
 float seconds(qint64 value, qint64 origin) { return float((value - origin) / 1'000'000.0); }
 
+// 依据明暗主题和效果等级生成 Vulkan 强度；是否绘制特效另由开关控制。
 VulkanEffectsProfile effectsProfileFor(midi_play::settings::ThemeMode mode, bool enabled,
                                        midi_play::settings::VisualEffectLevel level)
 {
@@ -45,6 +49,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     m_visualEffectsEnabled = state.visualEffectsEnabled;
     m_visualEffectsLevel = effectLevel;
     m_effectsProfile = effectsProfileFor(mode, state.visualEffectsEnabled, effectLevel);
+    // 分别识别几何、背景、材质和效果变化，避免设置变化导致全部缓存重建。
     const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs
         || m_showNotationStrip != state.showNotationStrip;
     const bool backgroundChanged = m_hasBackground != hasBackground
@@ -75,6 +80,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
                                                 state.lookAheadUs, state.showNotationStrip);
     }
     if (layoutChanged || themeChanged || backgroundChanged) rebuildStaticUi();
+    // DPR/谱面变化或图集接近耗尽时整体回收；主题变化不影响文字 alpha。
     if (m_atlas.isNull() || m_dpr != dpr || m_atlasFull || m_atlasY > 1536 || chartChanged) {
         m_dpr = dpr;
         m_atlas = QImage(2048, 2048, QImage::Format_RGBA8888_Premultiplied);
@@ -90,6 +96,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     const bool candidatesChanged = m_window.ensure(m_index,
         state.transportPositionUs - state.afterglowUs,
         state.transportPositionUs + state.lookAheadUs, state.visibilityGuardUs);
+    // 每分钟重设相对时间；跨基准时重新打包实例，保证 shader 的时间差一致。
     const qint64 timeOrigin = (state.transportPositionUs / 60'000'000) * 60'000'000;
     const bool originChanged = m_timeOriginUs != timeOrigin;
     m_timeOriginUs = timeOrigin;
@@ -97,6 +104,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         rebuildNotes(state);
         m_consumedMaterialRevision = m_cache.materialRevision();
     }
+    // 场景自行管理候选窗口，不借用宿主视图传入的 candidate span。
     auto frameState = state;
     const auto& indices = m_window.candidateNoteIndices();
     frameState.candidateNoteIndices = {indices.constData(), size_t(indices.size())};
@@ -112,7 +120,7 @@ void VulkanScene::rebuildNotes(const midi_play::visualization::PlaybackSceneStat
     ++m_notesRevision;
     m_notes.clear();
     if (!m_chart) return;
-    // Preserve the renderer's tails/body/attack/tremolo layer ordering.
+    // 保持传统后端的尾部、主体、音头、震音层序，各层内部沿用候选音符顺序。
     for (int kind = 1; kind <= 4; ++kind) {
         for (int index : m_window.candidateNoteIndices()) {
             const auto* note = m_cache.note(index);
@@ -127,10 +135,9 @@ void VulkanScene::rebuildNotes(const midi_play::visualization::PlaybackSceneStat
             quad.color = rgba(kind == 4 ? m_theme.tremolo
                 : kind == 1 ? style->material.tail : style->material.body);
             quad.activeBorder = rgba(style->material.head);
+            // 实例 ID 映射为稳定相位，避免各音符的移动反光完全同步。
             const float phase = float((note->instanceId % 4096u) * 0.000244140625);
-            // options.x is the halo padding in logical pixels for note
-            // primitives. The vertex shader ignores it as a stroke width for
-            // notes, while UI quads continue to use it as their border width.
+            // 音符的 options.x 表示逻辑像素光晕外扩；UI 则将同一字段解释为边框宽度。
             quad.options = {6, (note->flags & midi_play::visualization::GhostNote) ? 1.f : 0.f,
                             state.visualEffectsEnabled ? 1.f : 0.f, phase};
             m_notes.push_back(quad);
@@ -157,11 +164,13 @@ VulkanScene::Glyph VulkanScene::glyph(const QString& value, const QFont& font, q
     if (const auto it = m_glyphs.constFind(key); it != m_glyphs.cend()) return *it;
     const auto& layout = m_textLayouts.layout(TextLayoutRole::Lyric, value, font, widthLimit, m_dpr);
     const QSize pixels(qCeil(layout.size.width() * m_dpr) + 4, qCeil(layout.size.height() * m_dpr) + 4);
+    // 当前货架宽度不足则换行，条目额外透明边距用于避免线性采样串色。
     if (m_atlasX + pixels.width() >= m_atlas.width()) {
         m_atlasX = 1;
         m_atlasY += m_rowHeight + 1;
         m_rowHeight = 0;
     }
+    // 本帧无法容纳的文字暂不绘制，下一次 prepare 统一回收图集。
     if (m_atlasY + pixels.height() >= m_atlas.height()) {
         m_atlasFull = true;
         return {};
@@ -196,6 +205,7 @@ void VulkanScene::text(QVector<VulkanQuad>& output, const QString& value, const 
     else if (alignment & Qt::AlignBottom) y += area.height() - item.size.height();
     rect(output, QRectF(QPointF(x, y), item.size), color);
     auto& quad = output.back();
+    // 纹理类型 1 只读取文字 alpha，主题色仍由 quad.color 提供。
     quad.options[2] = 1;
     quad.uv = {float(item.pixels.x()) / 2048, float(item.pixels.y()) / 2048,
                float(item.pixels.width()) / 2048, float(item.pixels.height()) / 2048};
@@ -214,6 +224,7 @@ void VulkanScene::rebuildStaticUi()
         const qreal alpha = m_backgroundOpacity / 100.0;
         rect(output, placement.destination, QColor(255, 255, 255, qRound(255.0 * alpha)));
         auto& background = output.back();
+        // 纹理类型 2 读取完整背景 RGBA，UV 与传统后端的放置规则一致。
         background.options[2] = 2;
         background.uv = {float(placement.sourceUv.left()), float(placement.sourceUv.top()),
                          float(placement.sourceUv.width()), float(placement.sourceUv.height())};
@@ -273,9 +284,7 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
             const qreal y = g.strikeLineY - (it->timeUs - state.transportPositionUs) * g.pixelsPerMicrosecond;
             if (y < g.fallingRect.top() || y >= g.fallingRect.bottom()) continue;
             rect(output, {effectLeft,y,right-effectLeft,it->measureStart ? 2.0 : 1.0}, it->measureStart ? m_theme.measureLine : m_theme.beatLine);
-            // Use a dedicated primitive kind for moving horizontal lines.
-            // The negative kind is independent from the ellipse/texture flags
-            // in options and is rasterized with analytic edge coverage.
+            // 负图元类型专用于移动水平线，独立于纹理/椭圆标志，以解析覆盖率抗锯齿。
             output.back().times[3] = -1.0f;
             if (it->measureStart) text(output, it->measureLabel, gridFont, {4,y-10,left-9,20}, m_theme.subtleText, Qt::AlignRight|Qt::AlignVCenter);
         }
@@ -325,6 +334,7 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     if (state.visualEffectsEnabled
         && state.transportState == midi_play::playback::State::Playing) {
         int particleCount = 0;
+        // 粒子位置由攻击衰减直接求值，不累计模拟；全帧最多生成 96 个粒子/拖影实例。
         const auto addParticles = [&](const KeyIllumination& light, qreal centerX) {
             if (light.noteIndex < 0 || light.attack <= 0.04 || particleCount >= 96) return;
             const auto* style = m_cache.styleForNote(light.noteIndex);
@@ -416,8 +426,7 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
                 m_theme.drumKeyBorder, 1);
         }
     }
-    // Text stays with the atlas-dependent batch. Atlas recycling does not
-    // invalidate the static keyboard's geometry or trigger another upload.
+    // 固定标签也放在依赖图集的动态批次中，回收图集无需重传静态键盘几何。
     m_dynamicUi.beginLayer(VulkanUiLayer::Labels);
     QFont keyFont(font); keyFont.setPointSizeF(7.5);
     for (const auto& slot : g.pitches) {

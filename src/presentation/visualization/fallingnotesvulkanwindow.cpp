@@ -1,3 +1,4 @@
+// 实时 Vulkan 后端：每张交换链图像独占可变资源，配合 Qt 完成提交与呈现同步。
 #include "fallingnotesvulkanwindow.h"
 #include "vulkanscene.h"
 #include "vulkanpipeline.h"
@@ -17,12 +18,14 @@ namespace midi_play::presentation::visualization {
 namespace {
 Q_LOGGING_CATEGORY(lcVulkan, "midi_play.vulkan")
 
+// 统一将 Vulkan 失败转成带操作名的异常，由生命周期/帧入口捕获并通知宿主。
 void checked(VkResult result, const char* operation)
 {
     if (result != VK_SUCCESS)
         throw std::runtime_error(QStringLiteral("%1: VkResult %2").arg(QString::fromLatin1(operation)).arg(result).toStdString());
 }
 
+// 持久映射的主机可见缓冲；coherent 决定写入后是否显式 flush。
 struct Buffer {
     VkBuffer handle = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -31,12 +34,13 @@ struct Buffer {
     bool coherent = false;
 };
 
+// 与某张交换链图像绑定的资源副本，只有该图像先前 GPU 工作完成后才允许修改。
 struct ImageResources {
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     Buffer notes;
     Buffer staticUi;
     Buffer dynamicUi;
-    QVector<VulkanQuad> uploadedDynamicUi;
+    QVector<VulkanQuad> uploadedDynamicUi; // 当前图像已上传的动态实例，用于连续区段差分。
     Buffer staging;
     Buffer backgroundStaging;
     VkImage image = VK_NULL_HANDLE;
@@ -50,37 +54,58 @@ struct ImageResources {
     quint64 staticUiRevision = 0;
     quint64 atlasRevision = 0;
     quint64 backgroundRevision = 0;
-    // Optional host/GPU lifetime audit, enabled by the Vulkan stress test.
+    // 压力测试可启用 GPU 完成事件，核验主机复用是否发生在前次绘制完成之后。
     VkEvent completionEvent = VK_NULL_HANDLE;
     bool submitted = false;
 };
 
 }
 
+// Qt 资源回调适配器：设备级资源与交换链级资源分别创建/释放。
 class FallingNotesVulkanRenderer final : public QVulkanWindowRenderer {
 public:
+    // 借用窗口；渲染器生命周期由 Qt 管理。
     explicit FallingNotesVulkanRenderer(FallingNotesVulkanWindow* window) : m_window(window) {}
+    // 创建设备级描述符布局、采样器和 push constant 布局。
     void initResources() override;
+    // 为交换链图像创建 framebuffer、描述符集及可选审计事件。
     void initSwapChainResources() override;
+    // Qt 等待设备工作结束后释放交换链资源，支持窗口缩放导致的重建。
     void releaseSwapChainResources() override;
+    // 最后释放设备级对象并清空借用的设备函数指针。
     void releaseResources() override;
+    // 取得当前图像资源、上传变化、录制分层绘制，交回 Qt 并等待呈现完成。
     void startNextFrame() override;
+    // 设备丢失统一进入失败状态，后续帧仅交回 Qt 槽位。
     void logicalDeviceLost() override { fail(QStringLiteral("Vulkan 图形设备已丢失")); }
     void physicalDeviceLost() override { fail(QStringLiteral("Vulkan 图形设备不可用")); }
 
 private:
+    // 在兼容位图内先找满足首选属性的内存，否则使用满足必需属性的备选。
     uint32_t memoryType(uint32_t bits, VkMemoryPropertyFlags required, VkMemoryPropertyFlags preferred = 0);
+    // 解除映射并按缓冲、内存顺序释放；调用方保证没有 GPU 引用。
     void destroy(Buffer& buffer);
+    // 容量不足时重建缓冲，按约 1.5 倍预留，最小 4096 字节。
     void reserve(Buffer& buffer, VkDeviceSize bytes, VkBufferUsageFlags usage);
+    // 检查写入边界并复制；非一致内存 flush 整个已映射分配。
     void upload(Buffer& buffer, const void* source, VkDeviceSize bytes, VkDeviceSize offset = 0);
+    // 对当前图像的动态实例执行连续变化区段上传。
     void uploadDynamicUi(ImageResources& frame);
+    // 调用实时/离屏共用工厂，创建兼容当前 render pass 的管线。
     void createPipeline();
+    // 创建无深度附件的颜色 render pass，并衔接 Qt 的 acquire 等待阶段。
     void createRenderPass();
+    // 创建该图像独占的文字纹理，并先让两个采样绑定都指向有效图像。
     void createAtlas(ImageResources& frame);
+    // 版本变化时上传文字图集，显式转换传输/采样布局。
     void uploadAtlas(ImageResources& frame, VkCommandBuffer command);
+    // 重建当前图像的背景纹理；空背景将绑定恢复到文字图集占位。
     void uploadBackground(ImageResources& frame, VkCommandBuffer command);
+    // Qt 6.8 WSI 兼容同步：等待提交/呈现消费完信号量后才能再次 acquire。
     void completePresentation();
+    // 首次失败时记录并通知，避免重复发出回退信号。
     void fail(const QString& message);
+    // 校验实例范围，绑定实例缓冲后以每实例六顶点绘制。
     void draw(VkCommandBuffer command, Buffer& buffer, uint32_t count, uint32_t first = 0);
 
     FallingNotesVulkanWindow* m_window;
@@ -93,7 +118,7 @@ private:
     VkPipelineLayout m_layout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    std::vector<ImageResources> m_images;
+    std::vector<ImageResources> m_images; // 以 currentSwapChainImageIndex 索引，不以 currentFrame 索引。
     VulkanScene m_scene;
     bool m_failed = false;
     bool m_auditResources = false;
@@ -125,8 +150,7 @@ void FallingNotesVulkanRenderer::destroy(Buffer& buffer)
 void FallingNotesVulkanRenderer::reserve(Buffer& buffer, VkDeviceSize bytes, VkBufferUsageFlags usage)
 {
     if (buffer.capacity >= bytes && buffer.handle) return;
-    // Only resources owned by the acquired, fence-completed swapchain image
-    // may be updated or replaced. currentFrame() is a different rotation.
+    // 只能替换已取得且前次 fence 已完成的图像资源；currentFrame 属于另一轮转序列。
     destroy(buffer);
     VkBufferCreateInfo info {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     info.size = std::max<VkDeviceSize>(4096, bytes + bytes / 2);
@@ -171,8 +195,7 @@ void FallingNotesVulkanRenderer::uploadDynamicUi(ImageResources& frame)
     if (previous.size() != quads.size()) {
         upload(frame.dynamicUi, quads.constData(), bytes);
     } else {
-        // Preserve unchanged labels and inactive effects in this image's copy.
-        // Host-coherent memory still requires the image's completion fence.
+        // 保留本图像副本中未变化的文字/效果；HOST_COHERENT 不能替代 GPU 完成同步。
         for (qsizetype first = 0; first < quads.size();) {
             if (previous[first] == quads[first]) { ++first; continue; }
             qsizetype end = first + 1;
@@ -203,6 +226,7 @@ void FallingNotesVulkanRenderer::initResources()
         m_window->physicalDevice(), m_window->graphicsQueueFamilyIndex(), m_window);
     m_window->vulkanInstance()->functions()->vkGetPhysicalDeviceMemoryProperties(m_window->physicalDevice(), &m_memoryProperties);
     try {
+        // 文字图集与背景各一个组合采样绑定，两者仅由片元着色器访问。
         VkDescriptorSetLayoutBinding bindings[2] {};
         for (uint32_t i = 0; i < 2; ++i) {
             bindings[i].binding = i;
@@ -238,8 +262,7 @@ void FallingNotesVulkanRenderer::createPipeline()
 
 void FallingNotesVulkanRenderer::createRenderPass()
 {
-    // This 2D renderer has no depth attachment. Explicitly chain the initial
-    // layout transition to Qt's COLOR_ATTACHMENT_OUTPUT acquire-semaphore wait.
+    // 二维场景不使用深度附件；初始布局转换显式衔接 Qt 的颜色输出 acquire 等待。
     VkAttachmentDescription color {};
     color.format = m_window->colorFormat();
     color.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -274,6 +297,7 @@ void FallingNotesVulkanRenderer::initSwapChainResources()
     if (m_failed) return;
     try {
         const uint32_t count = uint32_t(m_window->swapChainImageCount());
+        // 资源副本数量必须等于交换链图像数，而不是并发帧槽数。
         m_images.resize(count);
         createRenderPass();
         VkDescriptorPoolSize poolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count * 2};
@@ -311,7 +335,7 @@ void FallingNotesVulkanRenderer::initSwapChainResources()
 
 void FallingNotesVulkanRenderer::releaseSwapChainResources()
 {
-    // Qt waits for device work before releasing or recreating the swapchain.
+    // Qt 在释放/重建交换链前已等待设备工作，以下释放不会与在途绘制竞争。
     if (m_pipeline) m_df->vkDestroyPipeline(m_device, m_pipeline, nullptr);
     m_pipeline = VK_NULL_HANDLE;
     for (auto& frame : m_images) {
@@ -336,7 +360,7 @@ void FallingNotesVulkanRenderer::releaseSwapChainResources()
 void FallingNotesVulkanRenderer::releaseResources()
 {
     if (!m_device) return;
-    // Qt waits for its device work before entering resource release callbacks.
+    // Qt 进入释放回调前已等待设备工作；先释放依赖设备级对象的交换链资源。
     releaseSwapChainResources();
     if (m_sampler) m_df->vkDestroySampler(m_device, m_sampler, nullptr);
     if (m_layout) m_df->vkDestroyPipelineLayout(m_device, m_layout, nullptr);
@@ -371,6 +395,7 @@ void FallingNotesVulkanRenderer::createAtlas(ImageResources& frame)
     write.descriptorCount = 1; write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &imageInfo;
     m_df->vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    // 无背景时也必须保持 binding 1 有效，之后 uploadBackground 再替换为真实纹理。
     write.dstBinding = 1;
     m_df->vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 }
@@ -383,6 +408,7 @@ void FallingNotesVulkanRenderer::uploadAtlas(ImageResources& frame, VkCommandBuf
     reserve(frame.staging, image.sizeInBytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     upload(frame.staging, image.constBits(), image.sizeInBytes());
     VkImageMemoryBarrier barrier {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    // 首次上传从 UNDEFINED 开始，后续上传从采样布局开始，均转换为传输目标。
     barrier.srcAccessMask = frame.atlasRevision ? VK_ACCESS_SHADER_READ_BIT : 0;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.oldLayout = frame.atlasRevision ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
@@ -416,6 +442,7 @@ void FallingNotesVulkanRenderer::uploadBackground(ImageResources& frame, VkComma
     frame.backgroundImage = VK_NULL_HANDLE;
     frame.backgroundImageMemory = VK_NULL_HANDLE;
 
+    // 当前图像的前次工作已完成，此处可安全替换描述符引用的背景资源。
     if (image.isNull()) {
         if (frame.imageView) {
             VkDescriptorImageInfo descriptorInfo {m_sampler, frame.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -491,14 +518,12 @@ void FallingNotesVulkanRenderer::draw(VkCommandBuffer command, Buffer& buffer, u
 
 void FallingNotesVulkanRenderer::completePresentation()
 {
-    // frameReady() can synchronously report device loss and release resources.
+    // frameReady 可能同步报告设备丢失并释放资源，因此先重新检查设备有效性。
     if (m_failed || !m_device || !m_df) return;
-    // QVulkanWindow in Qt 6.8 rotates its WSI semaphores by currentFrame(),
-    // independently of acquired image order. Complete the submission/present
-    // queue before another acquire can reuse them (VUID 01779 / 00067).
-    // Qt does not expose a separate present queue, so that uncommon case must
-    // wait for the device. This compatibility boundary intentionally limits
-    // frames in flight; remove only with a validated Qt WSI implementation.
+    // Qt 6.8 按 currentFrame 轮转 WSI 信号量，与实际取得图像的顺序独立。
+    // 下一次 acquire 复用信号量前，必须完成提交/呈现消费，满足 VUID 01779/00067。
+    // Qt 不暴露独立呈现队列，因此分离队列时等待整个设备；同队列时只等待图形队列。
+    // 此兼容措施有意限制在途帧，只有验证 Qt WSI 实现后才可调整。
     const VkResult result = m_separatePresentQueue
         ? m_df->vkDeviceWaitIdle(m_device)
         : m_df->vkQueueWaitIdle(m_window->graphicsQueue());
@@ -510,17 +535,15 @@ void FallingNotesVulkanRenderer::startNextFrame()
 {
     VkCommandBuffer command = m_window->currentCommandBuffer();
     const auto state = m_window->sceneState();
-    // A failed or lost device must not receive further render-pass commands.
-    // QVulkanWindow still requires frameReady() to release the frame slot.
+    // 失败/丢失设备不再录制渲染命令，但 Qt 仍要求 frameReady 交回当前帧槽。
     if (m_failed || !m_device || !m_df || m_images.empty()) {
         m_window->frameReady();
         m_window->frameCompleted(false);
         return;
     }
-    // Qt 6.8 waits for this image's draw fence before startNextFrame(). Its
-    // currentFrame() fence belongs to image acquisition, not the last draw
-    // using our buffers. With three images and two frame slots those lifetimes
-    // diverge; per-image ownership prevents host writes racing vertex fetches.
+    // Qt 6.8 在进入本回调前等待当前图像的绘制 fence。
+    // currentFrame 对应的 fence 属于图像取得轮转，不等同于缓冲上一次绘制的完成点。
+    // 三张图像、两个帧槽时两者生命周期不同；按图像持有资源才能避免主机写入与顶点读取竞争。
     const auto imageIndex = size_t(m_window->currentSwapChainImageIndex());
     auto& frame = m_images.at(imageIndex);
     if (!m_failed) {
@@ -533,6 +556,7 @@ void FallingNotesVulkanRenderer::startNextFrame()
             m_scene.prepare(state, m_window->size(), m_window->devicePixelRatio(), m_window->sceneFont(),
                             !m_window->backgroundImage().isNull(), m_window->backgroundImage().size(),
                             m_window->backgroundRevision());
+            // 每份资源独立追踪版本，即使其他图像已上传，本图像仍需补齐最新数据。
             if (frame.notesRevision != m_scene.notesRevision()) {
                 reserve(frame.notes, VkDeviceSize(m_scene.notes().size()) * sizeof(VulkanQuad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
                 upload(frame.notes, m_scene.notes().constData(), VkDeviceSize(m_scene.notes().size()) * sizeof(VulkanQuad));
@@ -566,6 +590,7 @@ void FallingNotesVulkanRenderer::startNextFrame()
     if (!m_failed && m_pipeline) {
         const auto& g = m_scene.geometry();
         const float dpr = float(m_window->devicePixelRatio());
+        // 音符时间减去同一场景基准；动画时间另取周期余数，防止长时间浮点累积。
         FrameConstants constants {float(m_window->width()) * dpr, float(m_window->height()) * dpr,
             float((state.transportPositionUs - m_scene.timeOriginUs())/1'000'000.0), float(g.strikeLineY),
             float(g.pixelsPerMicrosecond*1'000'000), float(g.fallingRect.top()), float(g.fallingRect.bottom()), dpr,
@@ -581,6 +606,7 @@ void FallingNotesVulkanRenderer::startNextFrame()
         m_df->vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
         m_df->vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_layout, 0, 1, &frame.descriptor, 0, nullptr);
         m_df->vkCmdPushConstants(command, m_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(constants), &constants);
+        // 各 UI 层内先静态后动态；整帧层序使全部黑键覆盖活动白键。
         const auto drawLayer = [&](VulkanUiLayer layer) {
             const auto base = m_scene.staticUi().range(layer);
             const auto animated = m_scene.dynamicUi().range(layer);
@@ -596,6 +622,7 @@ void FallingNotesVulkanRenderer::startNextFrame()
     if (frame.completionEvent)
         m_df->vkCmdSetEvent(command, frame.completionEvent, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     frame.submitted = true;
+    // Qt 完成命令提交与呈现后，再等待兼容同步点并报告本帧结果。
     m_window->frameReady();
     completePresentation();
     m_window->frameCompleted(!m_failed);
@@ -693,6 +720,7 @@ midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneStat
 {
     midi_play::visualization::PlaybackSceneState result;
     result.chart = m_chart;
+    // 使用宿主的共享有界时钟；无时钟时退回最近一次控制器采样位置。
     result.transportPositionUs = m_visualClock ? m_visualClock->position() : m_positionUs;
     result.effectsStartUs = m_effectsStartUs;
     result.durationUs = m_durationUs;
@@ -713,6 +741,7 @@ midi_play::visualization::PlaybackSceneState FallingNotesVulkanWindow::sceneStat
 void FallingNotesVulkanWindow::frameCompleted(bool success)
 {
     if (success) emit frameRendered();
+    // 暂停或隐藏时停止连续请求；属性设置仍可触发单次重绘。
     if (success && m_state == midi_play::playback::State::Playing && isExposed()) requestUpdate();
 }
 

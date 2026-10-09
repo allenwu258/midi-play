@@ -1,5 +1,6 @@
 #include "noteappearance.h"
 
+// 构造两套主题与两种配色的固定外观表，供所有呈现后端共享。
 #include <array>
 
 namespace midi_play::presentation::visualization {
@@ -8,12 +9,13 @@ namespace {
 using midi_play::settings::NoteColorMode;
 using midi_play::settings::ThemeMode;
 
+// 普通配色保留既有外观，鲜明配色提高彩度与密集区域的不透明度下限。
 NoteAppearance makeAppearance(ThemeMode themeMode, NoteColorMode colorMode)
 {
     NoteAppearance result {themeMode, colorMode, {}};
     const bool light = themeMode == ThemeMode::Light;
     if (colorMode == NoteColorMode::Normal) {
-        // Preserve v0.3.3 materials exactly, including its key/glow relationship.
+        // 保留 v0.3.3 的材质数值及键盘/光晕关系，避免普通模式发生外观回归。
         result.material = light
             ? NoteMaterialProfile {{0.53, 0.045, 0.125, 0.66, 0.12},
                                    {0.40, 0.045, 0.11, 0.88, 0.10},
@@ -40,6 +42,7 @@ NoteAppearance makeAppearance(ThemeMode themeMode, NoteColorMode colorMode)
 
 } // namespace
 
+// 仅首次调用构建四种组合，后续按规范化枚举直接索引。
 const NoteAppearance& noteAppearanceFor(ThemeMode themeMode, NoteColorMode colorMode)
 {
     static const std::array<NoteAppearance, 4> appearances {{

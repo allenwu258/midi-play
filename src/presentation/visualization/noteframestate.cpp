@@ -1,10 +1,12 @@
 #include "noteframestate.h"
 
+// 实现无历史积分的帧状态计算，统一 Qt/Vulkan 的音符与键盘表现。
 #include <algorithm>
 #include <cmath>
 
 namespace midi_play::presentation::visualization {
 
+// 强度限制到 [0, 1] 后插值 RGB，结果为不透明琴键色。
 QColor illuminatedKeyColor(const QColor& base, const QColor& light, qreal strength)
 {
     const qreal alpha = std::clamp(strength, 0.0, 1.0);
@@ -13,6 +15,7 @@ QColor illuminatedKeyColor(const QColor& base, const QColor& light, qreal streng
                            base.blueF() * (1 - alpha) + light.blueF() * alpha);
 }
 
+// 未来时间在击键线上方；体高至少四像素，尾音使用更窄的矩形。
 NoteGeometry noteGeometry(const PreparedNoteRenderData& note,
                           const PlaybackSceneGeometry& geometry, qint64 positionUs)
 {
@@ -35,6 +38,7 @@ NoteGeometry noteGeometry(const PreparedNoteRenderData& note,
     return result;
 }
 
+// 候选先按精确窗口过滤，再计算密度、活动状态和按音乐时间求值的照明。
 void NoteFrameState::prepare(const midi_play::visualization::PlaybackSceneState& state,
                              const PlaybackSceneGeometry& geometry, const NoteRenderCache& cache)
 {
@@ -66,6 +70,7 @@ void NoteFrameState::prepare(const midi_play::visualization::PlaybackSceneState&
         const auto* style = cache.styleForNote(index);
         if (!style) continue;
         const qreal age = qreal(now - note.startUs);
+        // seek 前已发生的攻击不重新生成；保持强度区分按键、踏板尾音和释放。
         const qreal attack = note.startUs >= state.effectsStartUs
             ? std::pow(std::clamp(1 - age / kNoteAttackUs, 0.0, 1.0), 2) : 0;
         const qreal hold = now < note.keyEndUs ? 0.56 : now < note.audibleEndUs ? 0.15
@@ -75,13 +80,16 @@ void NoteFrameState::prepare(const midi_play::visualization::PlaybackSceneState&
         if (note.isPercussion()) {
             if (note.drumLane >= 0 && note.drumLane < m_drums.size()) key = &m_drums[note.drumLane];
         } else if (note.pitch >= 0 && note.pitch < 128) key = &m_keys[size_t(note.pitch)];
+        // 同键采用最强照明，而活动标签查找表使用独立代表音符规则。
         if (key && strength >= key->strength) *key = {index, strength, attack};
     }
+    // 以钢琴落音区面积为基准衰减主体透明度，防止密集叠加过亮；分母至少为一。
     const qreal sceneArea = std::max<qreal>(1, geometry.pianoRect.width() * geometry.fallingRect.height());
     const auto& appearance = cache.appearance();
     m_bodyOpacity = std::clamp(1.0 / (1 + area / sceneArea * appearance.densityFalloff),
                                appearance.minimumBodyOpacity, 1.0);
     if (!playing) return;
+    // 限制总光效数，密集和弦不产生无界 CPU/GPU 实例。
     const auto appendGlow = [&](const KeyIllumination& key, qreal x, qreal width) {
         if (key.noteIndex < 0 || m_glows.size() >= 96) return;
         const auto* style = cache.styleForNote(key.noteIndex);
@@ -90,7 +98,7 @@ void NoteFrameState::prepare(const midi_play::visualization::PlaybackSceneState&
         const qreal radius = std::clamp(width * 0.9 + key.attack * 8, 7.0, 28.0);
         m_glows.push_back({{x - radius, geometry.strikeLineY - radius * 0.6,
                            radius * 2, radius * 1.2}, color});
-        // Two deterministic, short-lived sparks only on recent attacks.
+        // 仅近期攻击产生两个由攻击年龄决定的短命火花，无随机帧累积。
         if (key.attack > 0.04 && m_glows.size() < 94) {
             const qreal travel = (1 - std::sqrt(key.attack)) * 17;
             color.setAlphaF(key.attack * 0.60 * m_bodyOpacity);

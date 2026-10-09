@@ -1,4 +1,5 @@
 #include "playbackvisualizationprojector.h"
+// 实现反复展开后的视觉音符、节拍网格与元数据投影。
 #include "domain/music/musicrhythmgrid.h"
 #include "domain/music/playbacksegmentbounds.h"
 #include "noteoverlaplayout.h"
@@ -17,6 +18,7 @@ namespace {
 using music::PlaybackSegment;
 using music::Tick;
 
+// 轨道基础配色，具体音符材质由呈现层生成。
 constexpr std::array<ColorRgba, 10> kTrackPalette {{
     {45, 201, 151, 255},
     {63, 169, 245, 255},
@@ -30,6 +32,7 @@ constexpr std::array<ColorRgba, 10> kTrackPalette {{
     {116, 139, 245, 255}
 }};
 
+// 从按源 tick 排序的变化序列取得目标位置的有效值。
 template<typename T, typename TickGetter>
 T valueAtTick(const QVector<T>& values, Tick tick, T fallback, TickGetter getter)
 {
@@ -40,6 +43,7 @@ T valueAtTick(const QVector<T>& values, Tick tick, T fallback, TickGetter getter
     return fallback;
 }
 
+// 源 tick 平移到该反复实例的输出 tick，再按展开速度时间线积分。
 qint64 projectedTimeUs(const music::MusicDocument& document,
                        const PlaybackSegment& segment, Tick sourceTick)
 {
@@ -47,6 +51,7 @@ qint64 projectedTimeUs(const music::MusicDocument& document,
     return document.playbackTickToMicroseconds(outputTick);
 }
 
+// 将演奏法和鼓组属性打包成显示标志。
 quint32 noteFlags(const music::NoteEvent& note, bool percussion)
 {
     quint32 flags = NoNoteVisualFlags;
@@ -62,6 +67,7 @@ quint32 noteFlags(const music::NoteEvent& note, bool percussion)
     return flags;
 }
 
+// 由音级及升降号生成简谱标签，八度点由呈现层绘制。
 QString simplifiedLabel(const music::NoteEvent& note)
 {
     if (note.scaleDegree < 1 || note.scaleDegree > 7) return {};
@@ -71,8 +77,10 @@ QString simplifiedLabel(const music::NoteEvent& note)
     return prefix + QString::number(note.scaleDegree);
 }
 
+// 缺少 sustainEnd 时由 CC64/CC66 推导尾音，不越过连续播放段边界。
 Tick pedalExtendedEnd(const music::Track& track, Tick noteStart, Tick keyEnd, Tick segmentEnd)
 {
+    // CC66 还要求松键前最近的高值事件不早于音符开始；松踏板或段末尾结束保持。
     auto extendForController = [&](int controller, bool requirePressDuringNote) {
         int value = 0;
         Tick lastPress = -1;
@@ -96,17 +104,20 @@ Tick pedalExtendedEnd(const music::Track& track, Tick noteStart, Tick keyEnd, Ti
     return std::clamp(end, keyEnd, segmentEnd);
 }
 
+// 向下对齐到本八度 C，负音高也使用正确的模运算。
 int floorToC(int pitch)
 {
     const int pitchClass = ((pitch % 12) + 12) % 12;
     return pitch - pitchClass;
 }
 
+// 向上对齐到本八度 B，显示范围包含完整八度。
 int ceilToB(int pitch)
 {
     return floorToC(pitch) + 11;
 }
 
+// 稳定排序后保留同时刻最后状态，避免覆盖层读取不确定值。
 template<typename T, typename TimeGetter>
 void sortAndKeepLastAtSameTime(QVector<T>& values, TimeGetter getter)
 {
@@ -124,6 +135,7 @@ void sortAndKeepLastAtSameTime(QVector<T>& values, TimeGetter getter)
 
 } // namespace
 
+// 构建完整图表后才发布只读指针，整个投影过程不修改源文档。
 VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocument& document,
                                                        quint64 generation,
                                                        const VisualizationProjectionOptions& options,
@@ -139,6 +151,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
     chart->m_durationUs = document.playbackTickToMicroseconds(document.playbackDuration());
     chart->m_generation = generation;
 
+    // 收集所有鼓音高并排序，保证道编号不受哈希遍历顺序影响。
     QHash<int, QString> drumNames;
     QSet<int> drumPitches;
     for (const auto& track : document.tracks()) {
@@ -158,6 +171,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
         chart->m_drumLanes.push_back({i, pitch, drumNames.value(pitch, QStringLiteral("GM %1").arg(pitch))});
     }
 
+    // 先建立轨道记录，后续音符通过 trackIndex 引用。
     chart->m_tracks.reserve(document.tracks().size());
     for (int trackIndex = 0; trackIndex < document.tracks().size(); ++trackIndex) {
         const auto& source = document.tracks()[trackIndex];
@@ -172,6 +186,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
     }
 
     const auto segments = document.playbackSegments();
+    // 长音可跨相邻连续段，但跳转或反复回跳处必须截断。
     const auto continuousEnds = music::continuousPlaybackEnds(segments);
     QVector<VisualNote> projectedNotes;
     for (int segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
@@ -182,6 +197,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
                 if (note.rest || note.start < segment.sourceStart || note.start >= segment.sourceEnd) continue;
                 const Tick availableDuration = std::max<Tick>(1, continuousEnds[segmentIndex] - note.start);
                 const Tick sourceDuration = std::max<Tick>(1, std::min(note.duration, availableDuration));
+                // 视觉按键时值应用演奏法门限，踏板尾音独立计算。
                 double durationFactor = 1.0;
                 if (note.staccato) durationFactor *= 0.5;
                 if (note.tenuto) durationFactor *= 0.98;
@@ -211,6 +227,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
                 visual.keyEndUs = projectedTimeUs(document, segment, keyEnd);
                 visual.audibleEndUs = projectedTimeUs(document, segment, audibleEnd);
                 visual.sourceChordId = note.chordId;
+                // 加入段与轨道维度，区分反复中的同一源和弦。
                 visual.chordInstanceId = (static_cast<quint64>(segmentIndex + 1) << 40)
                     ^ (static_cast<quint64>(trackIndex + 1) << 32) ^ note.chordId;
                 visual.tieGroupId = note.tieGroupId;
@@ -228,6 +245,8 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
         return left.sourceNoteId < right.sourceNoteId;
     });
 
+    // 连线合并键包含轨道、连线组、音高、谱表和声部。
+    // 后项开始不得早于前项开始，且不得晚于前项可听结束后 2 ms。
     QHash<QString, int> lastTieIndex;
     chart->m_notes.reserve(projectedNotes.size());
     for (auto& note : projectedNotes) {
@@ -252,6 +271,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
     int minimumPitch = 127;
     int maximumPitch = 0;
     quint64 instanceId = 1;
+    // 子道基于按键区间分配，踏板尾音不挤占后续击键宽度。
     assignNoteOverlapLanes(chart->m_notes);
     for (int index = 0; index < chart->m_notes.size(); ++index) {
         auto& note = chart->m_notes[index];
@@ -263,6 +283,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
         }
     }
 
+    // 仅旋律音符决定钢琴音域；纯鼓曲回退两八度，最终限制在 0..127。
     if (minimumPitch > maximumPitch) {
         minimumPitch = 48;
         maximumPitch = 71;
@@ -287,6 +308,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
     }
     chart->m_pitchRange = {minimumPitch, maximumPitch};
 
+    // 另建结束时间下标，保留主数组的开始时间顺序。
     chart->m_noteIndicesByEnd.resize(chart->m_notes.size());
     for (int i = 0; i < chart->m_noteIndicesByEnd.size(); ++i) chart->m_noteIndicesByEnd[i] = i;
     std::sort(chart->m_noteIndicesByEnd.begin(), chart->m_noteIndicesByEnd.end(), [&](int left, int right) {
@@ -296,6 +318,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
         return chart->m_notes[left].startUs < chart->m_notes[right].startUs;
     });
 
+    // 源网格逐段投影，反复实例保留源小节标签和独立输出时间。
     const music::MusicRhythmGrid rhythm(document);
     const auto& signatures = rhythm.signatures();
     const auto& sourceGrid = rhythm.subdivisions();
@@ -325,6 +348,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
     }
 
     for (const auto& segment : segments) {
+        // 每段起点重建源位置的有效速度、调号和拍号，回跳不能沿用上一段末状态。
         const auto tempo = valueAtTick(tempos, segment.sourceStart, music::TempoChange {0, 120.0, 0},
                                        [](const auto& value) { return value.tick; });
         chart->m_tempos.push_back({projectedTimeUs(document, segment, segment.sourceStart), tempo.bpm});
@@ -357,6 +381,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
             }
         }
 
+        // 文本与歌词只投影落入本段的事件，每次反复生成独立实例 ID。
         for (const auto& marker : document.markers()) {
             if (marker.tick < segment.sourceStart || marker.tick >= segment.sourceEnd) continue;
             chart->m_markers.push_back({instanceId++, projectedTimeUs(document, segment, marker.tick),
@@ -369,6 +394,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
         }
     }
 
+    // 状态点同时刻保留最后项；文本实例稳定排序后仍全部保留。
     sortAndKeepLastAtSameTime(chart->m_tempos, [](const auto& point) { return point.timeUs; });
     sortAndKeepLastAtSameTime(chart->m_keys, [](const auto& point) { return point.timeUs; });
     sortAndKeepLastAtSameTime(chart->m_timeSignatures, [](const auto& point) { return point.timeUs; });

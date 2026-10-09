@@ -1,5 +1,6 @@
 #include "notecolorpalette.h"
 
+// 实现感知色彩转换和稳定轨道色族，颜色计算只在材质生成时执行。
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -14,34 +15,36 @@ constexpr std::array<std::array<double, 3>, 10> kTrackHueFamilies {{
     {315, 338, 360}, {252, 278, 306}
 }};
 
-// A cyclic path through a track's analogous hues, rather than a full rainbow.
-// It is independent of key signature, note order, repeats and transport time.
+// 音级沿轨道近似色族循环取样，与调号、音符顺序、反复和传输时间无关。
 constexpr std::array<double, 12> kPitchRoles {
     0.12, 0.26, 0.48, 0.70, 0.90, 1.00, 0.86, 0.66, 0.42, 0.20, 0.00, 0.02
 };
 
+// GM 鼓类使用相同色族中的固定位置，避免相邻鼓音高产生任意颜色。
 double percussionRole(int pitch)
 {
     switch (pitch) {
-    case 35: case 36: return 0.10; // Bass drums.
-    case 37: case 38: case 39: case 40: return 0.38; // Snare, side stick, clap.
-    case 42: case 44: case 46: return 0.92; // Hi-hats.
-    case 41: case 43: case 45: case 47: case 48: case 50: return 0.60; // Toms.
-    case 49: case 51: case 52: case 53: case 55: case 57: case 59: return 1.0; // Cymbals.
-    case 54: case 56: case 58: case 69: case 70: return 0.80; // Bells and shakers.
-    case 60: case 61: case 62: case 63: case 64: case 65: case 66: return 0.52; // Hand drums.
-    case 67: case 68: case 76: case 77: return 0.66; // Agogos and wood blocks.
+    case 35: case 36: return 0.10; // 底鼓。
+    case 37: case 38: case 39: case 40: return 0.38; // 军鼓、边击和拍手。
+    case 42: case 44: case 46: return 0.92; // 踩镲。
+    case 41: case 43: case 45: case 47: case 48: case 50: return 0.60; // 通鼓。
+    case 49: case 51: case 52: case 53: case 55: case 57: case 59: return 1.0; // 镲片。
+    case 54: case 56: case 58: case 69: case 70: return 0.80; // 铃与沙锤。
+    case 60: case 61: case 62: case 63: case 64: case 65: case 66: return 0.52; // 手鼓。
+    case 67: case 68: case 76: case 77: return 0.66; // 阿哥哥铃与木鱼。
     case 71: case 72: case 73: case 74: case 75: case 78: case 79: return 0.28;
-    case 80: case 81: return 0.86; // Triangles.
+    case 80: case 81: return 0.86; // 三角铁。
     default: return 0.50;
     }
 }
 
+// sRGB 分段传递函数解码到线性光空间。
 double linear(double value)
 {
     return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
 }
 
+// 线性 RGB 限制到显示范围后再进行 sRGB 编码。
 double srgb(double value)
 {
     value = std::clamp(value, 0.0, 1.0);
@@ -50,6 +53,7 @@ double srgb(double value)
 
 } // namespace
 
+// RGB 先转线性空间再转 OKLab，由 a/b 分量取得色相角。
 double noteColorHue(const midi_play::visualization::ColorRgba& color)
 {
     const double r = linear(color.red / 255.0);
@@ -62,6 +66,7 @@ double noteColorHue(const midi_play::visualization::ColorRgba& color)
                       1.9779984951*l - 2.4285922050*m + 0.4505937099*s);
 }
 
+// 以固定色相和亮度逐步压缩彩度，避免直接裁剪 RGB 导致色相偏移。
 QColor noteColorFromOklch(double lightness, double chroma, double angle, double alpha)
 {
     std::array<double, 3> rgb {};
@@ -80,6 +85,7 @@ QColor noteColorFromOklch(double lightness, double chroma, double angle, double 
     return QColor::fromRgbF(srgb(rgb[0]), srgb(rgb[1]), srgb(rgb[2]), alpha);
 }
 
+// 在色族的两段短弧上插值，最后将角度转换为材质使用的弧度。
 double vividNoteHue(int trackIndex, int pitch, bool percussion)
 {
     const auto& family = kTrackHueFamilies[trackIndex < 0 ? 5 : size_t(trackIndex) % kTrackHueFamilies.size()];

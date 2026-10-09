@@ -1,5 +1,6 @@
 #include "noterendercache.h"
 
+// 实现样式去重与分层失效，避免每帧重新生成颜色和横向布局。
 #include <QColor>
 #include <QHash>
 #include <QLinearGradient>
@@ -13,6 +14,7 @@ using midi_play::visualization::TremoloNote;
 using midi_play::visualization::VisualChart;
 using midi_play::visualization::VisualNote;
 
+// 将共用材质转换为对象边界坐标渐变，使画刷可用于不同长度的音符。
 NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note,
                           const NoteAppearance& appearance)
 {
@@ -41,6 +43,7 @@ NoteRenderStyle makeStyle(const VisualChart& chart, const VisualNote& note,
 
 } // namespace
 
+// 图表身份优先失效；外观独立更新，随后按尺寸决定是否重建几何。
 void NoteRenderCache::prepare(const midi_play::visualization::VisualChartPtr& chart,
                               const PlaybackSceneGeometry& geometry, midi_play::settings::ThemeMode mode,
                               midi_play::settings::NoteColorMode colors)
@@ -59,6 +62,7 @@ void NoteRenderCache::prepare(const midi_play::visualization::VisualChartPtr& ch
     }
 }
 
+// 清理后推进材质 revision，让依赖缓存无法误用原材质。
 void NoteRenderCache::clear()
 {
     m_chart = nullptr;
@@ -69,11 +73,13 @@ void NoteRenderCache::clear()
     ++m_materialRevision;
 }
 
+// 按源图表下标查询缓存记录。
 const PreparedNoteRenderData* NoteRenderCache::note(int noteIndex) const
 {
     return noteIndex >= 0 && noteIndex < m_notes.size() ? &m_notes[noteIndex] : nullptr;
 }
 
+// 同时校验音符和样式范围，避免空图表/重建期间访问非法索引。
 const NoteRenderStyle* NoteRenderCache::styleForNote(int noteIndex) const
 {
     const auto* prepared = note(noteIndex);
@@ -82,6 +88,7 @@ const NoteRenderStyle* NoteRenderCache::styleForNote(int noteIndex) const
         : nullptr;
 }
 
+// 只在图表替换时重建映射，每种样式保留一个代表音符用于后续重新配色。
 void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPtr& chart)
 {
     m_chart = chart;
@@ -121,6 +128,7 @@ void NoteRenderCache::rebuildChart(const midi_play::visualization::VisualChartPt
     }
 }
 
+// 精确保持样式下标与时间负载，只覆盖材质和对应画刷。
 void NoteRenderCache::rebuildMaterials()
 {
     ++m_materialRevision;
@@ -129,6 +137,7 @@ void NoteRenderCache::rebuildMaterials()
         m_styles[i] = makeStyle(*m_chart, m_chart->notes()[m_styleRepresentatives[i]], *m_appearance);
 }
 
+// 根据实际布局重新计算左右边界，音高/鼓道缺失时标记无效几何。
 void NoteRenderCache::rebuildGeometry(const PlaybackSceneGeometry& geometry)
 {
     m_geometrySize = geometry.bounds.size();
@@ -149,6 +158,7 @@ void NoteRenderCache::rebuildGeometry(const PlaybackSceneGeometry& geometry)
             continue;
         }
 
+        // 重叠子道等分完整音符宽度并留窄间隙，宽度不随活动音符数量改变。
         if (source.coincidentCount > 1) {
             const qreal partWidth = fullWidth / source.coincidentCount;
             const qreal gutter = std::min<qreal>(1.0, partWidth * 0.24);

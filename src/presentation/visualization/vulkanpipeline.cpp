@@ -1,3 +1,4 @@
+// 共享场景管线实现：装载内嵌 SPIR-V，并显式绑定实例属性和混合约定。
 #include <vulkan/vulkan.h>
 #include "vulkanpipeline.h"
 #include "vulkanscene.h"
@@ -9,6 +10,7 @@
 
 namespace midi_play::presentation::visualization {
 namespace {
+// 从 Qt 资源读取着色器，将字节复制到满足 uint32_t 对齐要求的存储。
 VkShaderModule shader(VkDevice device, const char* path)
 {
     QFile file(QString::fromLatin1(path));
@@ -36,6 +38,7 @@ VkPipeline createScenePipeline(VkDevice device, VkPipelineLayout layout, VkRende
         for (auto& stage : stages) { stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; stage.pName = "main"; }
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = vertex;
         stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = fragment;
+        // 每实例七个 vec4；六个矩形顶点由 shader 的 gl_VertexIndex 生成。
         VkVertexInputBindingDescription binding {0, sizeof(VulkanQuad), VK_VERTEX_INPUT_RATE_INSTANCE};
         std::array<VkVertexInputAttributeDescription, 7> attributes {};
         for (uint32_t i = 0; i < attributes.size(); ++i) attributes[i] = {i, 0, VK_FORMAT_R32G32B32A32_SFLOAT, i * 16};
@@ -50,6 +53,7 @@ VkPipeline createScenePipeline(VkDevice device, VkPipelineLayout layout, VkRende
         raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.lineWidth = 1;
         VkPipelineMultisampleStateCreateInfo samples {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         samples.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        // 片元输出已预乘 alpha，颜色/alpha 均采用 ONE 与 ONE_MINUS_SRC_ALPHA。
         VkPipelineColorBlendAttachmentState blend {};
         blend.blendEnable = VK_TRUE;
         blend.srcColorBlendFactor = blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -57,6 +61,7 @@ VkPipeline createScenePipeline(VkDevice device, VkPipelineLayout layout, VkRende
         blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_ADD; blend.colorWriteMask = 0xf;
         VkPipelineColorBlendStateCreateInfo blending {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         blending.attachmentCount = 1; blending.pAttachments = &blend;
+        // 输出尺寸由窗口或导出目标决定，在命令录制时设置 viewport/scissor。
         const VkDynamicState states[] {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         VkPipelineDynamicStateCreateInfo dynamic {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = 2; dynamic.pDynamicStates = states;
@@ -69,10 +74,12 @@ VkPipeline createScenePipeline(VkDevice device, VkPipelineLayout layout, VkRende
         if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &result) != VK_SUCCESS)
             throw std::runtime_error("Cannot create Vulkan scene pipeline");
     } catch (...) {
+        // 第二个模块或管线创建失败时，同样释放先前成功创建的模块。
         if (vertex) vkDestroyShaderModule(device, vertex, nullptr);
         if (fragment) vkDestroyShaderModule(device, fragment, nullptr);
         throw;
     }
+    // 管线创建后不再依赖 shader module 的生命周期。
     vkDestroyShaderModule(device, vertex, nullptr);
     vkDestroyShaderModule(device, fragment, nullptr);
     return result;

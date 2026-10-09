@@ -1,5 +1,6 @@
 #include "noterastercache.h"
 
+// 实现小尺寸体渐变图缓存，以固定像素行拉伸代替逐长音渐变光栅化。
 #include <QPainter>
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 
 namespace midi_play::presentation::visualization {
 
+// 任一依赖版本变化都重置缓存，DPI 至少取一保证像素尺寸有效。
 void NoteRasterCache::prepare(const NoteRenderCache& notes, qreal devicePixelRatio)
 {
     const qreal dpr = std::max<qreal>(1, devicePixelRatio);
@@ -20,6 +22,7 @@ void NoteRasterCache::prepare(const NoteRenderCache& notes, qreal devicePixelRat
     m_images.clear();
 }
 
+// 缓存超预算的单张图仍可本次绘制，由局部 unique_ptr 管理而不插入 QCache。
 void NoteRasterCache::drawBody(QPainter& painter, const QRectF& rect,
                                const NoteRenderStyle& style, int styleIndex)
 {
@@ -43,8 +46,8 @@ void NoteRasterCache::drawBody(QPainter& painter, const QRectF& rect,
     const qreal padding = 1 / m_dpr;
     const qreal left = rect.left() - padding;
     const qreal width = image->width() / m_dpr;
-    // One transparent border row and one filled row at each end. The middle
-    // row has filled neighbours, so bilinear sampling cannot fade a long body.
+    // 两端各保留透明边界行和填充行；中间取两侧都有填充邻居的一行，
+    // 避免双线性采样把长音主体意外淡化。
     painter.drawImage(QRectF(left, rect.top() - padding, width, 2 * padding), *image,
                       QRectF(0, 0, image->width(), 2));
     painter.drawImage(QRectF(left, rect.top() + padding, width, rect.height() - 2 * padding), *image,

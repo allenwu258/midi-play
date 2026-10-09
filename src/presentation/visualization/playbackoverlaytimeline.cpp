@@ -1,10 +1,12 @@
 #include "playbackoverlaytimeline.h"
 
+// 合并有序歌词/标记变化点并缓存最近区间，减少逐帧元数据查询。
 #include <algorithm>
 #include <limits>
 
 namespace midi_play::presentation::visualization {
 
+// 同时刻变化全部消费后再建区间，文本未改变的变化点不产生冗余区间。
 void PlaybackOverlayTimeline::setChart(
     const midi_play::visualization::VisualChartPtr& chart)
 {
@@ -26,6 +28,7 @@ void PlaybackOverlayTimeline::setChart(
     while (lyricIndex < lyrics.size() && lyrics[lyricIndex].timeUs <= 0) {
         current.lyric = lyrics[lyricIndex++].text;
     }
+    // 原点区间始终存在，零及负时间的已有文本先合并进其状态。
     m_segments.push_back({0, current});
 
     while (markerIndex < markers.size() || lyricIndex < lyrics.size()) {
@@ -46,6 +49,7 @@ void PlaybackOverlayTimeline::setChart(
     }
 }
 
+// 当前区间之外才二分，保证前进、回退和任意 seek 都使用同一规则。
 const PlaybackOverlayText& PlaybackOverlayTimeline::at(qint64 positionUs)
 {
     if (m_segments.isEmpty()) return emptyText();
@@ -68,6 +72,7 @@ const PlaybackOverlayText& PlaybackOverlayTimeline::at(qint64 positionUs)
     return m_segments[m_currentSegmentIndex].text;
 }
 
+// 图表替换也重置当前区间下标和查询诊断。
 void PlaybackOverlayTimeline::clear()
 {
     m_chart.reset();
@@ -76,6 +81,7 @@ void PlaybackOverlayTimeline::clear()
     m_binarySearchCount = 0;
 }
 
+// 共享只读空值，空场景无需生成临时文本对象。
 const PlaybackOverlayText& PlaybackOverlayTimeline::emptyText()
 {
     static const PlaybackOverlayText empty;

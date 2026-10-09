@@ -1,5 +1,6 @@
 #include "backgroundimageloader.h"
 
+// 实现通用 Qt 图片读取与有界 WebP 静态解码。
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
@@ -12,6 +13,7 @@ namespace {
 constexpr int maximumDimension = 2048;
 constexpr qint64 maximumWebPBytes = 64 * 1024 * 1024;
 
+// 优先识别扩展名，再通过 RIFF/WEBP 文件头识别无标准后缀输入。
 bool isWebP(const QString& path)
 {
     if (QFileInfo(path).suffix().compare(QLatin1String("webp"), Qt::CaseInsensitive) == 0)
@@ -22,6 +24,7 @@ bool isWebP(const QString& path)
     return header.size() == 12 && header.startsWith("RIFF") && header.mid(8, 4) == "WEBP";
 }
 
+// WebP 一次读入，限制为 64 MiB 并检查完整读取。
 QByteArray readWebP(const QString& path, QString* error)
 {
     QFile file(path);
@@ -41,6 +44,7 @@ QByteArray readWebP(const QString& path, QString* error)
     return bytes;
 }
 
+// 检查位流尺寸和动画标记，背景只支持静态图。
 bool inspectWebP(const QByteArray& bytes, WebPBitstreamFeatures* features, QString* error)
 {
     const auto status = WebPGetFeatures(
@@ -56,6 +60,7 @@ bool inspectWebP(const QByteArray& bytes, WebPBitstreamFeatures* features, QStri
     return true;
 }
 
+// 保持宽高比，仅在任一边超过上限时缩小。
 QSize scaledSize(QSize source)
 {
     if (source.width() > maximumDimension || source.height() > maximumDimension)
@@ -65,6 +70,7 @@ QSize scaledSize(QSize source)
 
 } // namespace
 
+// 预检不生成完整像素数据，实际解码错误仍由加载路径处理。
 bool canReadBackgroundImage(const QString& path, QString* error)
 {
     if (error) error->clear();
@@ -79,6 +85,7 @@ bool canReadBackgroundImage(const QString& path, QString* error)
     return readable;
 }
 
+// WebP 在解码阶段缩放，其他格式交由 QImageReader 处理方向和缩放。
 QImage loadBackgroundImage(const QString& path)
 {
     if (isWebP(path)) {
@@ -94,6 +101,7 @@ QImage loadBackgroundImage(const QString& path)
         config.options.scaled_width = target.width();
         config.options.scaled_height = target.height();
         config.output.colorspace = MODE_RGBA;
+        // 解码器直接写入 QImage 的外部缓冲，避免再分配一份完整像素数组。
         config.output.is_external_memory = 1;
         config.output.u.RGBA.rgba = image.bits();
         config.output.u.RGBA.stride = image.bytesPerLine();

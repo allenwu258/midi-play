@@ -1,5 +1,6 @@
 #include "textlayoutcache.h"
 
+// 实现文字省略、QStaticText 预整形和有界 LRU 淘汰。
 #include <QFontMetricsF>
 #include <QTransform>
 
@@ -9,17 +10,20 @@
 
 namespace midi_play::presentation::visualization {
 
+// 预留容量，避免常用标签集反复触发哈希扩容。
 TextLayoutCache::TextLayoutCache(qsizetype maximumEntries)
     : m_maximumEntries(std::max<qsizetype>(1, maximumEntries))
 {
     m_entries.reserve(m_maximumEntries);
 }
 
+// 命中只更新访问序号；未命中时先腾容量，再生成可绘制布局。
 const PreparedTextLayout& TextLayoutCache::layout(
     TextLayoutRole role, const QString& text, const QFont& font,
     qreal maximumWidth, qreal devicePixelRatio)
 {
     ++m_accessSequence;
+    // 序号回绕时重置所有访问年龄，继续使用非零序号。
     if (m_accessSequence == 0) {
         for (auto it = m_entries.begin(); it != m_entries.end(); ++it) it->lastUse = 0;
         m_accessSequence = 1;
@@ -42,6 +46,7 @@ const PreparedTextLayout& TextLayoutCache::layout(
     prepared.displayText = displayText;
     prepared.advance = metrics.horizontalAdvance(displayText);
     prepared.staticText.setText(displayText);
+    // 标签始终按纯文本处理，避免歌词中的标记被误解释为富文本。
     prepared.staticText.setTextFormat(Qt::PlainText);
     prepared.staticText.setPerformanceHint(QStaticText::AggressiveCaching);
     prepared.staticText.prepare(QTransform(), font);
@@ -55,12 +60,14 @@ const PreparedTextLayout& TextLayoutCache::layout(
     return inserted->layout;
 }
 
+// 构建计数是累计诊断值，不随清空重置。
 void TextLayoutCache::clear()
 {
     m_entries.clear();
     m_accessSequence = 0;
 }
 
+// 负宽度表示不省略，DPI 至少为一再量化。
 TextLayoutCache::Key TextLayoutCache::makeKey(TextLayoutRole role, const QString& text,
                                               const QFont& font, qreal maximumWidth,
                                               qreal devicePixelRatio)
@@ -74,6 +81,7 @@ TextLayoutCache::Key TextLayoutCache::makeKey(TextLayoutRole role, const QString
     };
 }
 
+// 淘汰最小访问序号项，不要求额外链表维护。
 void TextLayoutCache::evictLeastRecentlyUsed()
 {
     auto victim = m_entries.end();

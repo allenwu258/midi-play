@@ -1,3 +1,4 @@
+// QPainter 后端实现：复用共享材质与帧求值，在逻辑像素坐标中组合静态/动态层。
 #include "fallingnotesrenderer.h"
 #include "backgroundimageplacement.h"
 #include "rasterrenderpolicy.h"
@@ -14,17 +15,20 @@ namespace {
 
 using midi_play::visualization::PlaybackSceneState;
 
+// 将音乐时间映射到击键线之上的垂直坐标，未来事件向上偏移。
 qreal yForTime(const PlaybackSceneGeometry& geometry, qint64 timeUs, qint64 positionUs)
 {
     return geometry.strikeLineY
         - static_cast<qreal>(timeUs - positionUs) * geometry.pixelsPerMicrosecond;
 }
 
+// 从实际绘制设备取得 DPR，兼容窗口与离屏 QImage。
 qreal painterDevicePixelRatio(const QPainter& painter)
 {
     return painter.device() ? painter.device()->devicePixelRatioF() : 1.0;
 }
 
+// 一次生成 MIDI 音高对应的八度标签；非法音高返回稳定的空字符串引用。
 const QString& octaveLabelForPitch(int pitch)
 {
     static const std::array<QString, 128> labels = [] {
@@ -38,6 +42,7 @@ const QString& octaveLabelForPitch(int pitch)
     return pitch >= 0 && pitch < static_cast<int>(labels.size()) ? labels[pitch] : empty;
 }
 
+// 根据预排版文字尺寸计算对齐位置，避免每帧重复执行文字布局。
 void drawPreparedText(QPainter& painter, const PreparedTextLayout& text,
                       const QRectF& rect, Qt::Alignment alignment)
 {
@@ -88,6 +93,7 @@ void FallingNotesRenderer::renderStaticBackgroundLayer(
                 placement.sourceUv.top() * background.height(),
                 placement.sourceUv.width() * background.width(),
                 placement.sourceUv.height() * background.height()));
+            // 遮罩强度随图片透明度变化，降低背景对音符辨识度的影响。
             QColor mask(0, 0, 0, qRound(85.0 * alpha));
             painter.setOpacity(1.0);
             painter.fillRect(placement.destination, mask);
@@ -113,6 +119,7 @@ void FallingNotesRenderer::renderDynamicLayer(QPainter& painter, const PlaybackS
                                               const PlaybackSceneState& state)
 {
     prepareScene(geometry, state);
+    // 同一帧求值同时提供音符密度、击键光效与活动键，保证表现一致。
     m_noteFrame.prepare(state, geometry, m_noteRenderCache);
     m_activeNoteLookup = m_noteFrame.active();
     m_visibleNoteCount = m_noteFrame.visibleCount();
@@ -133,6 +140,7 @@ void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
     m_overlayTimeline.setChart(state.chart);
     m_theme = theme::themeFor(state.themeMode).visualization;
     m_noteRenderCache.prepare(state.chart, geometry, state.themeMode, state.noteColorMode);
+    // 几何版本未变化时保留批量矩形；主题变化只影响绘制颜色。
     if (m_keyboardGeometryBuildCount != m_noteRenderCache.geometryBuildCount()) {
         m_keyboardGeometryBuildCount = m_noteRenderCache.geometryBuildCount();
         m_pitchBandRects.clear();
@@ -180,6 +188,7 @@ void FallingNotesRenderer::drawTimeGrid(QPainter& painter, const PlaybackSceneGe
     const qint64 windowStart = state.transportPositionUs - state.afterglowUs;
     const qint64 windowEnd = state.transportPositionUs + state.lookAheadUs;
     const auto& lines = state.chart->gridLines();
+    // 网格按时间排序，先跳过窗口左侧事件，再顺序遍历窗口内部分。
     auto it = std::lower_bound(lines.cbegin(), lines.cend(), windowStart,
                                [](const auto& line, qint64 value) { return line.timeUs < value; });
     QFont labelFont = painter.font();
@@ -214,10 +223,9 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
     painter.setPen(Qt::NoPen);
     m_noteRasterCache.prepare(m_noteRenderCache, painterDevicePixelRatio(painter));
-    // Preserve chronological order within each material layer. Source-over
-    // blending is not commutative, so style-based reordering is incorrect.
+    // Source-over 混合与绘制顺序有关；每个材质层内必须保留音符时间顺序。
     for (int layer = 1; layer <= 4; ++layer) {
-        // Body textures already contain edge coverage; avoid a second AA pass.
+        // 主体纹理已包含边缘覆盖率，该层关闭额外抗锯齿以避免重复处理。
         painter.setRenderHint(QPainter::Antialiasing, layer != 2);
         for (const int index : state.candidateNoteIndices) {
             const auto* note = m_noteRenderCache.note(index);
@@ -226,6 +234,7 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
             const auto shape = noteGeometry(*note, geometry, state.transportPositionUs);
             if (shape.opacity <= 0) continue;
             painter.setPen(Qt::NoPen);
+            // 密度透明度只作用于尾部和主体，音头及震音标记保持辨识度。
             painter.setOpacity(shape.opacity * (layer <= 2 ? m_noteFrame.bodyOpacity() : 1));
             if (layer == 1 && note->hasTail && shape.tail.intersects(geometry.fallingRect)) {
                 painter.fillRect(shape.tail, style->tailGradientBrush);
@@ -262,6 +271,7 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     }
 
     painter.setPen(Qt::NoPen);
+    // 将单位径向渐变缩放成光效椭圆，裁剪仍限制在落音区域内。
     for (const auto& light : m_noteFrame.glows()) {
         painter.save();
         painter.translate(light.rect.center());
@@ -295,6 +305,7 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
         if (x + textWidth > right - 8.0) break;
         const QRectF textRect(x, geometry.strikeLineY + 5.0, textWidth + 1.0, 19.0);
         drawPreparedText(painter, label, textRect, Qt::AlignCenter);
+        // 简谱八度点最多显示三个，高八度置于文字上方，低八度置于下方。
         const int dotCount = std::min(3, std::abs(note.octaveOffset));
         if (dotCount > 0) {
             painter.setBrush(m_theme.primaryText);
@@ -318,6 +329,7 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
 
     painter.setPen(QPen(m_theme.whiteKeyBorder, 1));
     painter.setBrush(m_theme.whiteKey);
+    // 左侧扩展键只补齐视觉背景，不对应可激活的 MIDI 音高。
     for (const auto& slot : geometry.leftKeyboardExtensionPitches) {
         if (!slot.blackKey)
             painter.drawRect(slot.keyRect.adjusted(0.0, 0.0, -0.5, -0.5));
@@ -395,8 +407,7 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
         paintedActiveWhiteKey = true;
     }
 
-    // White keys extend underneath adjacent black keys. Restore the immutable
-    // black-key foreground in one batch before painting active black keys.
+    // 白键矩形延伸到相邻黑键下方；先批量恢复全部黑键前景，再绘活动黑键。
     if (paintedActiveWhiteKey && !m_blackKeyForegroundRects.isEmpty()) {
         painter.setPen(QPen(m_theme.blackKeyBorder, 1));
         painter.setBrush(m_theme.blackKey);
@@ -420,6 +431,7 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
     keyFont.setPointSizeF(7.5);
     painter.setFont(keyFont);
     painter.setPen(m_theme.keyText);
+    // 活动键填色覆盖了静态底图中的八度标签，此处按相同布局补绘。
     for (const int pitch : activePitches) {
         const auto* slot = geometry.pitchSlot(pitch);
         if (!slot || slot->blackKey || pitch % 12 != 0 || slot->keyRect.width() < 12.0) continue;
@@ -485,6 +497,7 @@ void FallingNotesRenderer::drawOverlay(QPainter& painter, const PlaybackSceneGeo
         }
     }
 
+    // 正常谱面无需状态遮罩；其余状态中错误信息优先于加载和空场景提示。
     if (!state.loading && state.errorMessage.isEmpty() && state.chart) return;
     const QColor veil = state.loading ? m_theme.loadingVeil : m_theme.emptyVeil;
     painter.fillRect(geometry.fallingRect, veil);

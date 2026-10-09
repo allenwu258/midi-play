@@ -1,10 +1,12 @@
 #include "backgroundimageplacement.h"
 
+// 实现等比包含与填充裁剪，两条渲染路径共享 UV 计算。
 #include <algorithm>
 
 namespace midi_play::presentation::visualization {
 namespace {
 
+// 限制归一化矩形分量，避免浮点误差产生纹理范围外取样。
 QRectF normalizedRect(qreal left, qreal top, qreal width, qreal height)
 {
     return QRectF(std::clamp(left, 0.0, 1.0), std::clamp(top, 0.0, 1.0),
@@ -13,6 +15,7 @@ QRectF normalizedRect(qreal left, qreal top, qreal width, qreal height)
 
 } // namespace
 
+// 根据源/目标宽高比决定水平或垂直裁剪，并规范化对齐枚举。
 BackgroundImagePlacement calculateBackgroundImagePlacement(
     QSizeF sourceSize, QRectF targetRect,
     midi_play::settings::BackgroundImageAlignment requestedAlignment)
@@ -36,8 +39,7 @@ BackgroundImagePlacement calculateBackgroundImagePlacement(
         return result;
     }
 
-    // Cover modes fill the whole target. The UV rectangle expresses the part
-    // of the fitted image that remains visible after cropping.
+    // 填充模式覆盖整个目标，UV 矩形仅保留裁剪后可见的源图部分。
     if (sourceAspect > targetAspect) {
         const qreal visibleWidth = targetAspect / sourceAspect;
         qreal left = (1.0 - visibleWidth) * 0.5;
