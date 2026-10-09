@@ -3,8 +3,12 @@
 #include <QHash>
 #include <algorithm>
 
+// ScorePlaybackDom 的层级投影实现。
+// 该投影保留播放和后续谱面渲染需要的关系，不承担排版或编辑职责。
 namespace midi_play::music {
 
+// 把扁平 Track/NoteEvent 组织为 Part -> Staff -> Measure -> Segment ->
+// Chord/Rest 的只读层级，并为本次 DOM 分配连续 ID。
 std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocument& document)
 {
     auto dom = std::make_shared<ScorePlaybackDom>();
@@ -18,6 +22,7 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
         part.name = track.name;
         const auto& measures = track.measures.isEmpty() ? document.measures() : track.measures;
 
+        // 先按 staff 分组，避免在每个小节中重复扫描整条轨道。
         QHash<int, QVector<const NoteEvent*>> notesByStaff;
         for (const auto& note : track.notes) {
             notesByStaff[note.staff].push_back(&note);
@@ -25,6 +30,7 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
 
         QVector<int> staffNumbers = notesByStaff.keys().toVector();
         for (const auto& measure : measures) {
+            // 没有音符的轨道仍需保留默认 staff 1，才能表示其空小节。
             if (!staffNumbers.contains(1)) staffNumbers.push_back(1);
             Q_UNUSED(measure);
         }
@@ -37,6 +43,7 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
             for (const auto& measure : measures) {
                 ScoreDomMeasure domMeasure;
                 domMeasure.value = measure;
+                // 一个 Segment 聚合同一 tick 的和弦和休止，保持时间顺序。
                 QHash<Tick, QVector<const NoteEvent*>> notesAtTick;
                 for (const auto* note : notes) {
                     if (note->start >= measure.start
@@ -56,6 +63,7 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
                         domNote.value = *note;
                         dom->m_notes.push_back(domNote);
                         if (note->rest) {
+                            // 休止独立建节点，不加入任何和弦。
                             ScoreDomRest rest;
                             rest.id = nextRestId++;
                             rest.tick = note->start;
@@ -69,6 +77,8 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
                         const int voice = note->voice;
                         int chordId = chordByVoice.value(voice, -1);
                         if (chordId < 0) {
+                            // 同一 tick 的同一 voice 共享一个和弦节点；其余音符
+                            // 只把自己的 DOM note ID 追加到该节点。
                             ScoreDomChord chord;
                             chord.id = nextChordId++;
                             chord.tick = note->start;
@@ -92,6 +102,8 @@ std::shared_ptr<const ScorePlaybackDom> ScorePlaybackDom::build(const MusicDocum
             part.staves.push_back(std::move(staff));
         }
 
+        // 当前 DOM 只把轨道 hairpin 投影为通用 crescendo/diminuendo spanner，
+        // 不在此阶段解释具体绘制样式。
         for (const auto& hairpin : track.hairpins) {
             dom->m_spanners.push_back({hairpin.crescendo ? QStringLiteral("crescendo")
                                                         : QStringLiteral("diminuendo"),

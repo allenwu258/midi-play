@@ -3,8 +3,12 @@
 #include <algorithm>
 #include <cmath>
 
+// MusicDocument 的时间、调性和反复展开算法实现。
+// 本文件不负责读取具体文件格式，只消费已归一化的领域结构。
 namespace midi_play::music {
 
+// 将调号的五度圈值转换为 MIDI pitch class。minor 使用关系大调的
+// 相对主音偏移，从而与后续音级推导保持一致。
 int KeyContext::tonicPitchClass() const
 {
     const int normalizedFifths = std::clamp(fifths, -7, 7);
@@ -14,6 +18,8 @@ int KeyContext::tonicPitchClass() const
     return tonic;
 }
 
+// 在当前调式音阶中寻找距离给定 MIDI 音高最近的音级。
+// 这里返回的是 1..7 的功能音级，不负责决定具体的升降号拼写。
 int KeyContext::degreeFor(const WrittenPitch& pitch) const
 {
     static constexpr int majorScale[] = {0, 2, 4, 5, 7, 9, 11};
@@ -36,6 +42,8 @@ int KeyContext::degreeFor(const WrittenPitch& pitch) const
     return bestDegree;
 }
 
+// 将源小节按 repeat、ending、D.C.、D.S. 和 coda 标记展开为线性播放段。
+// 每次循环只推进小节索引和跳转上下文，不复制音符数据。
 RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
 {
     RepeatList list;
@@ -58,8 +66,8 @@ RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
     const int maxSteps = qMax(1024, measures.size() * 64);
     for (int step = 0; index >= 0 && index < measures.size() && step < maxSteps; ++step) {
         const auto& measure = measures[index];
-        // Returning to the repeat start must preserve the current pass. Resetting
-        // it here would make every repeat end jump back forever until maxSteps.
+        // 回到 repeat 起点时必须保留当前 pass；此处重置会导致每次到
+        // repeatEnd 都重新从第一遍开始，最终只能依赖 maxSteps 截断。
         if (measure.repeatStart && context.repeatPass == 0) {
             context.repeatStartIndex = index;
         }
@@ -112,11 +120,14 @@ RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
     }
 
     if (list.m_segments.isEmpty()) list.m_segments.push_back({0, duration, 0, 0, -1});
+    // 最后一个输出段的末端就是展开时间线的总长度。
     const auto& last = list.m_segments.back();
     list.m_duration = last.outputStart + (last.sourceEnd - last.sourceStart);
     return list;
 }
 
+// 使用惰性构建的 tempo map 将源 tick 转换为微秒。
+// tick 会先限制在 [0, duration]，避免外部拖动位置产生越界时间。
 qint64 MusicDocument::tickToMicroseconds(Tick tick) const
 {
     tick = std::clamp<Tick>(tick, 0, m_duration);
@@ -132,6 +143,7 @@ qint64 MusicDocument::tickToMicroseconds(Tick tick) const
         (tick - segment.start) * 60'000'000.0 / (segment.bpm * kPpq)));
 }
 
+// 通过二分查找寻找第一个不早于目标微秒位置的 tick。
 Tick MusicDocument::microsecondsToTick(qint64 microseconds) const
 {
     if (microseconds <= 0) {
@@ -150,6 +162,8 @@ Tick MusicDocument::microsecondsToTick(qint64 microseconds) const
     return low;
 }
 
+// 把展开后的输出 tick 映射到对应 PlaybackSegment，再累计此前段落的实际源时长。
+// 反复段重复使用同一源 tempo，但输出时间必须按每一段单独累计。
 qint64 MusicDocument::playbackTickToMicroseconds(Tick outputTick) const
 {
     outputTick = std::max<Tick>(0, outputTick);
@@ -170,6 +184,8 @@ qint64 MusicDocument::playbackTickToMicroseconds(Tick outputTick) const
     return elapsedUs;
 }
 
+// 按 tick/sequence 排序并生成分段累计时间的 tempo map。
+// 该函数是 const，因为缓存属于文档的惰性派生状态；修改 tempos() 会清空缓存。
 void MusicDocument::rebuildTempoMap() const
 {
     if (!m_tempoMap.isEmpty()) return;
@@ -184,6 +200,7 @@ void MusicDocument::rebuildTempoMap() const
     for (const auto& change : changes) {
         const Tick tick = std::clamp<Tick>(change.tick, 0, m_duration);
         if (tick < cursor) continue;
+        // 先累计旧 tempo 覆盖的区间，再把新 tempo 作为当前位置之后的值。
         elapsedUs += static_cast<qint64>(std::llround(
             (tick - cursor) * 60'000'000.0 / (bpm * kPpq)));
         bpm = change.bpm > 0.0 ? change.bpm : bpm;
@@ -195,6 +212,7 @@ void MusicDocument::rebuildTempoMap() const
         }
         cursor = tick;
     }
+    // 没有从 tick 0 开始的显式速度时，补入默认 120 BPM 基线。
     if (m_tempoMap.isEmpty() || m_tempoMap.front().start != 0) {
         m_tempoMap.push_front({0, m_duration, 0, 120.0});
     }
@@ -204,6 +222,8 @@ void MusicDocument::rebuildTempoMap() const
     m_tempoMap.back().end = m_duration;
 }
 
+// 从轨道小节表中选出最长的一份作为文档级网格。
+// MIDI 文档可能没有真实小节，因此没有轨道小节时生成一个占位小节。
 void MusicDocument::rebuildMeasureGrid()
 {
     m_measures.clear();
@@ -215,12 +235,14 @@ void MusicDocument::rebuildMeasureGrid()
     }
 }
 
+// 返回源小节的播放顺序投影；没有小节信息时视为单一连续段。
 QVector<PlaybackSegment> MusicDocument::playbackSegments() const
 {
     if (m_measures.isEmpty()) return {{0, m_duration, 0, 0, -1}};
     return RepeatList::build(m_measures, m_duration).segments();
 }
 
+// 计算反复展开后输出时间线的总 tick 数。
 Tick MusicDocument::playbackDuration() const
 {
     if (m_measures.isEmpty()) return m_duration;

@@ -6,15 +6,21 @@
 #include <cmath>
 #include <limits>
 
+// MusicAnalyzer 的启发式音乐分析实现。
+// 分析保留音符的核心演奏参数，补充派生字段，并按稳定的时间/声部顺序
+// 规范轨道音符容器，供后续播放和可视化索引使用。
 namespace midi_play::music {
 namespace {
 
+// 将任意 MIDI 音高归一化到 0..11 的 pitch class。
 int pitchClass(int pitch)
 {
     const int value = pitch % 12;
     return value < 0 ? value + 12 : value;
 }
 
+// 在当前调式中寻找最接近的音级及升降号数量。
+// 结果用于简谱/记谱展示，不会修改原始 MIDI pitch。
 int nearestScaleStep(int pitch, const KeyContext& key, int* alter)
 {
     static constexpr int majorScale[] = {0, 2, 4, 5, 7, 9, 11};
@@ -32,8 +38,8 @@ int nearestScaleStep(int pitch, const KeyContext& key, int* alter)
         while (candidateAlter < -6) candidateAlter += 12;
         if (std::abs(candidateAlter) > 2) continue;
 
-        // Prefer the diatonic spelling with the fewest accidentals. When a
-        // chromatic pitch is equidistant, follow the key signature direction.
+        // 优先选择升降号最少的调内拼写；等距时沿调号方向选择，
+        // 使升号调倾向升记号、降号调倾向降记号。
         const int directionPenalty = candidateAlter == 0 ? 0
             : (key.fifths < 0 ? (candidateAlter > 0 ? 1 : 0)
                               : (candidateAlter < 0 ? 1 : 0));
@@ -48,6 +54,7 @@ int nearestScaleStep(int pitch, const KeyContext& key, int* alter)
     return bestStep;
 }
 
+// 在有序小节表中查找包含 tick 的小节索引。
 int findMeasure(const QVector<Measure>& measures, Tick tick)
 {
     if (measures.isEmpty()) return -1;
@@ -62,6 +69,8 @@ int findMeasure(const QVector<Measure>& measures, Tick tick)
 
 } // namespace
 
+// 按“调性 -> 量化网格 -> 音高/小节派生 -> 和弦/连音 -> 三连音 ->
+// lane -> swing”顺序执行分析。顺序不可随意交换：后续步骤依赖前面的派生字段。
 MusicAnalysisReport MusicAnalyzer::analyze(MusicDocument& document, int laneCount) const
 {
     MusicAnalysisReport report;
@@ -77,6 +86,8 @@ MusicAnalysisReport MusicAnalyzer::analyze(MusicDocument& document, int laneCoun
     return report;
 }
 
+// 估计调性：存在显式调号时直接采用，否则使用音高时值加权直方图
+// 与 Krumhansl 风格的大小调 profile 进行相关性比较。
 KeyContext MusicAnalyzer::estimateKey(const MusicDocument& document, double* confidence)
 {
     if (!document.keySignatures().isEmpty()) {
@@ -91,6 +102,7 @@ KeyContext MusicAnalyzer::estimateKey(const MusicDocument& document, double* con
     for (const auto& track : document.tracks()) {
         for (const auto& note : track.notes) {
             if (note.rest) continue;
+            // 时值越长、力度越大的音符对调性估计贡献越大。
             histogram[pitchClass(note.pitch)] += std::max<Tick>(1, note.duration)
                 * std::max(1, note.velocity) / 127.0;
         }
@@ -114,6 +126,7 @@ KeyContext MusicAnalyzer::estimateKey(const MusicDocument& document, double* con
             }
         }
     }
+    // 最优与次优候选的间隔作为置信度；没有有效音符时返回 0。
     if (confidence) *confidence = best > 0.0 ? std::clamp((best - second) / best, 0.0, 1.0) : 0.0;
     int fifths = 0;
     for (int candidate = -7; candidate <= 7; ++candidate) {
@@ -123,6 +136,8 @@ KeyContext MusicAnalyzer::estimateKey(const MusicDocument& document, double* con
     return {fifths, bestMinor ? QStringLiteral("minor") : QStringLiteral("major")};
 }
 
+// 在一组预设 PPQ 网格中寻找平均起音误差最小者。
+// 当误差接近时保留更粗网格，避免把普通演奏误判为过细量化。
 Tick MusicAnalyzer::chooseQuantizationGrid(const MusicDocument& document, double* meanError)
 {
     static constexpr Tick candidates[] = {240, 160, 120, 80, 60, 40, 30};
@@ -140,7 +155,7 @@ Tick MusicAnalyzer::chooseQuantizationGrid(const MusicDocument& document, double
             }
         }
         if (count > 0) error /= count;
-        // Prefer a coarser grid when errors are statistically equivalent.
+        // 误差只有明显下降时才接受更细网格，从而保留较稳定的粗网格。
         if (error < bestError * 0.9 || bestError == std::numeric_limits<double>::infinity()) {
             bestError = error;
             bestGrid = grid;
@@ -150,15 +165,19 @@ Tick MusicAnalyzer::chooseQuantizationGrid(const MusicDocument& document, double
     return bestGrid;
 }
 
+// 为每个音符补齐绝对时间、音级、记谱音高、小节位置和量化网格位置。
 void MusicAnalyzer::enrichPitchAndGrid(MusicDocument& document, const KeyContext& key, Tick grid)
 {
     const auto& measures = document.measures();
-    int tonicStep = ((key.fifths * 4) % 7 + 7) % 7; // C=0, each sharp moves up a fifth.
+    // 五度圈每前进一次对应一个七声音级步长；minor 再移动到关系小调。
+    int tonicStep = ((key.fifths * 4) % 7 + 7) % 7;
     if (key.mode.compare(QStringLiteral("minor"), Qt::CaseInsensitive) == 0) {
-        tonicStep = (tonicStep + 5) % 7; // Relative minor is a diatonic sixth above.
+        tonicStep = (tonicStep + 5) % 7;
     }
     for (auto& track : document.tracks()) {
         for (auto& note : track.notes) {
+            // rawStart/rawEnd 保留源时间，供元数据和调试使用；播放时间
+            // 仍由 PlaybackTimeline 按反复展开重新计算。
             note.rawStart = {note.start, document.tickToMicroseconds(note.start)};
             note.rawEnd = {note.start + note.duration, document.tickToMicroseconds(note.start + note.duration)};
             int scaleAlter = 0;
@@ -176,6 +195,7 @@ void MusicAnalyzer::enrichPitchAndGrid(MusicDocument& document, const KeyContext
             note.measureIndex = findMeasure(measures, note.start);
             note.beat = note.measureIndex >= 0
                 ? static_cast<double>(note.start - measures[note.measureIndex].start) / MusicDocument::kPpq + 1.0 : 0.0;
+            // 量化只生成派生 GridTime，不修改 note.start/note.duration。
             const Tick gridStart = grid > 0
                 ? static_cast<Tick>(std::llround(static_cast<double>(note.start) / grid)) * grid
                 : note.start;
@@ -193,6 +213,8 @@ void MusicAnalyzer::enrichPitchAndGrid(MusicDocument& document, const KeyContext
     }
 }
 
+// 按起始 tick、voice 和 staff 分组构建和弦，并把 tie 链和长音抽取为
+// 可供播放/可视化直接使用的辅助结构。
 void MusicAnalyzer::buildChordsAndTies(MusicDocument& document)
 {
     quint64 nextChord = 1;
@@ -202,6 +224,7 @@ void MusicAnalyzer::buildChordsAndTies(MusicDocument& document)
         track.holds.clear();
         track.ties.clear();
         track.drumMap.clear();
+        // 后续和弦、tie 扫描依赖稳定的时间/声部/音高顺序。
         std::sort(track.notes.begin(), track.notes.end(), [](const auto& left, const auto& right) {
             if (left.start != right.start) return left.start < right.start;
             if (left.voice != right.voice) return left.voice < right.voice;
@@ -227,6 +250,7 @@ void MusicAnalyzer::buildChordsAndTies(MusicDocument& document)
             i = j;
         }
         for (auto& note : track.notes) {
+            // 仅把超过八分之一四分音符的音符视为可视化 hold 候选。
             if (note.duration > MusicDocument::kPpq / 8) track.holds.push_back({note.noteId, note.start,
                                                                  note.start + note.duration, -1});
             if (track.percussion && std::none_of(track.drumMap.cbegin(), track.drumMap.cend(),
@@ -239,6 +263,8 @@ void MusicAnalyzer::buildChordsAndTies(MusicDocument& document)
             auto& note = track.notes[i];
             if (!note.tieStart && !note.tieStop) continue;
             const QString key = QStringLiteral("%1/%2/%3").arg(note.staff).arg(note.voice).arg(note.pitch);
+            // staff/voice/pitch 组成 tie 的匹配键，避免不同声部的同音高
+            // 互相合并。
             if (note.tieStop && openTies.contains(key)) {
                 note.tieGroupId = openTies.value(key);
             } else {
@@ -255,6 +281,7 @@ void MusicAnalyzer::buildChordsAndTies(MusicDocument& document)
     }
 }
 
+// 用三个相邻的不同起音位置匹配 3:2 的间隔模式，返回启发式三连音候选。
 QVector<TupletCandidate> MusicAnalyzer::detectTuplets(const MusicDocument& document, Tick grid)
 {
     QVector<TupletCandidate> result;
@@ -273,6 +300,7 @@ QVector<TupletCandidate> MusicAnalyzer::detectTuplets(const MusicDocument& docum
                 const Tick expected = base * 2;
                 const Tick interval = starts[i + 1] - first;
                 const Tick expectedInterval = base * 2 / 3;
+                // 同时约束总跨度和中间间隔，降低普通切分被误判为三连音的概率。
                 if (std::abs(span - expected) <= base / 4
                     && std::abs(interval - expectedInterval) <= base / 6) {
                     result.push_back({first, last + std::max<Tick>(1, expectedInterval), 3, 2,
@@ -286,6 +314,7 @@ QVector<TupletCandidate> MusicAnalyzer::detectTuplets(const MusicDocument& docum
     return result;
 }
 
+// 根据每条轨道的音域把音符压缩到 laneCount 个离散通道，并同步更新 hold。
 QVector<LaneAssignment> MusicAnalyzer::assignLanes(MusicDocument& document, int laneCount)
 {
     QVector<LaneAssignment> result;
@@ -311,6 +340,7 @@ QVector<LaneAssignment> MusicAnalyzer::assignLanes(MusicDocument& document, int 
     return result;
 }
 
+// 收集全曲相邻起音间隔，估计长短拍比例；没有稳定长短关系时返回 1.0。
 double MusicAnalyzer::estimateSwingRatio(const MusicDocument& document, Tick grid)
 {
     if (grid <= 0) return 1.0;
