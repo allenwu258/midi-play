@@ -34,6 +34,7 @@ VulkanEffectsProfile effectsProfileFor(midi_play::settings::ThemeMode mode, bool
 }
 }
 
+// 先更新静态依赖和候选实例，再计算当前帧的活动音符、装饰及文字。
 void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& state,
                           QSize size, qreal dpr, const QFont& font,
                           bool hasBackground, QSize backgroundSize, quint64 backgroundRevision)
@@ -64,6 +65,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     m_backgroundAlignment = midi_play::settings::normalizeBackgroundImageAlignment(
         state.backgroundImageAlignment);
     m_backgroundOpacity = std::clamp(state.backgroundImageOpacity, 0, 100);
+    // 旧图表下标、可见窗口和时间基准不能沿用到新文档，必须在材料查询前一起失效。
     if (chartChanged) {
         m_chart = state.chart;
         m_index = {};
@@ -100,6 +102,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     const qint64 timeOrigin = (state.transportPositionUs / 60'000'000) * 60'000'000;
     const bool originChanged = m_timeOriginUs != timeOrigin;
     m_timeOriginUs = timeOrigin;
+    // 候选集合不变时 GPU 每帧按帧位置计算音符 Y；只有实例依赖变化才推进上传版本。
     if (candidatesChanged || layoutChanged || materialsChanged || effectsChanged || originChanged) {
         rebuildNotes(state);
         m_consumedMaterialRevision = m_cache.materialRevision();
@@ -115,6 +118,7 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     buildDecorations(state, font);
 }
 
+// 只打包音符横向几何和相对时间，纵向位置由 note.vert 在实际播放时刻求值。
 void VulkanScene::rebuildNotes(const midi_play::visualization::PlaybackSceneState& state)
 {
     ++m_notesRevision;
@@ -145,6 +149,7 @@ void VulkanScene::rebuildNotes(const midi_play::visualization::PlaybackSceneStat
     }
 }
 
+// UI 图元 times.w 默认为零，options 在此编码边框宽度和椭圆标志。
 void VulkanScene::rect(QVector<VulkanQuad>& output, const QRectF& area, const QColor& fill,
                        const QColor& edge, float width, bool ellipse)
 {
@@ -157,6 +162,7 @@ void VulkanScene::rect(QVector<VulkanQuad>& output, const QRectF& area, const QC
     output.push_back(quad);
 }
 
+// 同字体/宽度/文本复用图集区域；DPR 变更通过整体图集重建处理，不写入缓存键。
 VulkanScene::Glyph VulkanScene::glyph(const QString& value, const QFont& font, qreal maximumWidth)
 {
     const qreal widthLimit = std::min(maximumWidth < 0 ? 2000.0 / m_dpr : maximumWidth, 2000.0 / m_dpr);
@@ -181,6 +187,7 @@ VulkanScene::Glyph VulkanScene::glyph(const QString& value, const QFont& font, q
     painter.translate(result.pixels.topLeft() + QPoint(2, 2));
     painter.scale(m_dpr, m_dpr);
     painter.setFont(font);
+    // 图集只承担覆盖率，统一画白色；实际主题颜色在每个文字实例中提供。
     painter.setPen(Qt::white);
     painter.drawStaticText(QPointF(), layout.staticText);
     painter.end();
@@ -191,6 +198,7 @@ VulkanScene::Glyph VulkanScene::glyph(const QString& value, const QFont& font, q
     return result;
 }
 
+// 排版尺寸采用逻辑像素，图集 UV 采用物理像素比例，两者不能直接混用。
 void VulkanScene::text(QVector<VulkanQuad>& output, const QString& value, const QFont& font,
                        const QRectF& area, const QColor& color, Qt::Alignment alignment, qreal maximumWidth)
 {
@@ -211,6 +219,7 @@ void VulkanScene::text(QVector<VulkanQuad>& output, const QString& value, const 
                float(item.pixels.width()) / 2048, float(item.pixels.height()) / 2048};
 }
 
+// 只重建不随播放位置变化的背景和键盘，空层也写边界以保证 range 查询正确。
 void VulkanScene::rebuildStaticUi()
 {
     ++m_staticUiRevision;
@@ -258,6 +267,7 @@ void VulkanScene::rebuildStaticUi()
     m_staticUi.finish();
 }
 
+// 按固定层序生成时间相关 UI；静态/动态批次在后端逐层交错，保持琴键遮挡关系。
 void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackSceneState& state, const QFont& font)
 {
     m_dynamicUi.clear();
@@ -278,6 +288,7 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
     if (m_chart) {
         QFont gridFont(font); gridFont.setPointSizeF(8);
         const auto& lines = m_chart->gridLines();
+        // 网格已按微秒排序，二分跳过窗口前的线，再按可见时间与逻辑裁剪区精确筛选。
         auto it = std::lower_bound(lines.cbegin(), lines.cend(), state.transportPositionUs - state.afterglowUs,
             [](const auto& line, qint64 value) { return line.timeUs < value; });
         for (; it != lines.cend() && it->timeUs <= state.transportPositionUs + state.lookAheadUs; ++it) {
@@ -384,6 +395,7 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
             x += width + 13;
         }
     }
+    // 动态白键属于 WhiteKeys，全部黑键在后继层覆盖；不能把所有活动键统一放到最上层。
     for (bool black : {false, true}) {
         m_dynamicUi.beginLayer(black ? VulkanUiLayer::BlackKeys : VulkanUiLayer::WhiteKeys);
         for (const auto& slot : g.pitches) {
@@ -447,6 +459,7 @@ void VulkanScene::buildDecorations(const midi_play::visualization::PlaybackScene
         text(output,overlay.marker,overlayFont,{left,g.fallingRect.top()+8,g.pianoRect.width(),24},m_theme.secondaryText,Qt::AlignCenter,g.pianoRect.width());
         text(output,overlay.lyric,overlayFont,{left,g.strikeLineY-34,g.pianoRect.width(),24},m_theme.primaryText,Qt::AlignCenter,g.pianoRect.width()*.8);
     }
+    // 状态遮罩最后绘制；错误文本优先于加载文本，保留底层场景便于状态过渡。
     if (!m_chart || state.loading || !state.errorMessage.isEmpty()) {
         rect(output,g.fallingRect,state.loading ? m_theme.loadingVeil : m_theme.emptyVeil);
         QFont statusFont(font); statusFont.setPointSizeF(11); statusFont.setWeight(QFont::DemiBold);

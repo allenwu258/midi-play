@@ -1,5 +1,5 @@
-#include "playbackvisualizationprojector.h"
 // 实现反复展开后的视觉音符、节拍网格与元数据投影。
+#include "playbackvisualizationprojector.h"
 #include "domain/music/musicrhythmgrid.h"
 #include "domain/music/playbacksegmentbounds.h"
 #include "noteoverlaplayout.h"
@@ -194,6 +194,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
         for (int trackIndex = 0; trackIndex < document.tracks().size(); ++trackIndex) {
             const auto& track = document.tracks()[trackIndex];
             for (const auto& note : track.notes) {
+                // 起音归属半开源区间，段交界音符只生成一次；长音结束另按连续段限制。
                 if (note.rest || note.start < segment.sourceStart || note.start >= segment.sourceEnd) continue;
                 const Tick availableDuration = std::max<Tick>(1, continuousEnds[segmentIndex] - note.start);
                 const Tick sourceDuration = std::max<Tick>(1, std::min(note.duration, availableDuration));
@@ -270,6 +271,7 @@ VisualChartPtr PlaybackVisualizationProjector::project(const music::MusicDocumen
 
     int minimumPitch = 127;
     int maximumPitch = 0;
+    // 连线合并后才分配身份和轨道下标，保证缓存引用最终音符数组。
     quint64 instanceId = 1;
     // 子道基于按键区间分配，踏板尾音不挤占后续击键宽度。
     assignNoteOverlapLanes(chart->m_notes);

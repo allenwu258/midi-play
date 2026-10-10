@@ -91,6 +91,7 @@ QToolButton* toolButton(QWidget* parent, const QIcon& icon, const QString& text,
 
 } // namespace
 
+// 构建界面并绑定应用/设置服务；控件初值先由快照回填，再接收后续变更。
 MainWindow::MainWindow(app::PlayerApplicationService* service,
                        app::SettingsService* settingsService,
                        QWidget* parent, theme::ThemeController* themeController,
@@ -360,7 +361,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         m_sliderDragging = false;
     });
 
-    // 新文档重置秒级缓存和 seek 状态；图表就绪信号再安装可视化与元数据缓存。
+    // 应用服务先发布图表，再通知文档；文档通知重置秒级缓存和 seek 状态。
     connect(m_service, &app::PlayerApplicationService::documentLoaded, this,
             [this](const QString& title, qint64 duration) {
                 m_fileLabel->setText(title);
@@ -513,11 +514,13 @@ void MainWindow::openMusicFile()
     if (!path.isEmpty()) m_service->openFile(path);
 }
 
+// 关闭窗口只提出协作取消请求；后台任务持有独立快照和共享取消标志。
 MainWindow::~MainWindow()
 {
     if (m_exportCancel) m_exportCancel->store(true);
 }
 
+// 按当前后端/编码器能力构建参数页，并为视频冻结场景配置。
 void MainWindow::openExportDialog()
 {
     // 视频需要当前 Vulkan 视图已就绪且 FFmpeg 检测通过，音频入口独立可用。
@@ -559,6 +562,7 @@ void MainWindow::openExportDialog()
     startVideoExport(options);
 }
 
+// 启动唯一后台音频任务，GUI 采样原子进度，完成回调统一回收任务界面。
 void MainWindow::startAudioExport(const app::AudioExportOptions& options)
 {
     // 导出持有只读文档快照，后续切换播放曲目不影响当前任务。
@@ -620,6 +624,7 @@ void MainWindow::startAudioExport(const app::AudioExportOptions& options)
     }));
 }
 
+// 文档和导出占用共同决定入口是否可用，禁用时提供对应原因。
 void MainWindow::updateExportButtonState()
 {
     if (!m_exportButton) return;
@@ -630,6 +635,7 @@ void MainWindow::updateExportButtonState()
         : available ? QStringLiteral("打开音频或视频导出页面") : QStringLiteral("请先打开乐曲"));
 }
 
+// Vulkan 构建中启动独立离屏视频导出；进度与取消均通过共享原子值传递。
 void MainWindow::startVideoExport(const app::VideoExportOptions& options)
 {
 #if !MIDI_PLAY_HAS_VULKAN
@@ -669,6 +675,7 @@ void MainWindow::startVideoExport(const app::VideoExportOptions& options)
 #endif
 }
 
+// 复用非模态设置窗口，QPointer 在窗口销毁后自动清空。
 void MainWindow::showSettings()
 {
     if (!m_settingsDialog) {
@@ -680,6 +687,7 @@ void MainWindow::showSettings()
     m_settingsDialog->activateWindow();
 }
 
+// 消费实际传输时间；seek 待确认时丢弃旧展示更新，拖动时保留预览标签。
 void MainWindow::updatePosition(qint64 position, qint64 duration, qint64 sampledAtUs)
 {
     m_positionUs = std::clamp<qint64>(position, 0, std::max<qint64>(0, duration));
@@ -704,6 +712,7 @@ void MainWindow::updatePosition(qint64 position, qint64 duration, qint64 sampled
     m_visualization->setTransportPosition(m_positionUs, m_durationUs, sampledAtUs);
 }
 
+// 将领域状态同步到可视化、状态文字和传输按钮，不在展示层触发播放转换。
 void MainWindow::updatePlaybackState(playback::State state)
 {
     m_playbackState = state;
@@ -742,6 +751,7 @@ void MainWindow::updateMetadata(qint64 positionUs)
     m_tempoLabel->setText(metadata.tempo);
 }
 
+// 秒级值未变化时跳过标签重排，底层仍保留微秒精度的位置。
 void MainWindow::updateTimeDisplay(qint64 positionUs, qint64 durationUs)
 {
     const qint64 positionSecond = std::max<qint64>(0, positionUs) / 1'000'000;
@@ -765,6 +775,7 @@ void MainWindow::updateResponsiveVisibility()
     m_tempoLabel->setVisible(showMetadata);
 }
 
+// 播放入口额外受音源加载状态约束，暂停、停止及进度条按会话状态更新。
 void MainWindow::updateTransportControls()
 {
     const bool hasDocument = m_durationUs > 0 && m_playbackState != playback::State::Empty;

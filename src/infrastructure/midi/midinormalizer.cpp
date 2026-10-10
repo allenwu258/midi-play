@@ -103,6 +103,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
             // pending 按音高保存重叠按键；sustained 保存已松键但被踏板保持的音符下标。
             // sostenuto 只捕获踩下瞬间仍按着的音符，以源序号区分同音高实例。
             QHash<int, QVector<PendingNote>> pending;
+            // 下标只在本通道构建阶段使用，排序发生在所有延音边界结算之后。
             QVector<int> sustained;
             QSet<quint64> sostenutoCaptured;
             bool sustainDown = false;
@@ -186,6 +187,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
                     if (heldByPedal) sustained.push_back(noteIndex);
                     break;
                 }
+                // 默认音色随消息推进，已配对音符保留按下时的音色，不追随后续 program。
                 case MidiMessageKind::ProgramChange:
                     currentProgram = std::clamp(event.data1, 0, 127);
                     track.program = currentProgram;
@@ -247,6 +249,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
             }
             sustained.clear();
 
+            // 清理全部 pending/sustained 后再排序，避免可变容器下标指向其他音符。
             std::sort(track.notes.begin(), track.notes.end(), [](const auto& left, const auto& right) {
                 if (left.start != right.start) return left.start < right.start;
                 if (left.sequence != right.sequence) return left.sequence < right.sequence;
@@ -255,6 +258,7 @@ MidiNormalizeResult MidiNormalizer::normalize(const MidiParsedFile& source) cons
             for (const auto& note : track.notes) {
                 result->duration = std::max(result->duration, note.audibleEnd);
             }
+            // 无配对音符的通道不建立逻辑轨道，其原始消息仍保留在全局事件中。
             if (!track.notes.isEmpty()) result->tracks.push_back(std::move(track));
         }
         if (source.header.format == 2) {

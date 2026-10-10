@@ -1,3 +1,4 @@
+// 音乐分析实现：补充调性、量化和演奏派生信息，并规范轨道顺序以支持播放及可视化。
 #include "musicanalysis.h"
 #include <QHash>
 
@@ -6,9 +7,6 @@
 #include <cmath>
 #include <limits>
 
-// MusicAnalyzer 的启发式音乐分析实现。
-// 分析保留音符的核心演奏参数，补充派生字段，并按稳定的时间/声部顺序
-// 规范轨道音符容器，供后续播放和可视化索引使用。
 namespace midi_play::music {
 namespace {
 
@@ -128,6 +126,7 @@ KeyContext MusicAnalyzer::estimateKey(const MusicDocument& document, double* con
     }
     // 最优与次优候选的间隔作为置信度；没有有效音符时返回 0。
     if (confidence) *confidence = best > 0.0 ? std::clamp((best - second) / best, 0.0, 1.0) : 0.0;
+    // 从五度圈寻找主音匹配的表示；等音调可能有多种调号，此处采用遍历遇到的首个表示。
     int fifths = 0;
     for (int candidate = -7; candidate <= 7; ++candidate) {
         KeyContext context {candidate, bestMinor ? QStringLiteral("minor") : QStringLiteral("major")};
@@ -203,6 +202,7 @@ void MusicAnalyzer::enrichPitchAndGrid(MusicDocument& document, const KeyContext
             const Tick gridEnd = grid > 0
                 ? static_cast<Tick>(std::llround(static_cast<double>(gridEndRaw) / grid)) * grid
                 : gridEndRaw;
+            // 量化后位置可能跨小节，重新定位网格小节，不能沿用原始 note.measureIndex。
             const int gridMeasure = findMeasure(measures, gridStart);
             const double gridBeat = gridMeasure >= 0
                 ? static_cast<double>(gridStart - measures[gridMeasure].start) / MusicDocument::kPpq + 1.0 : 0.0;
@@ -265,6 +265,7 @@ void MusicAnalyzer::buildChordsAndTies(MusicDocument& document)
             const QString key = QStringLiteral("%1/%2/%3").arg(note.staff).arg(note.voice).arg(note.pitch);
             // staff/voice/pitch 组成 tie 的匹配键，避免不同声部的同音高
             // 互相合并。
+            // 起止标记同时存在时延续当前链；孤立 tieStop 建立独立组，不向前猜测匹配音符。
             if (note.tieStop && openTies.contains(key)) {
                 note.tieGroupId = openTies.value(key);
             } else {
@@ -290,6 +291,7 @@ QVector<TupletCandidate> MusicAnalyzer::detectTuplets(const MusicDocument& docum
         QVector<Tick> starts;
         for (const auto& note : track.notes) starts.push_back(note.start);
         std::sort(starts.begin(), starts.end());
+        // 同时起音的和弦只贡献一个时间点，避免零间隔参与三连音判断。
         starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
         for (int i = 0; i + 2 < starts.size(); ++i) {
             const Tick first = starts[i];

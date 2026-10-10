@@ -104,11 +104,13 @@ void main() {
         if (flags.z > 1.5) c *= texture(background, texcoord);
         else c.a *= texture(atlas,texcoord).a;
     } else if (flags.w>0) {
+        // 椭圆实例在单位圆内保留片元；类型 2 额外执行径向 alpha 衰减。
         vec2 normalized=local/shape.xy*2-1;
         float radius=length(normalized);
         if (radius>1) discard;
         if (flags.w==2) c.a*=1-radius;
     } else if (shape.z>0) {
+        // shape.z 为逻辑像素边框宽度，flags.y 决定实线或分段虚线。
         float nearest=min(min(local.x,shape.x-local.x),min(local.y,shape.y-local.y));
         if (nearest<shape.z) {
             bool vertical=min(local.x,shape.x-local.x)<shape.z;

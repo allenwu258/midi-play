@@ -1,6 +1,6 @@
+// 实现钢琴/鼓区分配、虚拟白键延伸和音乐时间到垂直像素的比例。
 #include "scenelayoutengine.h"
 
-// 实现钢琴/鼓区分配、虚拟白键延伸和音乐时间到垂直像素的比例。
 #include <algorithm>
 
 namespace midi_play::presentation::visualization {
@@ -40,6 +40,7 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
     PlaybackSceneGeometry geometry;
     geometry.bounds = QRectF(QPointF(0.0, 0.0), viewport);
 
+    // 计算尺寸至少为一；bounds 仍记录输入视口，供调用方裁剪。
     const qreal width = std::max<qreal>(1.0, viewport.width());
     const qreal height = std::max<qreal>(1.0, viewport.height());
     const qreal keyboardHeight = std::clamp(height * 0.17, 88.0, 132.0);

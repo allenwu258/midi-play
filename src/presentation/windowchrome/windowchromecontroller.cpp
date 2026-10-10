@@ -52,7 +52,7 @@ struct WindowChromeController::NativeFrame {
     HWND hwnd = nullptr;
     UINT dpi = USER_DEFAULT_SCREEN_DPI;
     bool customApplied = false;
-    QPointer<QToolButton> pressedButton;
+    QPointer<QToolButton> pressedButton; // 弱引用跨越一次原生按压/释放，控件销毁后自动失效。
 
     // 用屏幕物理坐标查找可见且启用的系统按钮，返回用于桥接的 Qt 控件。
     QToolButton* captionButtonAt(POINT screenPoint) const
@@ -498,6 +498,7 @@ struct WindowChromeController::NativeFrame {
 #endif
 };
 
+// 由被装饰窗口管理生命周期，事件过滤器仅观察需要更新框架的 Qt 事件。
 WindowChromeController::WindowChromeController(QWidget* window)
     : QObject(window), m_window(window), m_native(std::make_unique<NativeFrame>(*this))
 {
@@ -506,6 +507,7 @@ WindowChromeController::WindowChromeController(QWidget* window)
 
 WindowChromeController::~WindowChromeController() = default;
 
+// 替换标题栏命中区域及交互控件列表；借用对象通过弱指针跟踪。
 void WindowChromeController::setTitleBar(QWidget* titleBar, QWidget* systemMenuWidget,
                                          const QVector<QWidget*>& interactiveWidgets)
 {
@@ -518,6 +520,7 @@ void WindowChromeController::setTitleBar(QWidget* titleBar, QWidget* systemMenuW
     scheduleRefresh();
 }
 
+// 断开旧按钮组并绑定新命令入口，避免更换控件后重复执行窗口操作。
 void WindowChromeController::setCaptionButtons(CaptionButtons* buttons)
 {
     if (m_captionButtons) disconnect(m_captionButtons, nullptr, this, nullptr);
@@ -556,6 +559,7 @@ void WindowChromeController::setTheme(midi_play::settings::ThemeMode theme)
 int WindowChromeController::captionButtonsWidth() const noexcept { return m_native->buttonsWidth; }
 int WindowChromeController::minimumCaptionHeight() const noexcept { return m_native->captionHeight; }
 
+// 合并同一事件循环内的 DPI、句柄及尺寸变化，待 Qt 状态更新后刷新一次。
 void WindowChromeController::scheduleRefresh()
 {
     if (m_refreshPending) return;
@@ -566,6 +570,7 @@ void WindowChromeController::scheduleRefresh()
     });
 }
 
+// 应用当前框架模式；原生集成失败时恢复属性并发布最终回退模式。
 void WindowChromeController::refreshFrame()
 {
 #if defined(Q_OS_WIN)
@@ -585,6 +590,7 @@ void WindowChromeController::refreshFrame()
 #endif
 }
 
+// 观察窗口/标题栏变化但不消费事件，原有 Qt 激活与布局流程继续执行。
 bool WindowChromeController::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == m_window) {
@@ -608,6 +614,7 @@ bool WindowChromeController::eventFilter(QObject* watched, QEvent* event)
     return QObject::eventFilter(watched, event);
 }
 
+// Windows 消息由私有实现按窗口及模式筛选；其他平台返回未处理。
 bool WindowChromeController::processNativeEvent(const QByteArray& eventType, void* message, qintptr* result)
 {
 #if defined(Q_OS_WIN)
@@ -649,6 +656,7 @@ void WindowChromeController::close()
     if (m_window) m_window->close();
 }
 
+// 在系统图标下方弹出原生菜单，使用屏幕物理坐标并异步投递所选命令。
 void WindowChromeController::showSystemMenu()
 {
 #if defined(Q_OS_WIN)

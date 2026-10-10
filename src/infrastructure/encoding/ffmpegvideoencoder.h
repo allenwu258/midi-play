@@ -20,6 +20,8 @@ public:
     ~FfmpegVideoEncoder();
     // 校验参数和可选 PCM 长度，探测硬件编码可用性并启动真实编码进程。
     // error 需为有效指针；canceled 指针借用到任务结束。
+    // size 是输出物理像素；frameCount/fps 定义 CFR 时长；PCM 为双声道交错 float32。
+    // pcmPath 为空时只编码视频；输出是否最终替换已有文件由应用服务决定。
     bool open(const QString& executable, const QString& output, const QString& pcmPath,
               QSize size, int fps, int crf, qint64 frameCount, int audioSampleRate,
               const std::atomic_bool* canceled, QString* error);
@@ -30,6 +32,7 @@ public:
     // 返回当前编码器选择快照。
     FfmpegVideoEncoderRuntimeDiagnostics diagnostics() const { return m_runtimeDiagnostics; }
     // ffprobe 可用时检查指定元数据，随后始终完整解码检查媒体有效性。
+    // 未提供预期尺寸、帧率、帧数或时长时跳过相应匹配检查，时长单位为微秒。
     static bool validate(const QString& executable, const QString& path,
                          const std::atomic_bool* canceled, QString* error,
                          QSize expectedSize = {}, int expectedFps = 0,
@@ -41,7 +44,7 @@ private:
     // 汇总已采集诊断或 QProcess 错误并返回 false。
     bool processError(QString* error);
     QProcess m_process;
-    const std::atomic_bool* m_canceled = nullptr;
+    const std::atomic_bool* m_canceled = nullptr; // 借用，编码及验证期间由调用方保持存活。
     QByteArray m_processDiagnostics;
     QSize m_size;
     qint64 m_expectedFrames = 0; // 与调用方的 CFR 时间线一致，少帧/多帧都拒绝。

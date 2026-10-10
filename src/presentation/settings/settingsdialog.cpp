@@ -35,6 +35,7 @@ constexpr int kVisualEffectsDisabledUiValue = -1;
 
 } // namespace
 
+// 构建即时生效的设置视图，回填服务快照并建立用户编辑/模型通知的双向绑定。
 SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                                app::PlayerApplicationService* playerService,
                                QWidget* parent, theme::ThemeController* themeController,
@@ -408,6 +409,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     resize(size().expandedTo(sizeHint()));
 }
 
+// 预设值直接提交；选择自定义项时显示编辑器并提交其当前实际值。
 void SettingsDialog::applyRefreshRateFromUi()
 {
     if (!m_settingsService || !m_refreshRateCombo) {
@@ -460,6 +462,7 @@ void SettingsDialog::applyGraphicsModeFromUi()
     m_settingsService->setGraphicsMode(mode);
 }
 
+// 将界面单选值拆成档位和启用状态；关闭哨兵不写入领域档位枚举。
 void SettingsDialog::applyVisualEffectsFromUi()
 {
     if (!m_settingsService || !m_visualEffectsCombo) return;
@@ -480,6 +483,7 @@ void SettingsDialog::chooseSoundFont()
     chooseSoundFontFile(this, m_settingsService, m_playerService);
 }
 
+// 保存用户选定目录；再次选择同目录仍主动发起探测。
 void SettingsDialog::chooseFfmpegDirectory()
 {
     if (!m_settingsService) return;
@@ -492,6 +496,7 @@ void SettingsDialog::chooseFfmpegDirectory()
     if (unchanged) m_ffmpegService->refresh();
 }
 
+// 同步探测模式与最新结果，阻断下拉信号避免模型回填再次保存设置。
 void SettingsDialog::updateFfmpegControls()
 {
     const bool usePath = !m_settingsService || m_settingsService->ffmpegUsePath();
@@ -508,6 +513,7 @@ void SettingsDialog::updateFfmpegControls()
     m_ffmpegStatusLabel->setToolTip(result.valid ? result.executablePath : result.error);
 }
 
+// 图片通过可读性校验后保存候选路径，失败时显示原因并保留现有设置。
 void SettingsDialog::chooseBackgroundImage()
 {
     if (!m_settingsService) return;
@@ -548,6 +554,7 @@ void SettingsDialog::applyBackgroundOpacityFromUi(int value)
     m_settingsService->setBackgroundImageOpacity(value);
 }
 
+// 非预设刷新率映射到自定义项，模型值仍完整回填到数值编辑器。
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
 {
     if (!m_refreshRateCombo) {
@@ -584,6 +591,7 @@ void SettingsDialog::updateTitleBarModeSelection(midi_play::settings::TitleBarMo
     m_titleBarModeCombo->setCurrentIndex(index);
 }
 
+// 回填可用后端选项；传统构建显示降级结果时不改写持久化偏好。
 void SettingsDialog::updateGraphicsModeSelection(midi_play::settings::GraphicsMode mode)
 {
     if (!m_graphicsModeCombo) return;
@@ -598,6 +606,7 @@ void SettingsDialog::updateGraphicsModeSelection(midi_play::settings::GraphicsMo
     m_graphicsModeCombo->setCurrentIndex(index);
 }
 
+// 依据后端能力重建选项，整个清空/添加过程阻断信号以避免提交临时选中值。
 void SettingsDialog::rebuildVisualEffectsOptions(bool vulkan)
 {
     if (!m_visualEffectsCombo) return;
@@ -622,6 +631,7 @@ void SettingsDialog::rebuildVisualEffectsOptions(bool vulkan)
             midi_play::settings::VisualEffectLevel::High));
 }
 
+// 先满足后端能力约束，再按模型档位回填；模型通知可能同步重入此函数。
 void SettingsDialog::updateVisualEffectsControl(midi_play::settings::GraphicsMode mode)
 {
     if (!m_visualEffectsCombo) return;
@@ -725,6 +735,7 @@ void SettingsDialog::updateBackgroundOpacitySelection(int opacity)
     m_backgroundOpacitySlider->setToolTip(QStringLiteral("100% 为完全显示，修改立即生效并自动保存。"));
 }
 
+// 加载期间关闭重复选择入口；成功/失败信息由后续专用结果信号回填。
 void SettingsDialog::setSoundFontLoading(bool loading)
 {
     m_loadSoundFontButton->setEnabled(!loading);

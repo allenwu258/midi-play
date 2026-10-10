@@ -243,6 +243,7 @@ void FluidSynthEngine::initializeMetronomeSynth()
     if (m_settingsGetNum(m_settings, "synth.sample-rate", &sampleRate) != 0) return;
     m_metronomeSettings = m_newSettings();
     if (!m_metronomeSettings) return;
+    // 点击不用歌曲的混响/合唱，独立的小型声部池避免密集歌曲声部挤占节拍器。
     const bool configured = m_settingsSetNum(m_metronomeSettings, "synth.sample-rate", sampleRate) == 0
         && m_settingsSetNum(m_metronomeSettings, "synth.gain", 0.8) == 0
         && m_settingsSetInt(m_metronomeSettings, "synth.polyphony", 16) == 0
@@ -260,6 +261,7 @@ int FluidSynthEngine::renderAudio(void* context, int frames, int effectCount,
     auto& engine = *static_cast<FluidSynthEngine*>(context);
     // 驱动提供清零的输出，process 累加采样，两次处理即可直接混合歌曲与点击。
     // 驱动没有独立效果输出时，将歌曲混响/合唱路由到主输出。
+    // 数组只保存驱动缓冲区地址；效果输出与主输出可别名，process 按累加语义混入歌曲效果。
     float* mixedEffects[2] {};
     if (effectCount == 0 && outputCount >= 2) {
         mixedEffects[0] = outputs[0];
@@ -370,6 +372,7 @@ bool FluidSynthEngine::loadSoundFontIntoActiveSynth(const QString& soundFontPath
         return false;
     }
 
+    // 活动 ID 更新后再卸载旧音源，后续 programSelect 始终引用已成功加载的候选资源。
     const int previousId = m_soundFontId;
     m_soundFontId = candidateId;
     if (previousId >= 0 && m_sfunload && m_sfunload(m_synth, previousId, 0) != 0) {
@@ -495,6 +498,7 @@ bool FluidSynthEngine::configureMetronomeChannel()
     // bank 128/program 127 仅存在于内置音源，必须按其 SoundFont ID 显式选择。
     if (m_setChannelType(m_metronomeSynth, kMetronomeChannel, 1) != 0
         || m_programSelect(m_metronomeSynth, kMetronomeChannel, m_metronomeSoundFontId, 128, 127) != 0) return false;
+    // 清除两种踏板及混响/合唱发送量，使点击衰减只由内置短采样决定。
     for (int controller : {64, 66, 91, 93}) {
         if (m_cc(m_metronomeSynth, kMetronomeChannel, controller, 0) != 0) return false;
     }

@@ -187,6 +187,7 @@ bool ThreadedPlaybackAudioService::flush()
 // 原子值对提交线程可见，Worker 的代次随后在同步屏障内更新。
 void ThreadedPlaybackAudioService::setEventGeneration(quint64 generation)
 {
+    // 先让新的提交和点击看到代次，再排入 Worker 更新；阻塞返回形成后续恢复操作的屏障。
     m_submissionGeneration.store(generation, std::memory_order_release);
     QMetaObject::invokeMethod(m_worker.get(), [this, generation] {
         m_worker->m_eventGeneration = generation;
@@ -220,6 +221,7 @@ void ThreadedPlaybackAudioService::submitBatch(const QVector<playback::PlaybackE
 void ThreadedPlaybackAudioService::submitBatch(const QVector<playback::PlaybackEvent>& events, quint64 generation)
 {
     if (events.isEmpty()) return;
+    // QVector 按值捕获保持事件存活；队列执行前核对 Worker 代次，不能借用调用方栈数据。
     QMetaObject::invokeMethod(m_worker.get(), [this, events, generation] {
         if (generation != m_worker->m_eventGeneration) return;
         m_worker->m_service->submitBatch(events, generation);
@@ -231,6 +233,7 @@ void ThreadedPlaybackAudioService::submitMetronomeClick(bool accent, quint64 gen
 {
     const quint64 epoch = m_metronomeEpoch.load(std::memory_order_acquire);
     // 音源加载可能阻塞 Worker；过期点击直接丢弃，防止恢复后密集补发。
+    // 截止时间使用单调墙钟，播放倍率或音乐 seek 不会改变已经排队点击的有效期限。
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
     QMetaObject::invokeMethod(m_worker.get(), [this, accent, generation, epoch, deadline] {
         if (epoch != m_metronomeEpoch.load(std::memory_order_acquire)

@@ -92,6 +92,7 @@ private:
         QDataStream stream(&header, QIODevice::WriteOnly);
         stream.setByteOrder(QDataStream::LittleEndian);
         stream.writeRawData("RIFF", 4);
+        // RIFF 长度字段不含最前面的 8 字节；PCM fmt 固定 16 字节，字段值为 36+数据长度。
         stream << static_cast<quint32>(36 + dataBytes);
         stream.writeRawData("WAVEfmt ", 8);
         stream << quint32(16) << quint16(1) << quint16(2)
@@ -117,6 +118,7 @@ public:
     // 初始化立体声 CBR 参数；参数准备成功后才打开输出文件。
     bool open(const QString& path, int sampleRate, int bitrateKbps, QString* error) override
     {
+        // 码率单位为 kbps；LAME 标签保存延迟/填充信息，CBR 输出同样需要回填此标签。
         m_lame = lame_init();
         if (!m_lame || lame_set_in_samplerate(m_lame, sampleRate) < 0
             || lame_set_num_channels(m_lame, 2) < 0

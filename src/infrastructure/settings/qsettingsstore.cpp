@@ -29,11 +29,13 @@ QString statusMessage(QSettings::Status status)
 
 } // namespace
 
+// 显式路径便于测试或独立配置；空路径解析为 Qt 当前应用的用户级配置位置。
 QSettingsStore::QSettingsStore(QString settingsPath)
     : m_settingsPath(settingsPath.isEmpty() ? defaultSettingsPath() : std::move(settingsPath))
 {
 }
 
+// 从默认快照逐字段恢复；非法值使用规范化回退，并向可选 warning 聚合诊断。
 midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
 {
     midi_play::settings::PlayerSettings result;
@@ -186,6 +188,7 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     return result;
 }
 
+// 创建用户目录并保存规范化快照；sync 后的 QSettings 状态决定最终保存结果。
 bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, QString* error)
 {
     if (error) error->clear();
@@ -251,6 +254,7 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
     return true;
 }
 
+// 按应用标识取得本地用户数据目录；目录不可定位时返回空路径交由上层报告。
 QString QSettingsStore::defaultSettingsPath()
 {
     const QString directory =

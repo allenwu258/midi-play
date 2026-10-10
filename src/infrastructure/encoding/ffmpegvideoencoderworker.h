@@ -14,12 +14,12 @@ namespace midi_play::encoding {
 
 // 开启诊断时返回累计帧数/纳秒耗时/峰值队列深度及实际编码器信息。
 struct FfmpegVideoEncoderDiagnostics {
-    qint64 submittedFrames = 0;
-    qint64 encodedFrames = 0;
-    quint64 recycledFrameWaitNs = 0;
-    quint64 queueWaitNs = 0;
-    quint64 writeNs = 0;
-    int peakQueueDepth = 0;
+    qint64 submittedFrames = 0; // 已入生产队列的帧数，不代表已编码或已保存。
+    qint64 encodedFrames = 0; // 已成功交给 FFmpeg 输入管道的帧数。
+    quint64 recycledFrameWaitNs = 0; // 生产者等待空闲图像的累计纳秒数。
+    quint64 queueWaitNs = 0; // 提交帧时等待队列空位的累计纳秒数。
+    quint64 writeNs = 0; // 向 FFmpeg 写入帧的累计纳秒数，包含管道反压。
+    int peakQueueDepth = 0; // 等待消费的最大帧数，不包含正在写入的一帧。
     QString videoEncoder;
     bool hardwareAccelerated = false;
     quint64 encoderSelectionNs = 0;
@@ -60,22 +60,22 @@ private:
     bool shouldStopLocked() const;
 
     const std::size_t m_capacity;
-    mutable std::mutex m_mutex;
-    std::condition_variable m_notEmpty;
-    std::condition_variable m_notFull;
-    std::condition_variable m_frameAvailable;
-    std::condition_variable m_started;
+    mutable std::mutex m_mutex; // 保护队列、启动结果、停止标志及统计快照。
+    std::condition_variable m_notEmpty; // 消费者等待新帧或停止请求。
+    std::condition_variable m_notFull; // 生产者等待队列空位或停止请求。
+    std::condition_variable m_frameAvailable; // 生产者等待回收图像或停止请求。
+    std::condition_variable m_started; // open 等待工作线程发布 FFmpeg 启动结果。
     std::deque<QImage> m_frames; // 等待编码的 FIFO，容量为 m_capacity。
-    std::deque<QImage> m_recycledFrames;
+    std::deque<QImage> m_recycledFrames; // 可供生产者重新填充的 RGBA 图像，move 后不再由池持有。
     QSize m_frameSize;
     std::thread m_thread;
     const std::atomic_bool* m_canceled = nullptr; // 借用，必须保持到工作线程 join。
     QString m_error;
-    bool m_startedFlag = false;
-    bool m_opened = false;
-    bool m_stopRequested = false;
-    bool m_abortRequested = false;
-    bool m_finishRequested = false;
+    bool m_startedFlag = false; // 工作线程已发布启动结果，成功和失败都会置位。
+    bool m_opened = false; // FFmpeg 曾成功打开；不表示工作线程当前仍在运行。
+    bool m_stopRequested = false; // 拒绝新的生产请求，消费端仍可排空已有帧。
+    bool m_abortRequested = false; // 立即丢弃待编码帧，禁止正常封装收尾。
+    bool m_finishRequested = false; // 调用方明确要求排空队列后关闭 stdin 并完成封装。
     qint64 m_submittedFrames = 0;
     qint64 m_encodedFrames = 0;
     bool m_diagnosticsEnabled = false;

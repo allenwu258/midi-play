@@ -137,7 +137,7 @@ class ControlledStore final : public app::ISettingsStore {
 public:
     ControlledStore()
     {
-// 该 fixture 模拟已保存图形偏好的用户，测试重点是音符配色保存失败。
+        // 此夹具模拟已确认图形偏好的用户，隔离首次后端选择对配色保存测试的影响。
         saved.graphicsMode = settings::GraphicsMode::Traditional;
         saved.graphicsModeConfigured = true;
     }

@@ -27,7 +27,7 @@ public:
     midi_play::settings::ThemeMode theme = midi_play::settings::kDefaultThemeMode;
     bool restoredGlyph = false;
     bool active = true;
-    bool nativeHovered = false;
+    bool nativeHovered = false; // 非客户区输入不会产生普通 Qt 悬停事件，需额外同步。
     bool highContrast = false;
     QColor systemText, systemBackground, systemHighlight, systemHighlightedText;
 
@@ -93,6 +93,7 @@ protected:
 
 } // namespace
 
+// 固定命令枚举与按钮数组下标一一对应，点击统一转换为领域无关的窗口命令。
 CaptionButtons::CaptionButtons(QWidget* parent) : QWidget(parent)
 {
     setObjectName(QStringLiteral("windowCaptionButtons"));
@@ -121,6 +122,7 @@ QToolButton* CaptionButtons::button(CaptionCommand command) const noexcept
     return m_buttons[static_cast<size_t>(command)];
 }
 
+// 接收逻辑像素度量，余数分配给前几个按钮，保持三按钮总宽精确一致。
 void CaptionButtons::setMetrics(int totalWidth, int height)
 {
     totalWidth = std::max(90, totalWidth);
@@ -156,6 +158,7 @@ void CaptionButtons::setWindowActive(bool active)
     }
 }
 
+// 原生命中结果只允许一个按钮悬停；nullptr 清除全部非客户区悬停状态。
 void CaptionButtons::setNativeHovered(QToolButton* hovered)
 {
     for (auto* button : m_buttons) {
@@ -164,11 +167,13 @@ void CaptionButtons::setNativeHovered(QToolButton* hovered)
     }
 }
 
+// 桥接原生按压外观，不在此处执行命令；释放命中由控制器判定后触发 click。
 void CaptionButtons::setNativePressed(QToolButton* pressed)
 {
     for (auto* button : m_buttons) button->setDown(button == pressed);
 }
 
+// 高对比度启用时使用系统语义色，普通主题仍由各按钮的应用色表决定。
 void CaptionButtons::setSystemColors(bool highContrast, const QColor& text, const QColor& background,
                                      const QColor& highlight, const QColor& highlightedText)
 {

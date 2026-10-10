@@ -71,8 +71,8 @@ private:
     // 构造时取得的不可变共享对象，供调用线程无需等待地查询时钟和能力。
     const std::shared_ptr<const playback::PlaybackClockSnapshot> m_clockSnapshot;
     const playback::PlaybackBackendCapabilities m_capabilities;
-    QThread m_thread;
-    std::unique_ptr<Worker> m_worker;
+    QThread m_thread; // 包装对象负责启动、退出和等待，后端调用只在其事件循环内串行执行。
+    std::unique_ptr<Worker> m_worker; // 线程退出后释放；析构前调用方必须停止发起新任务。
     // 传输代次区分歌曲/seek 边界；点击轮次支持独立取消，不使歌曲事件失效。
     std::atomic<quint64> m_submissionGeneration {0};
     std::atomic<quint64> m_metronomeEpoch {0};

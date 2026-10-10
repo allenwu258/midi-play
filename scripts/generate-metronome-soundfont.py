@@ -1,3 +1,5 @@
+# 内置节拍器音源生成器：用标准库构造两个非循环击声及完整 SF2 索引。
+# 二进制资源已入库；本脚本仅用于重新生成，播放器运行不依赖 Python。
 """Generate the original, non-looping metronome SF2 (Python standard library).
 
 The generated binary is checked in; building/running the player needs no Python.
@@ -8,30 +10,31 @@ import math
 import random
 import struct
 
+# 封装带四字节标识和小端长度的子块；当前实现先补齐，再写入补齐后的长度。
 def chunk(tag, data):
-    # 将 RIFF/SF2 子块编码为带偶数字节填充的块。
-    # SF2 要求块长度为偶数，字符串终止符和补齐字节也计入长度。
     data += b"\0" * (len(data) % 2)
     return tag.encode("ascii") + struct.pack("<I", len(data)) + data
 
+# 将多个子块封装为带四字节类型标识的 RIFF LIST。
 def listing(kind, chunks):
-    # 将多个子块封装为带类型标识的 RIFF LIST。
     return chunk("LIST", kind.encode("ascii") + b"".join(chunks))
 
+# 对象名按 ASCII 截断或补零，得到 SF2 要求的固定 20 字节字段。
 def name(value):
-    # 将对象名编码为 SF2 固定 20 字节字段。
     return value.encode("ascii")[:20].ljust(20, b"\0")
 
+# 构造 PCM、采样头和预设/乐器索引，返回可直接写入资源文件的 RIFF 字节串。
 def generate():
-    # 生成两个带确定性噪声种子的短击声音及其 SF2 区域索引。
     rate = 44100
     pcm = []
     headers = []
+    # 固定种子使过程噪声可复现；重拍和普通拍以不同频率、振幅区分。
     rng = random.Random(20260915)
     for label, key, frequency, amplitude in [
         ("Downbeat", 60, 1900, 0.43), ("Beat", 61, 1250, 0.32)
     ]:
         start = len(pcm)
+        # 每个击声长 60 ms；短起音、末端淡出和指数衰减共同压低边界突变。
         length = int(rate * 0.06)
         for i in range(length):
             t = i / rate
@@ -42,23 +45,30 @@ def generate():
                     + 0.06 * rng.uniform(-1, 1))
             pcm.append(round(32767 * amplitude * wave * attack * tail * math.exp(-t / 0.009)))
         end = len(pcm)
-        pcm.extend([0] * 46)
+        pcm.extend([0] * 46) # 采样后附加 SF2 插值保护区，不计入有效采样终点。
         headers.append(name(label) + struct.pack("<IIIIIBbHH", start, end, start + 8,
                                                  end - 8, rate, key, 0, 0, 1))
-    headers.append(name("EOS") + bytes(26))
+    headers.append(name("EOS") + bytes(26)) # shdr 末尾保留终止记录。
     # 每个局部区域先写键位范围，sampleID 放在生成器末尾，符合 SF2 解析顺序。
     generators = []
     bags = []
     for sample, key in enumerate((60, 61)):
         bags.append(struct.pack("<HH", len(generators), 0))
+        # 43 限定单键范围，58 指定根音，56 关闭随键位变化的调音。
+        # 33..36 为音量包络延迟/起音/保持/衰减的 timecents；37 为维持衰减量。
+        # 38 指定释放时间，54=0 禁止循环，53 关联采样并必须放在区域末尾。
         zone = [(43, key | key << 8), (58, key), (56, 0),
                 (33, -12000), (34, -12000), (35, -12000),
                 (36, -12000), (37, 0), (38, -6000), (54, 0), (53, sample)]
+        # 负 timecents 按 16 位补码写入，字段位模式仍由无符号打包保存。
         generators.extend(struct.pack("<HH", op, value & 0xffff) for op, value in zone)
     bags.append(struct.pack("<HH", len(generators), 0))
     generators.append(bytes(4))
+    # 预设位于 bank 128/program 127，须与合成器内置点击音源选择保持一致。
     phdr = name("Internal click") + struct.pack("<HHHIII", 127, 128, 0, 0, 0, 0)
     phdr += name("EOP") + struct.pack("<HHHIII", 0, 0, 1, 0, 0, 0)
+    # pdta 按规范顺序关联预设、区域、生成器、乐器及采样头；各索引表含终止项。
+    # pgen 的 41 指向第 0 个乐器；零调制器仅保留哨兵，没有自定义调制规则。
     pdta = listing("pdta", [
         chunk("phdr", phdr), chunk("pbag", struct.pack("<HHHH", 0, 0, 1, 0)),
         chunk("pmod", bytes(10)), chunk("pgen", struct.pack("<HHHH", 41, 0, 0, 0)),
@@ -66,6 +76,7 @@ def generate():
         chunk("ibag", b"".join(bags)), chunk("imod", bytes(10)),
         chunk("igen", b"".join(generators)), chunk("shdr", b"".join(headers))
     ])
+    # INFO 声明格式版本和来源；sdta 存储有符号 16 位小端单声道 PCM。
     info = listing("INFO", [
         chunk("ifil", struct.pack("<HH", 2, 1)), chunk("isng", b"EMU8000\0"),
         chunk("INAM", b"MidiPlay internal metronome\0"),

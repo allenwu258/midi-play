@@ -9,11 +9,12 @@
 namespace midi_play::presentation::visualization {
 // 导出期间持有的场景快照；逻辑布局尺寸与最终输出物理尺寸分开配置。
 struct ExportSceneConfig {
+    // 导出保存设置和图表；VulkanScene 会自行查询候选，不使用 state 中借用的候选 span。
     midi_play::visualization::PlaybackSceneState state;
     QSize logicalSize {1280, 720}; // 键盘/落音布局的逻辑像素尺寸。
     QSize outputSize {1920, 1080}; // 编码帧的物理像素尺寸。
     QFont font;
-    QImage background;
+    QImage background; // 按值保存源图像，离屏初始化时独立上传到设备纹理。
 };
 
 // MIDI_PLAY_VIDEO_DIAGNOSTICS 开启时累计当前渲染器的阶段耗时及帧计数。
@@ -46,8 +47,8 @@ struct VulkanRenderDiagnostics {
 // 成功提交的帧占有一个槽位，直到 completeRender 等待并释放该槽。
 // 票据只携带槽位与音乐时间，不拥有 Vulkan 对象；不得复制后重复完成或跨渲染器使用。
 struct VulkanRenderTicket {
-    int slot = -1;
-    qint64 musicPositionUs = 0;
+    int slot = -1; // -1 为无效/已完成票据；槽号不编码渲染器身份。
+    qint64 musicPositionUs = 0; // 本帧输出音乐位置，单位为微秒，不是编码 PTS。
 
     // 仅表示持有非负槽号；具体槽位及在途状态由渲染器完成时校验。
     bool valid() const { return slot >= 0; }

@@ -6,6 +6,7 @@
 
 namespace midi_play::app {
 
+// 监听路径及搜索模式变化，并立即探测初始编码器能力。
 FfmpegService::FfmpegService(SettingsService* settings, QObject* parent)
     : QObject(parent), m_settings(settings)
 {
@@ -21,6 +22,7 @@ QString FfmpegService::unavailableReason() const
     return m_checking ? QStringLiteral("正在检查 FFmpeg") : m_result.error;
 }
 
+// 发起独立后台探测，代次屏蔽旧结果；任务按值持有路径和模式快照。
 void FfmpegService::refresh()
 {
     // 每次检查先清空旧能力并发布 checking，消费者不会继续使用上一次有效路径。

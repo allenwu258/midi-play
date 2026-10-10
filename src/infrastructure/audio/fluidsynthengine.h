@@ -123,18 +123,18 @@ private:
     // 从内置音源选择专用 bank/preset，并禁用点击通道的踏板和效果。
     bool configureMetronomeChannel();
 
-    QLibrary m_library;
-    fluid_settings_t* m_settings = nullptr;
-    fluid_synth_t* m_synth = nullptr;
-    fluid_audio_driver_t* m_driver = nullptr;
+    QLibrary m_library; // 函数指针的宿主，所有原生资源释放前必须保持库已加载。
+    fluid_settings_t* m_settings = nullptr; // 歌曲采样率、增益及驱动配置，晚于合成器释放。
+    fluid_synth_t* m_synth = nullptr; // 歌曲专用声部池，可在同一实例上事务式切换用户音源。
+    fluid_audio_driver_t* m_driver = nullptr; // 实时驱动及回调所有者，离线模式不创建。
     // 点击声部池在驱动启动前创建，回调停止后才能销毁；与歌曲混入同一输出缓冲区。
     fluid_settings_t* m_metronomeSettings = nullptr;
     fluid_synth_t* m_metronomeSynth = nullptr;
     int m_soundFontId = -1;
     int m_metronomeSoundFontId = -1;
-    std::unique_ptr<QTemporaryFile> m_metronomeFile;
-    bool m_metronomeReady = false;
-    bool m_loaded = false;
+    std::unique_ptr<QTemporaryFile> m_metronomeFile; // 保持内置 sfload 文件存活，晚于点击合成器释放。
+    bool m_metronomeReady = false; // 点击音源和通道配置均已完成，不只表示合成器已创建。
+    bool m_loaded = false; // 歌曲资源已就绪；离线模式同样置位，不等于音频设备驱动已创建。
     FluidSynthCapabilities m_capabilities;
 
     // 与动态库 C ABI 对应的函数指针类型，避免编译期链接 FluidSynth。

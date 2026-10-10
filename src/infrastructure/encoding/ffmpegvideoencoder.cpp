@@ -94,6 +94,7 @@ bool probeVideoEncoder(const QString& executable, const VideoEncoderSelection& e
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
+// 以实际编码探测选择 NVENC 或软件回退；缓存值是运行时结果，并非仅检查编码器名称存在。
 VideoEncoderSelection selectVideoEncoder(const QString& executable, QSize size, int fps, int crf,
                                          const std::atomic_bool* canceled)
 {
@@ -246,6 +247,7 @@ bool validateMetadata(const QString& ffmpeg, const QString& path, QSize expected
 } // namespace
 
 namespace midi_play::encoding {
+// 未正常结束时终止子进程并等待；临时文件清理由持有输出目录的应用服务负责。
 FfmpegVideoEncoder::~FfmpegVideoEncoder()
 {
     if (m_process.state() != QProcess::NotRunning) {
@@ -253,12 +255,14 @@ FfmpegVideoEncoder::~FfmpegVideoEncoder()
         m_process.waitForFinished(3000);
     }
 }
+// 及时排空两个输出管道，错误信息仅保留末尾，防止长期任务积累无界日志。
 void FfmpegVideoEncoder::collectDiagnostics()
 {
     m_processDiagnostics += m_process.readAllStandardError();
     if (m_processDiagnostics.size() > 16384) m_processDiagnostics = m_processDiagnostics.right(16384);
     m_process.readAllStandardOutput();
 }
+// 先采集末尾诊断，再选择 stderr 或进程错误；error 按本类接口约定必须非空。
 bool FfmpegVideoEncoder::processError(QString* error)
 {
     collectDiagnostics();
@@ -266,6 +270,7 @@ bool FfmpegVideoEncoder::processError(QString* error)
         ? m_process.errorString() : QString::fromUtf8(m_processDiagnostics).trimmed());
     return false;
 }
+// 以紧密 RGBA 和可选 float32 PCM 启动 CFR 编码；参数及音频长度检查在子进程启动前完成。
 bool FfmpegVideoEncoder::open(const QString& executable, const QString& output, const QString& pcmPath,
     QSize size, int fps, int crf, qint64 frameCount, int audioSampleRate,
     const std::atomic_bool* canceled, QString* error)
@@ -277,6 +282,7 @@ bool FfmpegVideoEncoder::open(const QString& executable, const QString& output, 
         *error = QStringLiteral("视频编码参数无效");
         return false;
     }
+    // 每视频帧对应整数个采样帧，每采样帧为双声道各 4 字节；乘法前检查 qint64 溢出。
     if (frameCount > std::numeric_limits<qint64>::max() / ((audioSampleRate / fps) * 8)) {
         *error = QStringLiteral("视频编码时长超过限制");
         return false;
@@ -303,6 +309,7 @@ bool FfmpegVideoEncoder::open(const QString& executable, const QString& output, 
     m_runtimeDiagnostics.videoEncoder = encoder.name;
     m_runtimeDiagnostics.hardwareAccelerated = encoder.hardwareAccelerated;
     m_runtimeDiagnostics.selectionNs = quint64(selectionTimer.nsecsElapsed());
+    // 原始视频没有自带 PTS，输入帧率决定时间戳；所有参数通过 QStringList 传递，不经过 shell。
     QStringList args {QStringLiteral("-nostdin"), QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("warning"),
         QStringLiteral("-f"), QStringLiteral("rawvideo"), QStringLiteral("-pixel_format"), QStringLiteral("rgba"),
         QStringLiteral("-video_size"), QStringLiteral("%1x%2").arg(size.width()).arg(size.height()),
@@ -322,6 +329,7 @@ bool FfmpegVideoEncoder::open(const QString& executable, const QString& output, 
     if (!m_process.waitForStarted(3000)) return processError(error);
     return true;
 }
+// 部分写入循环只在整帧成功交付后推进帧计数；QProcess 的待写缓存另设内存上限。
 bool FfmpegVideoEncoder::writeFrame(const QImage& frame, QString* error)
 {
     if (m_writtenFrames >= m_expectedFrames) {
@@ -356,6 +364,7 @@ bool FfmpegVideoEncoder::writeFrame(const QImage& frame, QString* error)
     ++m_writtenFrames;
     return true;
 }
+// 校验帧数后发送 EOF，等待编码器排空和封装；进程非零退出不能视为成功成品。
 bool FfmpegVideoEncoder::finish(QString* error)
 {
     if (m_writtenFrames != m_expectedFrames) {
@@ -373,6 +382,7 @@ bool FfmpegVideoEncoder::finish(QString* error)
     if (m_process.exitStatus() != QProcess::NormalExit || m_process.exitCode() != 0) return processError(error);
     return true;
 }
+// 分别校验媒体规格和完整解码，识别容器可读但内部流截断或损坏的输出。
 bool FfmpegVideoEncoder::validate(const QString& executable, const QString& path,
     const std::atomic_bool* canceled, QString* error, QSize expectedSize, int expectedFps,
     qint64 expectedFrames, bool expectAudio, qint64 expectedDurationUs,
@@ -394,6 +404,7 @@ bool FfmpegVideoEncoder::validate(const QString& executable, const QString& path
     stalled.start();
     while (!process.waitForFinished(100)) {
         diagnostics += process.readAllStandardError(); diagnostics = diagnostics.right(16384);
+        // 超时按无进度时长计算，持续输出进度的长视频不会因总解码时间超过阈值而失败。
         if (!process.readAllStandardOutput().isEmpty()) stalled.restart();
         if (canceled && canceled->load()) { process.kill(); process.waitForFinished(3000); return false; }
         if (stalled.elapsed() > 30000) {

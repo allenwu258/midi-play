@@ -63,6 +63,7 @@ RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
     RepeatJumpContext context;
     int index = 0;
     Tick output = 0;
+    // 导航标记可能形成循环；步数上限限制异常输入的展开量，不改变正常小节的源数据。
     const int maxSteps = qMax(1024, measures.size() * 64);
     for (int step = 0; index >= 0 && index < measures.size() && step < maxSteps; ++step) {
         const auto& measure = measures[index];
@@ -72,6 +73,7 @@ RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
             context.repeatStartIndex = index;
         }
 
+        // 未选中的房子不贡献输出时长，但仍处理其反复/跳转标记以推进导航状态。
         const bool inEnding = measure.endingNumber > 0;
         const bool endingSelected = !inEnding || measure.endingNumber == context.repeatPass + 1;
         if (endingSelected) {
@@ -91,6 +93,7 @@ RepeatList RepeatList::build(const QVector<Measure>& measures, Tick duration)
             context.repeatPass = 0;
         }
 
+        // To Coda/Fine 仅在 D.C./D.S. 回跳后的上下文生效，普通首遍继续顺序播放。
         if (context.codaArmed && measure.toCoda && codaIndex >= 0) {
             index = codaIndex;
             context.codaArmed = false;
@@ -149,6 +152,7 @@ Tick MusicDocument::microsecondsToTick(qint64 microseconds) const
     if (microseconds <= 0) {
         return 0;
     }
+    // 返回换算值不小于目标的最小 tick；逐段取整使反向换算不能直接除以当前 tempo。
     Tick low = 0;
     Tick high = m_duration;
     while (low < high) {

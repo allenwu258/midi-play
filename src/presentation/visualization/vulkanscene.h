@@ -25,8 +25,8 @@ struct VulkanQuad {
     std::array<float, 4> rect {}; // 逻辑像素 x、y、宽、高；音符的纵向尺寸在顶点阶段计算。
     std::array<float, 4> times {}; // 相对秒：开始、松键、发声结束；末项为图元类型。
     std::array<float, 4> color {}; // 未预乘 alpha 的 sRGB 填充色。
-    std::array<float, 4> border {};
-    std::array<float, 4> activeBorder {};
+    std::array<float, 4> border {}; // UI 边框颜色，未预乘 alpha。
+    std::array<float, 4> activeBorder {}; // 音符头部及特效边缘色；普通 UI 写为 border 的副本。
     std::array<float, 4> uv {}; // 归一化纹理区域：左、上、宽、高。
     // UI：边框宽度、虚线、纹理类型、椭圆类型；音符：光晕外扩、幽灵标记、特效开关、相位。
     std::array<float, 4> options {};
@@ -56,6 +56,7 @@ struct VulkanInstanceRange {
 // 按层顺序追加实例并记录边界；空层仍需调用 beginLayer，最后调用 finish。
 struct VulkanUiBatch {
     QVector<VulkanQuad> quads;
+    // 多一个哨兵项；offsets[i+1]-offsets[i] 是第 i 层长度，构建结束后必须单调不减。
     std::array<uint32_t, size_t(VulkanUiLayer::Count) + 1> offsets {};
 
     // 开始一轮构建；清空实例及所有层偏移。
@@ -76,6 +77,7 @@ struct VulkanUiBatch {
 class VulkanScene final {
 public:
     // 按失效条件更新布局/实例/图集，并求值当前时间的动态装饰。
+    // logicalSize 为布局逻辑像素，dpr 用于文字栅格化；实例仍保存逻辑像素坐标。
     void prepare(const midi_play::visualization::PlaybackSceneState& state,
                  QSize logicalSize, qreal dpr, const QFont& font,
                  bool hasBackground = false, QSize backgroundSize = {}, quint64 backgroundRevision = 0);
@@ -149,7 +151,7 @@ private:
     int m_rowHeight = 0;
     bool m_atlasFull = false;
     quint64 m_atlasRevision = 0;
-    quint64 m_notesRevision = 0;
+    quint64 m_notesRevision = 0; // 实例内容变更才递增，纯时间推进由帧常量驱动。
     quint64 m_consumedMaterialRevision = 0; // 已打包到音符实例的共享材质版本。
     quint64 m_staticUiRevision = 0;
     qint64 m_timeOriginUs = 0;

@@ -77,6 +77,7 @@ QString colors(QString style, const WidgetColors& w)
 
 } // namespace
 
+// 主窗口样式覆盖顶栏、传输按钮及进度条，命名占位符由语义色表统一替换。
 QString mainWindowStyle(const AppTheme& theme)
 {
     return colors(QStringLiteral(R"(
@@ -143,6 +144,7 @@ QString mainWindowStyle(const AppTheme& theme)
     )"), theme.widgets);
 }
 
+// 设置页样式统一输入、只读路径、提示和错误反馈；规则按控件名限定作用域。
 QString settingsDialogStyle(const AppTheme& theme)
 {
     return colors(QStringLiteral(R"(
@@ -172,6 +174,7 @@ QString settingsDialogStyle(const AppTheme& theme)
     )"), theme.widgets);
 }
 
+// 倍率按钮和独立工具浮层共用此样式，覆盖输入、轨道、滑块及交互状态。
 QString playbackRateStyle(const AppTheme& theme)
 {
     return colors(QStringLiteral(R"(

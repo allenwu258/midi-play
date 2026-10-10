@@ -108,8 +108,8 @@ void waitFor(const std::function<bool()>& condition, const char* message)
     require(false, message);
 }
 
+// 集成测试宿主：组合 Qt 顶栏、禁用嵌套控件和原生 QWindow 子窗口。
 class ChromeWindow final : public QWidget {
-    // 测试宿主包含 Qt 顶栏、禁用嵌套控件和原生 QWindow 子窗口。
 public:
     ChromeWindow()
     {
@@ -129,7 +129,7 @@ public:
         titleLayout->addWidget(icon);
         titleLayout->addWidget(new QLabel(QStringLiteral("Caption"), title));
         titleLayout->addStretch();
-// 嵌套且禁用的交互控件仍必须命中 HTCLIENT。
+        // 嵌套且禁用的交互控件仍必须命中 HTCLIENT。
         auto* nested = new QWidget(title);
         auto* nestedLayout = new QHBoxLayout(nested);
         nestedLayout->setContentsMargins(0, 0, 0, 0);
@@ -172,6 +172,7 @@ protected:
         if (chrome && chrome->processNativeEvent(type, message, result)) return true;
         return QWidget::nativeEvent(type, message, result);
     }
+    // 默认拒绝关闭以验证系统命令经过 Qt 事件；计数可检测重复派发。
     void closeEvent(QCloseEvent* event) override
     {
         ++closes;
@@ -259,7 +260,7 @@ void testNativeFrame()
     window.chrome->maximizeOrRestore();
     waitFor([&] { return !IsZoomed(hwnd); }, "mouse caption restore must complete");
 
-// UI Automation/键盘 Invoke 复用同一系统命令路径。
+    // UI Automation/键盘 Invoke 复用同一系统命令路径。
     maximize->click();
     waitFor([&] { return IsZoomed(hwnd) && window.isMaximized(); }, "caption Invoke must maximize once");
     window.chrome->maximizeOrRestore();

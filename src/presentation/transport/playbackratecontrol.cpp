@@ -20,6 +20,7 @@
 
 namespace midi_play::presentation {
 
+// 创建工具浮层及双输入控件，用户编辑统一经过规范化和单次通知。
 PlaybackRateControl::PlaybackRateControl(QWidget* parent)
     : QToolButton(parent)
 {
@@ -95,6 +96,7 @@ void PlaybackRateControl::setThemeMode(midi_play::settings::ThemeMode mode)
     m_panel->setStyleSheet(style);
 }
 
+// 回填实际倍率并同步滑块、编辑器及按钮；阻断输入信号避免形成提交循环。
 void PlaybackRateControl::setRatePercent(int percent)
 {
     m_ratePercent = midi_play::settings::normalizePlaybackRatePercent(percent);
@@ -106,6 +108,7 @@ void PlaybackRateControl::setRatePercent(int percent)
     setToolTip(QStringLiteral("播放速度 %1%（20%～200%）").arg(m_ratePercent));
 }
 
+// 用户编辑先统一显示，再发布候选倍率；应用服务可回填拒绝后的实际值。
 void PlaybackRateControl::applyUserRate(int percent)
 {
     const int normalized = midi_play::settings::normalizePlaybackRatePercent(percent);
@@ -126,6 +129,7 @@ void PlaybackRateControl::leaveEvent(QEvent* event)
     m_hideTimer.start();
 }
 
+// 在当前屏幕可用区域定位浮层；悬停展示不抢焦点，显式点击可激活编辑器。
 void PlaybackRateControl::showPanel(bool focusEditor)
 {
     if (!isVisible() || !isEnabled()) return;
@@ -164,6 +168,7 @@ bool PlaybackRateControl::containsPointer() const
         || m_panel->geometry().contains(position);
 }
 
+// 延迟检查鼠标、拖动和编辑焦点，保证按钮到浮层的移动过程不会提前关闭。
 void PlaybackRateControl::hidePanelIfInactive()
 {
     if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
@@ -181,6 +186,7 @@ void PlaybackRateControl::hidePanelIfInactive()
     hidePanel();
 }
 
+// 关闭前可提交未完成文本；Esc 路径只撤销尚未提交的编辑内容。
 void PlaybackRateControl::hidePanel(bool commitEditor)
 {
     m_hideTimer.stop();
@@ -191,6 +197,7 @@ void PlaybackRateControl::hidePanel(bool commitEditor)
     m_panel->hide();
 }
 
+// 浮层可见时观察全局输入，仅消费本控件范围内的确认/取消按键。
 bool PlaybackRateControl::eventFilter(QObject* watched, QEvent* event)
 {
     // 主窗口布局或状态变化后关闭面板，避免独立工具窗口残留在旧位置。

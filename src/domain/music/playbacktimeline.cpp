@@ -13,8 +13,7 @@ PlaybackTimeline::PlaybackTimeline(std::shared_ptr<const MusicDocument> document
         return;
     }
 
-    // Complete the document's lazy tempo index before the immutable timeline
-    // can be shared by playback-thread readers.
+    // 在不可变时间线交给播放线程前完成文档的惰性速度索引，避免读者触发缓存写入。
     m_document->rebuildTempoMap();
     m_segments = m_document->playbackSegments();
     m_segmentIndex.reserve(m_segments.size());

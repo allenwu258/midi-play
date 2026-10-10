@@ -15,11 +15,11 @@ namespace midi_play::midi {
 
 // SMF 文件头；division 是源时间分辨率，SMPTE 文件另保存帧率和每帧 tick 数。
 struct MidiFileHeader {
-    int format = 1;
-    int trackCount = 0;
-    int division = 480;
+    int format = 1; // 0 为单轨、1 为同步多轨、2 为独立序列。
+    int trackCount = 0; // 文件头声明的 MTrk 数量。
+    int division = 480; // PPQ 或解析器推导的 SMPTE 每秒 tick 数，必须为正。
     bool smpte = false;
-    int smpteFramesPerSecond = 0;
+    int smpteFramesPerSecond = 0; // 当前解析器采用整数帧率，将源 29 码按 30 fps 处理。
     int ticksPerFrame = 0;
 };
 
@@ -38,16 +38,16 @@ enum class MidiMessageKind {
 
 // 单条消息的来源、时间和负载。解析阶段使用源 tick，归一化阶段换为文档 tick。
 struct MidiRawEvent {
-    int sourceTrack = 0;
-    int port = 0;
-    int channel = 0;
+    int sourceTrack = 0; // 物理轨道的零基下标。
+    int port = 0; // MIDI Port 元事件选中的端口，不与 channel 合并。
+    int channel = 0; // 通道消息的零基编号；Meta/SysEx 不以此字段路由。
     midi_play::music::Tick tick = 0;
     quint64 sequence = 0; // 同时刻消息的稳定排序依据。
     MidiMessageKind kind = MidiMessageKind::Meta;
     int data1 = 0;
     int data2 = 0; // PitchBend 在此存放合并后的 14 位值，其他消息保留第二数据字节。
-    int metaType = -1;
-    QByteArray payload;
+    int metaType = -1; // 仅 Meta 消息有效，-1 表示非元事件。
+    QByteArray payload; // Meta/SysEx 的原始负载，供文本及专用元事件解码使用。
 };
 
 // 一个 MTrk 块，保留物理轨道顺序和未经音符配对的消息。
@@ -72,9 +72,9 @@ struct MidiNoteSpan {
     int pitch = 60;
     int velocity = 90;
     int program = 0; // 记录 NoteOn 时生效的音色，避免后续音色变化覆盖历史音符。
-    music::Tick start = 0;
-    music::Tick keyRelease = 0;
-    music::Tick audibleEnd = 0;
+    music::Tick start = 0; // 以下时间均采用文档 tick，结束边界由按键配对及踏板状态机结算。
+    music::Tick keyRelease = 0; // 按键释放边界，用于播放 NoteOff。
+    music::Tick audibleEnd = 0; // 踏板保持后的可听边界，用于时长汇总和可视化。
     quint64 sequence = 0;
     bool implicitOff = false; // 未找到 NoteOff 时由归一化器在通道尾部补齐。
 };

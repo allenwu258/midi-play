@@ -111,6 +111,7 @@ bool parseTrack(ByteReader& reader, int trackIndex, MidiRawTrack& track, quint64
     ByteReader trackReader(chunk);
     track.index = trackIndex;
     music::Tick tick = 0;
+    // 状态仅在当前 MTrk 内有效，轨道之间不能继承前一条通道消息的状态。
     quint8 runningStatus = 0;
     int currentPort = 0;
 
@@ -173,6 +174,7 @@ bool parseTrack(ByteReader& reader, int trackIndex, MidiRawTrack& track, quint64
             }
             // 此解析器在元事件后清除 Running Status，轨道结束标记立即终止解析。
             runningStatus = 0;
+            // 显式 Track Name 优先，Text 仅在尚无名称时作为回退。
             if (metaType == 0x03 && !payload.isEmpty()) track.name = textFromPayload(payload);
             if (metaType == 0x01 && track.name.isEmpty() && !payload.isEmpty()) track.name = textFromPayload(payload);
             if (metaType == 0x2f) {
@@ -301,6 +303,7 @@ MidiParseResult MidiFileParser::parse(const QString& path) const
         || !reader.readU16(format) || !reader.readU16(trackCount) || !reader.readU16(division)) {
         return {nullptr, QStringLiteral("MIDI header 无效")};
     }
+    // 先校验文件头布局，再进入声明轨道的解析；头部扩展字段按声明长度跳过。
     if (format > 2) return {nullptr, QStringLiteral("不支持的 MIDI format: %1").arg(format)};
     if (division == 0) return {nullptr, QStringLiteral("MIDI division 无效")};
     if (headerLength > 6 && !reader.skip(headerLength - 6)) return {nullptr, QStringLiteral("MIDI header 超出文件范围")};

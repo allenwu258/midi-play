@@ -57,6 +57,7 @@ void drawPreparedText(QPainter& painter, const PreparedTextLayout& text,
 
 } // namespace
 
+// 完整绘制入口：静态底层先于动态音符、击键高亮和状态覆盖层。
 void FallingNotesRenderer::render(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                   const PlaybackSceneState& state)
 {
@@ -64,6 +65,7 @@ void FallingNotesRenderer::render(QPainter& painter, const PlaybackSceneGeometry
     renderDynamicLayer(painter, geometry, state);
 }
 
+// 组合无需随播放位置变化的背景和键盘，供直接绘制或离屏缓存使用。
 void FallingNotesRenderer::renderStaticLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                              const PlaybackSceneState& state)
 {
@@ -71,6 +73,7 @@ void FallingNotesRenderer::renderStaticLayer(QPainter& painter, const PlaybackSc
     renderStaticKeyboardLayer(painter, geometry, state);
 }
 
+// 先填充主题背景，再按统一裁切规则绘图和音高条带；保存并恢复调用方画笔状态。
 void FallingNotesRenderer::renderStaticBackgroundLayer(
     QPainter& painter, const PlaybackSceneGeometry& geometry,
     const PlaybackSceneState& state, const QImage& background)
@@ -104,6 +107,7 @@ void FallingNotesRenderer::renderStaticBackgroundLayer(
     painter.restore();
 }
 
+// 绘制键盘底色和固定标签，不包含当前帧的活动键高亮。
 void FallingNotesRenderer::renderStaticKeyboardLayer(
     QPainter& painter, const PlaybackSceneGeometry& geometry,
     const PlaybackSceneState& state)
@@ -115,6 +119,7 @@ void FallingNotesRenderer::renderStaticKeyboardLayer(
     painter.restore();
 }
 
+// 一次求值当前帧，按网格、音符、击键线、键盘高亮、覆盖文本顺序绘制。
 void FallingNotesRenderer::renderDynamicLayer(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                               const PlaybackSceneState& state)
 {
@@ -134,6 +139,7 @@ void FallingNotesRenderer::renderDynamicLayer(QPainter& painter, const PlaybackS
     painter.restore();
 }
 
+// 同步图表、主题和材质；只有几何版本变化时重建批量键盘矩形。
 void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
                                         const PlaybackSceneState& state)
 {
@@ -159,6 +165,7 @@ void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
     }
 }
 
+// 在下落区域内批量绘制黑键音高条带，不覆盖键盘或区域外内容。
 void FallingNotesRenderer::drawPitchBands(QPainter& painter,
                                           const PlaybackSceneGeometry& geometry) const
 {
@@ -172,6 +179,7 @@ void FallingNotesRenderer::drawPitchBands(QPainter& painter,
     painter.restore();
 }
 
+// 二分定位可见时间窗起点，绘制拍线及小节标签，避免扫描整曲网格。
 void FallingNotesRenderer::drawTimeGrid(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                         const PlaybackSceneState& state)
 {
@@ -213,6 +221,7 @@ void FallingNotesRenderer::drawTimeGrid(QPainter& painter, const PlaybackSceneGe
     painter.restore();
 }
 
+// 候选时间窗经几何相交再筛选；按尾、主体、音头、震音四层统一合成。
 void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                      const PlaybackSceneState& state)
 {
@@ -253,6 +262,7 @@ void FallingNotesRenderer::drawNotes(QPainter& painter, const PlaybackSceneGeome
     painter.restore();
 }
 
+// 绘制击键基线、共享帧求值产生的光效及可选简谱提示。
 void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                           const PlaybackSceneState& state)
 {
@@ -322,6 +332,7 @@ void FallingNotesRenderer::drawStrikeLine(QPainter& painter, const PlaybackScene
     }
 }
 
+// 白键先于黑键铺排，随后绘制八度和鼓道标签，形成可缓存的固定底图。
 void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                             const PlaybackSceneState& state)
 {
@@ -377,6 +388,7 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
     }
 }
 
+// 用每键代表音符的材质和光强叠加高亮，再恢复遮挡关系及被覆盖的标签。
 void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
                                               const PlaybackSceneGeometry& geometry,
                                               const PlaybackSceneState& state)
@@ -462,6 +474,7 @@ void FallingNotesRenderer::drawActiveKeyboard(QPainter& painter,
     }
 }
 
+// 显示当前标记和歌词；错误、加载或空场景时追加状态遮罩。
 void FallingNotesRenderer::drawOverlay(QPainter& painter, const PlaybackSceneGeometry& geometry,
                                        const PlaybackSceneState& state)
 {

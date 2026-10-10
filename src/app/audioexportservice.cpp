@@ -30,6 +30,8 @@ AudioExportResult failure(const QString& error)
 
 } // namespace
 
+// 同步音频导出事务：参数校验后合成 PCM，编码器 finish 成功才发布目标文件。
+// 文档由共享只读指针保持存活；进度回调在当前调用线程执行。
 AudioExportResult AudioExportService::exportDocument(
     std::shared_ptr<const music::MusicDocument> document,
     const AudioExportOptions& options, const std::atomic_bool* canceled, Progress progress)

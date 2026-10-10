@@ -11,6 +11,7 @@
 
 namespace midi_play::app {
 
+// 接管存储实现，并注册可跨 Qt 信号边界传递的设置枚举。
 SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store, QObject* parent)
     : QObject(parent), m_store(std::move(store))
 {
@@ -22,6 +23,7 @@ SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store, QObject*
     qRegisterMetaType<midi_play::settings::BackgroundImageAlignment>();
 }
 
+// 启动时加载并规范化完整设置；只发布读取警告，界面从快照取得初始值。
 void SettingsService::load()
 {
     if (!m_store) {
@@ -59,6 +61,7 @@ void SettingsService::load()
     }
 }
 
+// 设置写入统一遵循：规范化、相等检查、更新内存、发布信号、保存快照。
 void SettingsService::setVisualizationRefreshRate(int refreshRate)
 {
     const int normalizedRefreshRate = settings::normalizeVisualizationRefreshRate(refreshRate);
@@ -72,6 +75,7 @@ void SettingsService::setVisualizationRefreshRate(int refreshRate)
     persistSettings();
 }
 
+// 同时维护后端选择确认标记和特效能力约束，一次保存最终设置状态。
 void SettingsService::setGraphicsMode(settings::GraphicsMode mode)
 {
     const auto normalizedMode = settings::normalizeGraphicsMode(mode);
@@ -227,6 +231,7 @@ void SettingsService::setVisualEffectsLevel(settings::VisualEffectLevel level)
     persistSettings();
 }
 
+// 路径规范化只消除空白和相对路径；文件内容校验由资源加载服务负责。
 QString SettingsService::normalizeSoundFontPath(const QString& path)
 {
     const QString trimmedPath = path.trimmed();
@@ -237,6 +242,7 @@ QString SettingsService::normalizeSoundFontPath(const QString& path)
     return QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
 }
 
+// 保存绝对路径但不检查存在性，允许检测服务独立报告当前可执行文件状态。
 QString SettingsService::normalizeFfmpegPath(const QString& path)
 {
     const QString trimmed = path.trimmed();
@@ -244,6 +250,7 @@ QString SettingsService::normalizeFfmpegPath(const QString& path)
     return QFileInfo(trimmed).absoluteFilePath();
 }
 
+// 保留空路径语义；非空路径规范化后仍须由图片加载器检查能否解码。
 QString SettingsService::normalizeBackgroundImagePath(const QString& path)
 {
     const QString trimmedPath = path.trimmed();
@@ -251,6 +258,7 @@ QString SettingsService::normalizeBackgroundImagePath(const QString& path)
     return QDir::cleanPath(QFileInfo(trimmedPath).absoluteFilePath());
 }
 
+// 保存失败只报告错误，不回滚已生效的内存设置和此前发布的变更信号。
 void SettingsService::persistSettings()
 {
     if (!m_store) {

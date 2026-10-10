@@ -10,15 +10,18 @@
 
 namespace midi_play::encoding {
 namespace {
+// 外部取消标志没有条件变量通知，有限等待保证空队列/空缓冲场景也能观察取消。
 constexpr auto cancellationPollInterval = std::chrono::milliseconds(50);
 }
 
+// 固定队列容量与诊断开关；实际图像和编码进程延迟到 open 创建。
 FfmpegVideoEncoderWorker::FfmpegVideoEncoderWorker(std::size_t capacity)
     : m_capacity(std::max<std::size_t>(1, capacity))
     , m_diagnosticsEnabled(qEnvironmentVariableIntValue("MIDI_PLAY_VIDEO_DIAGNOSTICS") > 0)
 {
 }
 
+// 析构采用中止语义，唤醒三类等待者后 join，避免线程继续访问本对象成员。
 FfmpegVideoEncoderWorker::~FfmpegVideoEncoderWorker()
 {
     {
@@ -32,6 +35,7 @@ FfmpegVideoEncoderWorker::~FfmpegVideoEncoderWorker()
     if (m_thread.joinable()) m_thread.join();
 }
 
+// 在调用线程预分配帧池，在线程内创建 QProcess；返回前等待真实编码启动结果。
 bool FfmpegVideoEncoderWorker::open(const QString& executable, const QString& output,
                                     const QString& pcmPath, QSize size, int fps, int crf,
                                     qint64 frameCount, int audioSampleRate,
@@ -76,6 +80,7 @@ bool FfmpegVideoEncoderWorker::open(const QString& executable, const QString& ou
     return true;
 }
 
+// 取走一个可写图像；返回 false 时调用方不能把 frame 当作本次成功取得的缓冲。
 bool FfmpegVideoEncoderWorker::acquireFrame(QImage& frame, QString* error)
 {
     std::unique_lock lock(m_mutex);
@@ -98,6 +103,7 @@ bool FfmpegVideoEncoderWorker::acquireFrame(QImage& frame, QString* error)
     return true;
 }
 
+// 校验紧密 RGBA 布局并按 FIFO 转移所有权；队列反压限制生产速度和内存占用。
 bool FfmpegVideoEncoderWorker::submitFrame(QImage frame, QString* error)
 {
     if (frame.isNull()) {
@@ -109,6 +115,7 @@ bool FfmpegVideoEncoderWorker::submitFrame(QImage frame, QString* error)
         if (error) *error = m_error.isEmpty() ? QStringLiteral("FFmpeg 编码工作线程未启动") : m_error;
         return false;
     }
+    // 管道消费连续 width*height*4 字节，含额外行填充或其他通道顺序的图像不能直接提交。
     if (frame.size() != m_frameSize || frame.format() != QImage::Format_RGBA8888
         || frame.bytesPerLine() != m_frameSize.width() * 4) {
         if (error) *error = QStringLiteral("Invalid video frame format");
@@ -132,6 +139,7 @@ bool FfmpegVideoEncoderWorker::submitFrame(QImage frame, QString* error)
     return true;
 }
 
+// 停止生产并等待消费/封装完成；成功以工作线程错误和取消状态共同判定。
 bool FfmpegVideoEncoderWorker::finish(QString* error)
 {
     {
@@ -153,18 +161,21 @@ bool FfmpegVideoEncoderWorker::finish(QString* error)
     return m_error.isEmpty() && !m_abortRequested && (!m_canceled || !m_canceled->load());
 }
 
+// 读取入队计数；取消或编码失败后此值可能大于实际写入计数。
 qint64 FfmpegVideoEncoderWorker::submittedFrames() const
 {
     std::lock_guard lock(m_mutex);
     return m_submittedFrames;
 }
 
+// 读取成功写入计数，不据此推断 FFmpeg 已完成最终文件封装。
 qint64 FfmpegVideoEncoderWorker::encodedFrames() const
 {
     std::lock_guard lock(m_mutex);
     return m_encodedFrames;
 }
 
+// 在同一临界区复制所有统计，避免组合出不同采样时刻的计数和耗时。
 FfmpegVideoEncoderDiagnostics FfmpegVideoEncoderWorker::diagnostics() const
 {
     std::lock_guard lock(m_mutex);
@@ -174,6 +185,7 @@ FfmpegVideoEncoderDiagnostics FfmpegVideoEncoderWorker::diagnostics() const
             m_hardwareAccelerated, m_encoderSelectionNs};
 }
 
+// 工作线程独占编码器；启动结果、帧消费和最终封装均由此入口完成。
 void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString pcmPath,
                                    QSize size, int fps, int crf, qint64 frameCount,
                                    int audioSampleRate, const std::atomic_bool* canceled)
@@ -184,6 +196,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
                                      frameCount, audioSampleRate, canceled, &error);
     {
         std::lock_guard lock(m_mutex);
+        // 无论 open 成败都发布结果并唤醒调用方，防止失败路径无限等待启动屏障。
         m_startedFlag = true;
         m_opened = opened;
         if (!opened) m_error = error;
@@ -215,6 +228,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
             frame = std::move(m_frames.front());
             m_frames.pop_front();
         }
+        // 帧已出队即可释放一个队列名额，不必等待管道写入结束。
         m_notFull.notify_one();
 
         error.clear();
@@ -223,6 +237,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
         if (!encoder.writeFrame(frame, &error)) {
             std::lock_guard lock(m_mutex);
             if (!error.isEmpty()) m_error = error;
+            // 写入失败终止消费并唤醒生产者，防止其继续等待再也不会释放的队列/帧池。
             m_stopRequested = true;
             m_frames.clear();
             m_notFull.notify_all();
@@ -233,6 +248,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
             std::lock_guard lock(m_mutex);
             if (m_diagnosticsEnabled) m_writeNs += quint64(writeTimer.nsecsElapsed());
             ++m_encodedFrames;
+            // 写入已复制像素字节后才回收图像；池容量限制直接提交外部图像时的保留量。
             if (m_recycledFrames.size() < m_capacity + 2)
                 m_recycledFrames.push_back(std::move(frame));
         }
@@ -265,6 +281,7 @@ void FfmpegVideoEncoderWorker::run(QString executable, QString output, QString p
     }
 }
 
+// 所有阻塞生产路径共用此谓词；调用方必须持有 m_mutex。
 bool FfmpegVideoEncoderWorker::shouldStopLocked() const
 {
     return m_stopRequested || m_abortRequested || !m_error.isEmpty()

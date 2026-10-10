@@ -20,12 +20,13 @@ struct NoteRenderStyle {
 
 // 音符的稳定横向几何及绝对时间，垂直位置在每帧由传输时间计算。
 struct PreparedNoteRenderData {
+    // 索引指向 styles()；横向位置及宽度使用逻辑像素。
     int styleIndex = -1;
     qreal left = 0.0;
     qreal width = 0.0;
-    bool hasTail = false;
+    bool hasTail = false; // 可听结束晚于按键释放时刻时生成踏板尾部。
     bool tremolo = false;
-    bool validGeometry = false;
+    bool validGeometry = false; // 对应音高或鼓道没有有效宽度时不可绘制。
     // 栅格与 GPU 路径共用的时间负载，配色切换不改动这些字段。
     qint64 startUs = 0;
     qint64 keyEndUs = 0;
@@ -74,12 +75,14 @@ private:
 
     midi_play::visualization::VisualChartPtr m_chart;
     QSizeF m_geometrySize;
+    // 两个数组同下标：每个去重样式由一个源音符代表，用于重算配色。
     QVector<NoteRenderStyle> m_styles;
     QVector<int> m_styleRepresentatives;
-    QVector<PreparedNoteRenderData> m_notes;
+    QVector<PreparedNoteRenderData> m_notes; // 与 m_chart->notes() 同下标。
     quint64 m_chartBuildCount = 0;
     quint64 m_geometryBuildCount = 0;
     quint64 m_materialRevision = 0;
+    // 外观策略拥有静态存储期，地址变化可用于判断主题/配色策略切换。
     const NoteAppearance* m_appearance = &noteAppearanceFor();
 };
 

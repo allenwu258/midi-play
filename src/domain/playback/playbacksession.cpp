@@ -172,6 +172,7 @@ void PlaybackSession::stop()
     setState(State::Stopped);
 }
 
+// 跳转到夹取后的输出音乐时间；播放态重新恢复声音，其他传输状态保留原意图。
 void PlaybackSession::seek(qint64 microseconds)
 {
     if (!m_document) {
@@ -199,6 +200,7 @@ void PlaybackSession::seek(qint64 microseconds)
     }
 }
 
+// 先规范化并检查后端倍率能力；拒绝请求时不更新会话内已确认的倍率。
 bool PlaybackSession::setPlaybackRatePercent(int percent)
 {
     const int normalized = midi_play::settings::normalizePlaybackRatePercent(percent);
@@ -216,6 +218,7 @@ bool PlaybackSession::setPlaybackRatePercent(int percent)
     return true;
 }
 
+// 用户偏好独立于可用性保存；实际点击仍受 m_metronomeAvailable 约束。
 void PlaybackSession::setMetronomeEnabled(bool enabled)
 {
     if (m_metronomeEnabled == enabled) return;
@@ -232,6 +235,7 @@ void PlaybackSession::setMetronomeEnabled(bool enabled)
     m_metronomeScheduler.seek(*m_metronomeTimeline, position);
 }
 
+// 播放线程的周期入口，统一推进 MIDI、节拍器和向外发布的位置样本。
 void PlaybackSession::onTimer()
 {
     if (m_state != State::Playing || !m_document) {
@@ -281,12 +285,14 @@ void PlaybackSession::prepareMetronome()
     emit metronomeAvailabilityChanged(m_metronomeAvailable, reason);
 }
 
+// 在后端已清空发声状态后，从快照和目标前的事件恢复通道及尚未结束的音符。
 void PlaybackSession::rebuildAudioState(qint64 targetUs)
 {
     // seek/恢复时从最近快照开始重放到 targetUs，重建通道控制器和活动音符。
     m_scheduler.seek(targetUs);
 
     const auto& globalEvents = m_playbackModel.globalEvents();
+    // lowerBound 排除恰好位于 targetUs 的事件；这些事件由正常调度流消费，避免双重触发。
     const int end = m_playbackModel.globalIndex()
         ? m_playbackModel.globalIndex()->lowerBound(targetUs)
         : 0;
@@ -328,6 +334,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
             for (auto controllerIt = state.controllers.cbegin(); controllerIt != state.controllers.cend(); ++controllerIt) {
                 if (controllerIt.key() != 0 && controllerIt.key() != 32) controllerKeys.push_back(controllerIt.key());
             }
+            // 参数选择器必须先于 Data Entry，否则会把粗调/细调写入后端当前的错误参数。
             const auto controllerPriority = [](int controller) {
                 switch (controller) {
                 case 101: return 0; // RPN MSB（最高有效字节）
@@ -374,6 +381,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
         for (const auto& active : snapshot->activeNotes) {
             // 将快照中的活动音符暂时重建为 targetUs 之前开始的 NoteOn。
             PlaybackEvent resumed;
+            // 起点退一微秒仅用于暂存，起点与时值之和仍等于原快照的结束时间。
             resumed.timestampUs = targetUs - 1;
             resumed.durationUs = active.endTimestampUs - targetUs + 1;
             resumed.channel = active.channel;
@@ -388,6 +396,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
         }
     }
 
+    // 快照到目标之间使用音符身份栈配对；反复实例和同音高重叠不能折叠为单个 bool。
     for (int i = start; i < end; ++i) {
         const auto& event = globalEvents[i];
         if (event.kind == PlaybackEventKind::NoteOn) {
@@ -407,6 +416,7 @@ void PlaybackSession::rebuildAudioState(qint64 targetUs)
         }
     }
 
+    // 所有通道状态先入批次，再补发目标时刻的 NoteOn，使新声音使用恢复后的音色和控制器。
     for (auto it = activeNotes.cbegin(); it != activeNotes.cend(); ++it) {
         for (const auto& active : it.value()) {
             PlaybackEvent resumed = active;

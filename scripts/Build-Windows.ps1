@@ -1,16 +1,25 @@
 #Requires -Version 5.1
+# Windows 发布入口：校验 SDK、隔离工具环境，依次配置、构建、测试和暂存打包。
 [CmdletBinding()]
 param(
+    # 本地 SDK 配置文件；留空时读取仓库根目录 build.env.psd1。
     [string] $EnvironmentFile = '',
+    # 构建子目录标识，只允许安全的字母、数字、下划线和连字符。
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]*$')]
     [string] $BuildName = 'windows-release',
+    # dist 下的最终包目录名；仅允许清理本脚本标记拥有的旧包。
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]*$')]
     [string] $PackageName = 'midi-play-windows-x64',
+    # 编译并行数，默认按逻辑处理器数限制在 1..8。
     [ValidateRange(1, 128)]
     [int] $Jobs = [Math]::Max(1, [Math]::Min(8, [Environment]::ProcessorCount)),
+    # 强制传统渲染构建，覆盖配置文件的 Vulkan 开关。
     [switch] $Traditional,
+    # 仅验证工具和依赖环境，跳过后续配置、构建及打包。
     [switch] $CheckEnvironment,
+    # 额外运行需要真实音源的音频冒烟测试。
     [switch] $AudioSmoke,
+    # 外部 SF2/SF3 测试音源路径；启用 AudioSmoke 时必须显式提供。
     [string] $SoundFontPath = ''
 )
 

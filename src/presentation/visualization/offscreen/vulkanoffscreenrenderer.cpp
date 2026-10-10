@@ -122,6 +122,7 @@ private:
     VulkanRenderDiagnostics m_diagnostics;
 };
 
+// 同时满足资源兼容位和必需属性；首选属性不是硬要求，保留一个可用回退类型。
 uint32_t VulkanOffscreenRenderer::Impl::memoryType(uint32_t bits, VkMemoryPropertyFlags required,
                                                   VkMemoryPropertyFlags preferred)
 {
@@ -135,6 +136,7 @@ uint32_t VulkanOffscreenRenderer::Impl::memoryType(uint32_t bits, VkMemoryProper
     if (fallback == UINT32_MAX) throw std::runtime_error("No suitable Vulkan memory type");
     return fallback;
 }
+// 调用方已保证 GPU 不再引用此缓冲；先解除映射，销毁句柄后再释放底层内存。
 void VulkanOffscreenRenderer::Impl::destroy(Buffer& buffer)
 {
     if (buffer.mapped) vkUnmapMemory(m_device, buffer.memory);
@@ -142,6 +144,7 @@ void VulkanOffscreenRenderer::Impl::destroy(Buffer& buffer)
     if (buffer.memory) vkFreeMemory(m_device, buffer.memory, nullptr);
     buffer = {};
 }
+// 空闲槽上按需扩容；容量足够时保留地址，避免每帧重新分配和映射。
 void VulkanOffscreenRenderer::Impl::reserve(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage,
                                             VkMemoryPropertyFlags preferred)
 {
@@ -164,6 +167,7 @@ void VulkanOffscreenRenderer::Impl::reserve(Buffer& buffer, VkDeviceSize size, V
     buffer.coherent = (m_memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
     buffer.cached = (m_memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0;
 }
+// 写入已映射且容量足够的缓冲；非 coherent 内存对整个映射范围 flush，满足原子对齐要求。
 void VulkanOffscreenRenderer::Impl::write(Buffer& buffer, const void* data, VkDeviceSize size)
 {
     if (!size) return;
@@ -174,6 +178,7 @@ void VulkanOffscreenRenderer::Impl::write(Buffer& buffer, const void* data, VkDe
         check(vkFlushMappedMemoryRanges(m_device, 1, &range), "flush buffer");
     }
 }
+// 图像视图依赖图像、图像依赖内存；按该依赖顺序释放并归零，兼容部分初始化失败。
 void VulkanOffscreenRenderer::Impl::destroy(Texture& texture)
 {
     destroy(texture.staging);
@@ -182,6 +187,7 @@ void VulkanOffscreenRenderer::Impl::destroy(Texture& texture)
     if (texture.memory) vkFreeMemory(m_device, texture.memory, nullptr);
     texture = {};
 }
+// 分步创建 RGBA8 图像、内存和视图；每一步成功句柄都留在 texture，供异常清理回收。
 void VulkanOffscreenRenderer::Impl::createImage(Texture& texture, QSize size, VkImageUsageFlags usage)
 {
     VkImageCreateInfo info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -202,6 +208,7 @@ void VulkanOffscreenRenderer::Impl::createImage(Texture& texture, QSize size, Vk
     view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     check(vkCreateImageView(m_device, &view, nullptr, &texture.view), "create image view");
 }
+// 描述符声明采样时布局；实际布局转换由上传命令完成，更新前须等待共享资源的在途使用。
 void VulkanOffscreenRenderer::Impl::bindTexture(const Texture& texture, uint32_t binding)
 {
     VkDescriptorImageInfo image {m_sampler, texture.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -211,6 +218,7 @@ void VulkanOffscreenRenderer::Impl::bindTexture(const Texture& texture, uint32_t
     descriptor.pImageInfo = &image;
     vkUpdateDescriptorSets(m_device, 1, &descriptor, 0, nullptr);
 }
+// 暂存像素后记录两次布局/访问屏障，保证先完成传输写入再供片元采样。
 void VulkanOffscreenRenderer::Impl::uploadTexture(Texture& texture, const QImage& image,
                                                   VkCommandBuffer command)
 {
@@ -238,6 +246,7 @@ void VulkanOffscreenRenderer::Impl::uploadTexture(Texture& texture, const QImage
     texture.uploaded = true;
 }
 
+// 建立独立设备及离屏目标，所有成功创建的句柄由 Impl 析构统一回收。
 void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
 {
     m_diagnostics = {};
@@ -441,6 +450,7 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     m_scissor = {{scissor.x(), scissor.y()}, {uint32_t(scissor.width()), uint32_t(scissor.height())}};
 }
 
+// 每个实例生成六个顶点；range.first/count 选择同一层的连续实例范围。
 void VulkanOffscreenRenderer::Impl::draw(VkCommandBuffer command, Buffer& buffer,
                                          VulkanInstanceRange range)
 {
@@ -450,6 +460,7 @@ void VulkanOffscreenRenderer::Impl::draw(VkCommandBuffer command, Buffer& buffer
     vkCmdDraw(command, 6, range.count, 0, range.first);
 }
 
+// 等待共享纹理的旧读者结束；保留槽占用状态及票据，供调用方随后回读。
 void VulkanOffscreenRenderer::Impl::waitForAllSlots()
 {
     for (auto& slot : m_slots) {
@@ -462,6 +473,7 @@ void VulkanOffscreenRenderer::Impl::waitForAllSlots()
     }
 }
 
+// 为音乐时间提交一帧并发放票据；取消或无空闲槽返回 false，Vulkan 错误抛异常。
 bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTicket& ticket,
                                                 const std::atomic_bool* canceled)
 {
@@ -578,6 +590,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     return true;
 }
 
+// 等待票据所属槽的 GPU 工作结束，释放票据后复制像素；取消不撤销已提交的 GPU 命令。
 bool VulkanOffscreenRenderer::Impl::completeRender(VulkanRenderTicket& ticket, QImage& frame,
                                                    const std::atomic_bool* canceled)
 {
@@ -631,6 +644,7 @@ bool VulkanOffscreenRenderer::Impl::render(qint64 position, QImage& frame, const
     if (!beginRender(position, ticket, canceled)) return false;
     return completeRender(ticket, frame, canceled);
 }
+// 析构清理也覆盖初始化中途失败，先等待设备空闲再按资源依赖释放。
 void VulkanOffscreenRenderer::Impl::cleanup()
 {
     if (m_device) {
@@ -665,6 +679,7 @@ bool VulkanOffscreenRenderer::initialize(const ExportSceneConfig& config, QStrin
     try { m_impl = std::make_unique<Impl>(); m_impl->initialize(config); return true; }
     catch (const std::exception& e) { *error = QString::fromUtf8(e.what()); m_impl.reset(); return false; }
 }
+// 对外提交接口；调用方提供有效 error 指针，并区分取消/槽满与异常错误。
 bool VulkanOffscreenRenderer::beginRender(qint64 musicPositionUs, VulkanRenderTicket& ticket,
                                           const std::atomic_bool* canceled, QString* error)
 {
@@ -674,6 +689,7 @@ bool VulkanOffscreenRenderer::beginRender(qint64 musicPositionUs, VulkanRenderTi
         return true;
     } catch (const std::exception& e) { *error = QString::fromUtf8(e.what()); return false; }
 }
+// 将已提交票据转换为独立 QImage；异常通过 error 返回，调用方负责停止该次导出。
 bool VulkanOffscreenRenderer::completeRender(VulkanRenderTicket& ticket, QImage& frame,
                                              const std::atomic_bool* canceled, QString* error)
 {
@@ -681,6 +697,7 @@ bool VulkanOffscreenRenderer::completeRender(VulkanRenderTicket& ticket, QImage&
     try { return m_impl->completeRender(ticket, frame, canceled); }
     catch (const std::exception& e) { *error = QString::fromUtf8(e.what()); return false; }
 }
+// 对外同步入口，组合提交与回读并把异常转换为错误文本。
 bool VulkanOffscreenRenderer::render(qint64 position, QImage& frame, const std::atomic_bool* canceled, QString* error)
 {
     if (!m_impl) { *error = QStringLiteral("离屏渲染器尚未初始化"); return false; }

@@ -22,6 +22,7 @@
 
 namespace midi_play::presentation::visualization {
 
+// 初始化宿主绘制属性与帧定时器；播放状态决定定时器是否运行。
 FallingNotesView::FallingNotesView(QWidget* parent)
     : QWidget(parent)
 {
@@ -40,6 +41,7 @@ FallingNotesView::FallingNotesView(QWidget* parent)
     });
 }
 
+// 替换谱面后重建时间索引，并使布局、候选窗口和静态键盘缓存全部失效。
 void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
 {
     m_state.chart = std::move(chart);
@@ -65,6 +67,7 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
     update();
 }
 
+// 接收音乐时间采样及单调时钟采样时刻，供绘制时按倍率有界外推。
 void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs, qint64 sampledAtUs)
 {
     m_state.transportPositionUs = std::clamp<qint64>(positionUs, 0, std::max<qint64>(0, durationUs));
@@ -78,6 +81,7 @@ void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs
     update();
 }
 
+// 同步播放状态、视觉时钟和重绘驱动；暂停时保留最后一帧。
 void FallingNotesView::setTransportState(midi_play::playback::State state)
 {
     // 进入播放状态时重设瞬态起点，恢复播放不会补播此前的击键动画。
@@ -94,6 +98,7 @@ void FallingNotesView::setTransportState(midi_play::playback::State state)
     update();
 }
 
+// 简谱条占用击键线上方空间，开关变化需要重新布局。
 void FallingNotesView::setShowNotationStrip(bool show)
 {
     if (m_state.showNotationStrip == show) return;
@@ -126,6 +131,7 @@ void FallingNotesView::setVisualEffectsLevel(midi_play::settings::VisualEffectLe
     update();
 }
 
+// 主题影响静态键盘配色；音符材质由渲染缓存按主题另行更新。
 void FallingNotesView::setThemeMode(midi_play::settings::ThemeMode mode)
 {
     const auto normalized = midi_play::settings::normalizeThemeMode(mode);
@@ -159,6 +165,7 @@ void FallingNotesView::setRefreshRate(int hz)
     m_frameTimer.setInterval(midi_play::settings::visualizationRefreshPeriod(hz));
 }
 
+// 将瞬态效果的有效起点移到当前音乐时间，避免跳转后显示旧击键余辉。
 void FallingNotesView::resetTransientEffects(qint64 positionUs)
 {
     m_state.effectsStartUs = std::max<qint64>(0, positionUs);
@@ -194,6 +201,7 @@ FallingNotesView::~FallingNotesView()
 #endif
 }
 
+// 解析请求的图形模式；Vulkan 首帧确认成功或回退后才通知实际模式。
 void FallingNotesView::setGraphicsMode(midi_play::settings::GraphicsMode mode)
 {
     const auto normalized = midi_play::settings::normalizeGraphicsMode(mode);
@@ -224,6 +232,7 @@ void FallingNotesView::setGraphicsMode(midi_play::settings::GraphicsMode mode)
 #endif
 }
 
+// 异步解码背景；请求号只屏蔽过期结果，不取消已启动的解码任务。
 void FallingNotesView::setBackgroundImagePath(const QString& path)
 {
     m_backgroundImagePath = path.trimmed();
@@ -236,6 +245,7 @@ void FallingNotesView::setBackgroundImagePath(const QString& path)
     update();
     if (m_backgroundImagePath.isEmpty()) return;
 
+    // watcher 随宿主销毁；工作任务持有路径副本，不借用界面成员。
     auto* watcher = new QFutureWatcher<QImage>(this);
     connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher, requestId] {
         const QImage image = watcher->result();
@@ -274,6 +284,7 @@ void FallingNotesView::setBackgroundImageOpacity(int opacity)
 }
 
 #if MIDI_PLAY_HAS_VULKAN
+// 建立实例、窗口容器和信号连接，并把当前场景状态完整传给新后端。
 bool FallingNotesView::createVulkanView()
 {
     if (m_vulkanWindow) return true;
@@ -334,6 +345,7 @@ bool FallingNotesView::createVulkanView()
 #endif
 
 #if MIDI_PLAY_HAS_VULKAN
+// 先停止窗口连续绘制，再按窗口、Vulkan 实例的依赖顺序释放资源。
 void FallingNotesView::destroyVulkanView()
 {
     if (!m_vulkanContainer) return;
@@ -349,6 +361,7 @@ void FallingNotesView::destroyVulkanView()
 }
 #endif
 
+// 传统路径按需重建缓存，依次组合背景、键盘底图与动态前景。
 void FallingNotesView::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
@@ -409,6 +422,7 @@ void FallingNotesView::changeEvent(QEvent* event)
     }
 }
 
+// 按物理像素尺寸缓存键盘底图；16 MiB 上限或分配失败时交由直接绘制。
 void FallingNotesView::rebuildStaticKeyboard(qreal devicePixelRatio,
                                              const QRect& logicalRect)
 {
@@ -440,6 +454,7 @@ void FallingNotesView::rebuildStaticKeyboard(qreal devicePixelRatio,
     m_staticKeyboard = std::move(layer);
 }
 
+// 候选列表覆盖带保护区的时间窗口；其 span 仅在缓存下次更新前有效。
 void FallingNotesView::rebuildFrameState()
 {
     if (!m_frameStateDirty) {

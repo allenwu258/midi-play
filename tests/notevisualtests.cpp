@@ -433,7 +433,7 @@ void testVulkanStaticKeyboard(const visualization::VisualChartPtr& chart)
         require(scene.staticUiRevision() == revision && scene.staticUi().quads == keyboard,
                 "animation and seeking must not rebuild the static keyboard");
     }
-// 静态顶点使用逻辑坐标，不包含字体图集 UV。
+    // 静态顶点使用逻辑坐标，不包含字体图集 UV。
     scene.prepare(state, {1280, 720}, 2, QFont(QStringLiteral("Arial"), 12));
     require(scene.staticUiRevision() == revision && scene.staticUi().quads == keyboard,
             "DPI and font changes must not invalidate atlas-independent geometry");

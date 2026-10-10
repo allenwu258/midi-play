@@ -87,6 +87,8 @@ void appendVideoDiagnostics(const VideoExportOptions& options, qint64 frameCount
 }
 } // namespace
 
+// 工作线程同步导出入口：校验资源，生成 PCM，流水渲染/编码，验证成品后提交目标文件。
+// progress 在调用线程执行；取消只在各阶段检查点生效，调用方不得直接更新 GUI。
 VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music::MusicDocument> document,
     const VideoExportOptions& options, const std::atomic_bool* canceled, Progress progress)
 {

@@ -25,6 +25,7 @@ struct LoadedProject {
 
 } // namespace
 
+// 注册输入格式与信号类型；无会话音源验证完成后复用统一结果发布流程。
 PlayerApplicationService::PlayerApplicationService(QObject* parent)
     : QObject(parent)
 {
@@ -47,6 +48,7 @@ void PlayerApplicationService::openMusicXml(const QString& path)
     openFile(path);
 }
 
+// 异步构建文档及视觉投影；仅最新请求可以在宿主线程替换当前控制器。
 void PlayerApplicationService::openFile(const QString& path)
 {
     if (m_soundFontLoading) {
@@ -59,6 +61,7 @@ void PlayerApplicationService::openFile(const QString& path)
         emit errorOccurred(QStringLiteral("不支持的音乐文件类型: %1").arg(suffix));
         return;
     }
+    // 导入失败保留原会话；代次只决定结果发布资格，不中断先前后台读取。
     const quint64 generation = ++m_loadGeneration;
     m_documentLoading = true;
     emit busyChanged(true);
@@ -134,6 +137,7 @@ void PlayerApplicationService::openFile(const QString& path)
     }));
 }
 
+// 串行受理音源请求：有控制器则异步加载，无控制器则后台验证并记住选择。
 void PlayerApplicationService::requestSoundFontLoad(const QString& path)
 {
     if (m_soundFontLoading || m_documentLoading) {
@@ -164,6 +168,7 @@ void PlayerApplicationService::requestSoundFontLoad(const QString& path)
     }));
 }
 
+// 同步加载入口；只有验证/加载成功才发布选择提交信号，失败尝试恢复旧音源。
 bool PlayerApplicationService::loadSoundFont(const QString& path)
 {
     if (m_soundFontLoading || m_documentLoading) {
@@ -231,6 +236,7 @@ bool PlayerApplicationService::validateSoundFontFile(const QString& path,
     return true;
 }
 
+// 检查文件可读性与扩展名，返回绝对路径；此步骤尚未检查 SoundFont 容器内容。
 bool PlayerApplicationService::normalizeSoundFontPath(const QString& path,
                                                       QString* normalizedPath)
 {
@@ -257,6 +263,7 @@ bool PlayerApplicationService::normalizeSoundFontPath(const QString& path,
     return true;
 }
 
+// 统一缓存最近音源错误并发布专用失败信号，供设置窗口和播放入口消费。
 void PlayerApplicationService::reportSoundFontFailure(const QString& message)
 {
     m_lastSoundFontError = message.isEmpty() ? QStringLiteral("音源加载失败") : message;
@@ -276,12 +283,13 @@ void PlayerApplicationService::setVisualizationRefreshRate(int refreshRate)
     }
 }
 
+// 先由控制器受理倍率请求，再更新应用快照；实际会话修改排队到播放线程执行。
 void PlayerApplicationService::setPlaybackRatePercent(int percent)
 {
     const int normalized = settings::normalizePlaybackRatePercent(percent);
     if (m_playbackRatePercent == normalized) return;
 
-    // 控制器可能拒绝当前状态下的倍率事务，重新发布旧值使控件回到实际倍率。
+    // 控制器拒绝倍率请求时重新发布旧值，使控件回到已确认倍率。
     if (m_controller && !m_controller->setPlaybackRatePercent(normalized)) {
         emit playbackRateChanged(m_playbackRatePercent);
         return;
@@ -304,6 +312,7 @@ void PlayerApplicationService::setGraphicsMode(settings::GraphicsMode mode)
     emit graphicsModeChanged(m_graphicsMode);
 }
 
+// 播放前校验外部音源仍有效，再委托控制器执行状态转换。
 void PlayerApplicationService::play()
 {
     if (m_soundFontLoading) {
@@ -316,6 +325,7 @@ void PlayerApplicationService::play()
 }
 void PlayerApplicationService::pause() { if (m_controller) m_controller->pause(); }
 void PlayerApplicationService::stop() { if (m_controller) m_controller->stop(); }
+// 转发微秒跳转请求后发布实际位置的不连续通知，供视觉效果重置。
 void PlayerApplicationService::seek(qint64 microseconds)
 {
     if (!m_controller) return;
@@ -323,6 +333,7 @@ void PlayerApplicationService::seek(qint64 microseconds)
     emit playbackDiscontinuity(m_positionUs);
 }
 
+// 在控制器替换后绑定新会话；旧控制器销毁会自动断开原有 QObject 连接。
 void PlayerApplicationService::connectSession()
 {
     connect(m_controller.get(), &playback::PlaybackController::metronomeAvailabilityChanged,
@@ -342,6 +353,7 @@ void PlayerApplicationService::connectSession()
             });
 }
 
+// 消费唯一待处理路径，并按加载状态、结果、选择提交的顺序通知界面。
 void PlayerApplicationService::completeSoundFontLoad(bool success, const QString& error)
 {
     // 消费候选并先结束加载状态；随后发具体失败或成功信号，供界面与启动流程接续。

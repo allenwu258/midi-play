@@ -13,6 +13,7 @@ AppTheme makeTheme(midi_play::settings::ThemeMode mode)
     const auto color = [light](const char* dark, const char* pale) {
         return QColor(QLatin1StringView(light ? pale : dark));
     };
+    // 通用控件角色供 QPalette 和 QSS 共用，避免两个绘制入口出现色表分歧。
     auto& w = theme.widgets;
     w.window = color("#121416", "#f3f5f2");
     w.panel = color("#1b1d20", "#ffffff");
@@ -28,6 +29,7 @@ AppTheme makeTheme(midi_play::settings::ThemeMode mode)
     w.pressed = color("#34383b", "#d2ded4");
     w.disabledText = color("#676c68", "#859188");
     w.actionBorder = color("#4b5350", "#687c6e");
+    // 传输命令分别定义常态、悬停、边缘和按下色，图标另取前景角色。
     w.play = color("#176b56", "#176b56");
     w.playHover = color("#21866b", "#21866b");
     w.playEdge = color("#48c9a2", "#177958");
@@ -54,6 +56,7 @@ AppTheme makeTheme(midi_play::settings::ThemeMode mode)
     w.checkedHover = color("#927b2d", "#ecd78f");
     w.closeHover = color("#c42b2b", "#c42b2b");
     w.closePressed = color("#a51f1f", "#a51f1f");
+    // 输入区、错误反馈及倍率浮层按语义命名，调用方不依赖具体色值。
     w.sliderTrack = color("#393d3f", "#ced9d0");
     w.accent = color("#f4d35e", "#987116");
     w.input = color("#25282b", "#eef2ed");
@@ -109,6 +112,7 @@ AppTheme makeTheme(midi_play::settings::ThemeMode mode)
 
 } // namespace
 
+// 返回静态只读主题引用；非 Light 枚举统一回退暗色，引用在进程内持续有效。
 const AppTheme& themeFor(midi_play::settings::ThemeMode mode)
 {
     static const AppTheme dark = makeTheme(midi_play::settings::ThemeMode::Dark);
@@ -116,6 +120,7 @@ const AppTheme& themeFor(midi_play::settings::ThemeMode mode)
     return mode == midi_play::settings::ThemeMode::Light ? light : dark;
 }
 
+// 将语义色映射到 Qt 调色板角色，覆盖激活、非激活和禁用三组状态。
 QPalette widgetPalette(const AppTheme& theme)
 {
     const auto& w = theme.widgets;

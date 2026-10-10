@@ -86,7 +86,7 @@ std::vector<float> referenceAudio(const midi_play::app::ExportTimeline& timeline
 void compareAudio(const std::vector<float>& expected, const std::vector<float>& decoded,
                   const midi_play::app::ExportTimeline& timeline)
 {
-    // 允许编码延迟带来的有限样本偏移，再比较 marker 波形位置和幅值。
+    // 允许总长度的样本舍入误差或末尾不足一个 AAC 包的填充，不放宽 marker 对齐要求。
     const qint64 expectedFrames = qint64(expected.size() / channels);
     const qint64 decodedFrames = qint64(decoded.size() / channels);
     require(std::abs(decodedFrames - expectedFrames) <= 16
@@ -94,6 +94,7 @@ void compareAudio(const std::vector<float>& expected, const std::vector<float>& 
             "AAC output duration matches PCM within sample rounding or one padded packet",
             QStringLiteral("decoded samples=%1, expected samples=%2")
                 .arg(decodedFrames).arg(expectedFrames));
+    // 整段相对平方误差限制为 2%，可发现局部相关性检查遗漏的重复/缺失音频块。
     const size_t comparedSamples = std::min(expected.size(), decoded.size());
     double energy = 0, error = 0;
     for (size_t i = 0; i < comparedSamples; ++i) {
@@ -112,6 +113,7 @@ void compareAudio(const std::vector<float>& expected, const std::vector<float>& 
         for (int channel = 0; channel < channels; ++channel) {
             double bestCorrelation = -1;
             int bestLag = 0;
+            // 在较宽窗口搜索最佳相关位置，但最终只允许三采样偏移及 0.95 以上相关度。
             for (int lag = -1536; lag <= 1536; ++lag) {
                 double referenceEnergy = 0, decodedEnergy = 0, product = 0;
                 for (int i = 0; i < markerSamples; ++i) {
@@ -136,7 +138,7 @@ void compareAudio(const std::vector<float>& expected, const std::vector<float>& 
         }
     }
 
-// 排除 marker 前后的 AAC 振铃区间，其余样本必须保持静音；这能发现仅检查起点无法捕获的重复拷贝。
+    // 排除 marker 前后各 1024 采样的 AAC 振铃区间，再检查其余间隙平均能量。
     double silentEnergy = 0;
     qint64 silentSamples = 0;
     for (qint64 i = 0; i < std::min(timeline.sampleCount(), decodedFrames); ++i) {

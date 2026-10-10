@@ -19,7 +19,9 @@ enum class State { Empty, Ready, Playing, Paused, Stopped, Error };
 
 // 可被音频后端加载的音源资源；soundFontId 由具体后端在加载后填充。
 struct AudioResource {
+    // 外部音源文件路径；资源加载和可读性检查由基础设施层负责。
     QString path;
+    // FluidSynth 等后端分配的句柄，-1 表示尚未获得有效资源编号。
     int soundFontId = -1;
 };
 
@@ -37,8 +39,8 @@ struct AudioResourceMeta {
 struct SoundPreset {
     QString id;
     QString name;
-    int bank = 0;
-    int program = 0;
+    int bank = 0; // Bank Select 合成的音色库编号。
+    int program = 0; // 从零开始的 MIDI program，通常为 0..127。
 };
 
 // 文档或轨道选择音源时使用的稳定配置值。
@@ -50,15 +52,15 @@ struct PlaybackSetupData {
 
 // 播放事件的协议类型。事件按微秒时间戳进入调度器，具体编码由音频后端完成。
 enum class PlaybackEventKind {
-    NoteOn,
-    NoteOff,
-    ProgramChange,
-    ControlChange,
-    PitchBend,
-    ChannelPressure,
-    PolyPressure,
-    NoteExpression,
-    AllNotesOff
+    NoteOn, // 按指定力度触发音符，并携带用于派生 NoteOff 的时值。
+    NoteOff, // 释放按键；踏板是否继续保持声音由当前通道状态决定。
+    ProgramChange, // 在指定 bank 中选择 program。
+    ControlChange, // 设置编号为 controller 的 MIDI 控制器。
+    PitchBend, // 通道弯音，value 为 14 位无符号值，8192 为中心。
+    ChannelPressure, // 通道触后，value 为 7 位压力值。
+    PolyPressure, // 指定 pitch 的按键触后。
+    NoteExpression, // 单音符表达，由 expressionType 确定 value 的含义。
+    AllNotesOff // 请求后端清理发声状态，具体复位范围由后端契约确定。
 };
 
 // 单音符表达控制的语义类型。
@@ -82,14 +84,15 @@ enum class ArticulationType {
 // 一个演奏法对时值、力度的修正结果。
 struct ArticulationAppliedData {
     ArticulationType type = ArticulationType::Tenuto;
-    double durationFactor = 1.0;
-    double velocityFactor = 1.0;
-    int velocityOffset = 0;
+    double durationFactor = 1.0; // 相对于原音符时值的乘数。
+    double velocityFactor = 1.0; // 原 MIDI velocity 的乘数，偏移在乘法后应用。
+    int velocityOffset = 0; // 力度整数偏移，最终事件由渲染器夹取到有效范围。
 };
 
 // 表达曲线中的相对时间点；offsetUs 相对于所属音符起始时间。
 struct ExpressionCurvePoint {
     qint64 offsetUs = 0;
+    // 数值随曲线解释：pitchCurve 为 [-1, 1] 归一化弯音，expressionCurve 为归一化力度。
     float value = 0.0F;
 };
 
@@ -104,12 +107,19 @@ struct NoteExpressionContext {
 // 调度器向音频后端提交的统一事件对象。
 // NoteOn 的 durationUs 用于生成明确的 NoteOff；其他事件通常为瞬时事件。
 struct PlaybackEvent {
+    // 反复展开后的音乐时间，单位为微秒；播放倍率改变墙钟映射，不改写此时间戳。
     qint64 timestampUs = 0;
+    // 按键时值，单位为微秒；不能直接作为踏板延音后的可听时长。
     qint64 durationUs = 0;
+    // 从零开始的 MIDI 通道，通常为 0..15；本结构不自行做范围校验。
     int channel = 0;
+    // NoteOn/NoteOff/PolyPressure 的目标音高，通常为 0..127。
     int pitch = 60;
+    // NoteOn 的 7 位力度；其他事件不消费此字段。
     int velocity = 90;
+    // ProgramChange 的零基音色编号；音符事件也可保存来源音色。
     int program = 0;
+    // 以下标志保存记谱演奏语义，供表达渲染器调整事件，而非直接编码为 MIDI 字节。
     bool tieStart = false;
     bool tieStop = false;
     bool staccato = false;
@@ -117,9 +127,13 @@ struct PlaybackEvent {
     bool tenuto = false;
     bool ghost = false;
     PlaybackEventKind kind = PlaybackEventKind::NoteOn;
+    // 同时刻、同优先级事件的排序依据；反复实例可沿用同一源序号。
     quint64 sequence = 0;
+    // 仅 ControlChange 使用的 7 位控制器编号。
     int controller = 0;
+    // 控制值随 kind/expressionType 解释，弯音范围与压力/控制器范围不同。
     int value = 0;
+    // 导入后的记谱声部和谱表编号，用于分组及连音匹配，不等于 MIDI channel。
     int voice = 1;
     int staff = 1;
     bool marcato = false;
@@ -128,7 +142,9 @@ struct PlaybackEvent {
     // Bank Select 的两个控制器与 7 位 program 分开保存，使跳转后的状态重放无损。
     int bankMsb = 0;
     int bankLsb = 0;
+    // seek 恢复音符时区分仍按键与已松键但受踏板保持的声音。
     bool keyReleased = false;
+    // 文档音符身份；-1 时使用通道/音高回退匹配，反复播放不保证此 ID 每次唯一。
     qint64 noteId = -1;
     NoteExpressionType expressionType = NoteExpressionType::Volume;
 
@@ -153,6 +169,7 @@ inline int playbackEventPriority(const PlaybackEvent& event)
     return 4;
 }
 
+// 构建期可变的事件流与平行时间戳索引；finalize 后才满足二分查询的排序前提。
 class PlaybackEventMap final {
 public:
     // 清除事件和用于二分查找的时间戳索引。
@@ -212,26 +229,33 @@ public:
 
 private:
     QVector<PlaybackEvent> m_events;
+    // finalize/assign 按事件顺序生成；insert 不更新该索引。
     QVector<qint64> m_timestamps;
 };
 
 // 跳转或恢复播放时需要重建的单个 MIDI 通道状态。
 struct ChannelState {
+    // 是否曾收到通道状态事件；恢复时只重放已初始化通道。
     bool initialized = false;
+    // 当前音色选择与通道控制值沿用 MIDI 编码；pitchBend 以 8192 为中心。
     int program = 0;
     int bankMsb = 0;
     int bankLsb = 0;
     int pitchBend = 8192;
     int channelPressure = 0;
     QHash<int, int> polyPressure;
+    // RPN/NRPN 选择器分别保存；127/127 是 RPN 空选择约定。
     int rpnMsb = 127;
     int rpnLsb = 127;
     int nrpnMsb = 127;
     int nrpnLsb = 127;
+    // CC6/CC38 的粗调/细调值；RPN 0/0 时派生为弯音范围。
     int dataEntryMsb = 0;
     int dataEntryLsb = 0;
+    // 弯音灵敏度的半音数和音分数，独立于当前 pitchBend 值。
     int pitchBendRangeSemitones = 2;
     int pitchBendRangeCents = 0;
+    // 已观察到的控制器原值；恢复时仅重放已记录项。
     QHash<int, int> controllers;
 };
 
@@ -241,17 +265,18 @@ struct ActiveNoteState {
     int channel = 0;
     int pitch = 60;
     int velocity = 90;
-    qint64 endTimestampUs = 0;
-    bool keyReleased = false;
-    bool sostenutoCaptured = false;
-    bool sustainLatched = false;
-    bool sostenutoLatched = false;
+    qint64 endTimestampUs = 0; // 输出时间线上的预计结束位置，单位为微秒。
+    bool keyReleased = false; // 已收到 NoteOff，但声音可能仍由踏板保持。
+    bool sostenutoCaptured = false; // CC66 捕获的按键身份，不等同于已进入延音阶段。
+    bool sustainLatched = false; // 松键时被 CC64 持续踏板保持。
+    bool sostenutoLatched = false; // 松键时被 CC66 选择性延音踏板保持。
 };
 
 // 在某一时间点保存的通道状态、活动音符和全局事件下标。
 // PlaybackSession 使用它减少 seek 时需要重放的事件数量。
 struct PlaybackStateSnapshot {
     qint64 timestampUs = 0;
+    // 尚未应用的首个事件下标；待重放范围包含检查点同时间戳的事件。
     int eventIndex = 0;
     QHash<int, ChannelState> channels;
     QVector<ActiveNoteState> activeNotes;
@@ -279,13 +304,14 @@ private:
 
 // 一个逻辑播放轨道（通常是 staff/voice 分组）及其主事件流、NoteOff 流和快照。
 struct PlaybackData {
+    // 由源轨道、谱表和声部组成的逻辑轨道标识。
     QString trackId;
     PlaybackSetupData setupData;
     QVector<PlaybackEvent> events;
-    QVector<PlaybackEvent> offEvents;
+    QVector<PlaybackEvent> offEvents; // 从已渲染 NoteOn 派生的释放流。
     PlaybackEventMap mainStream;
     PlaybackEventMap offStream;
-    QVector<PlaybackStateSnapshot> snapshots;
+    QVector<PlaybackStateSnapshot> snapshots; // 此逻辑轨道的恢复检查点。
     std::shared_ptr<const PlaybackEventIndex> index;
     std::shared_ptr<const PlaybackEventIndex> offIndex;
 };

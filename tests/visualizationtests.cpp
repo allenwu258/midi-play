@@ -88,7 +88,7 @@ MusicDocument repeatedDocument()
     return document;
 }
 
-// 反复段投影展开为独立时间实例，音符、标记和歌词均保持顺序。
+// 反复段为源音符生成独立实例，起音时间、总时长、代次和简谱标签符合展开结果。
 void testRepeatProjection()
 {
     auto document = repeatedDocument();
@@ -109,7 +109,7 @@ void testRepeatProjection()
             "C in C major should be projected as degree 1");
 }
 
-// 区间索引查询返回与线性扫描一致的可见音符集合。
+// 窄窗口、跨反复跳转和曲尾之后的查询返回预期音符集合。
 void testVisibleIndex()
 {
     auto document = repeatedDocument();
@@ -128,7 +128,7 @@ void testVisibleIndex()
     require(result.isEmpty(), "window after chart end must be empty");
 }
 
-// 可见窗口缓存按图表代次、时间窗口和 look-ahead 参数失效。
+// 保护区内复用候选，越界/索引修订时重查；含踏板长尾及闭区间端点的音符不能遗漏。
 void testVisibleNoteWindowCache()
 {
     QVector<midi_play::visualization::VisualNote> notes;
@@ -184,7 +184,7 @@ void testVisibleNoteWindowCache()
             "notes starting exactly at the inclusive window end must be retained");
 }
 
-// 活动音符查找支持重叠、踏板尾音和重复实例的快速定位。
+// 重复音高以最后加入项作为键盘代表，标签保留首次发现顺序；非法下标被拒绝。
 void testActiveNoteLookup()
 {
     ActiveNoteLookup lookup;
@@ -236,7 +236,7 @@ void testActiveNoteLookup()
             "frame reset must clear all active-note lookup state");
 }
 
-// 渲染缓存按可见音符、动态状态和主题修订生成稳定键。
+// 初次构建按源下标保留全部音符，反复实例复用材质，尺寸变化只重建横向几何。
 void testNoteRenderCache()
 {
     auto document = repeatedDocument();
@@ -266,7 +266,7 @@ void testNoteRenderCache()
             "resize must rebuild only horizontal geometry, not immutable styles");
 }
 
-// 静态音符标志变化应触发缓存更新，纯播放位置变化可复用材质。
+// 图表准备时解析踏板尾部及震音标志，幽灵音保持音头、主体、尾部透明度层次。
 void testNoteRenderCacheStaticFlags()
 {
     MusicDocument document;
@@ -339,7 +339,7 @@ void testNoteRenderCacheDeduplicatesResolvedVelocityColor()
             "velocities resolving to the same color must share one render style");
 }
 
-// 栅格策略按可见音符数量选择缓存/直绘路径，保证输出尺寸和状态合法。
+// 栅格策略关闭几何和图像平滑、保留文字抗锯齿，矩形边缘不得出现混合像素。
 void testRasterRenderPolicy()
 {
     QImage image(8, 8, QImage::Format_ARGB32_Premultiplied);
@@ -372,7 +372,7 @@ void testRasterRenderPolicy()
     }
 }
 
-// Painter 状态作用域不会泄漏到调用方，策略切换后混合模式保持原值。
+// QPainter save/restore 作用域应恢复调用方的几何和文字抗锯齿开关。
 void testRasterRenderPolicyIsScopedByPainterState()
 {
     QImage image(8, 8, QImage::Format_ARGB32_Premultiplied);
@@ -390,7 +390,7 @@ void testRasterRenderPolicyIsScopedByPainterState()
             "restoring painter state must recover the caller's text hint");
 }
 
-// 场景布局在不同尺寸、DPR 和键盘范围下保持可逆坐标关系。
+// 简谱条改变可用下落高度但不移动键盘，音高位置、时间比例和左侧延伸区保持约束。
 void testSceneGeometry()
 {
     auto document = repeatedDocument();
@@ -436,7 +436,7 @@ void testSceneGeometry()
             "left keyboard extension must contain only whole white keys");
 }
 
-// 背景图片适配覆盖对齐、裁剪、完整显示和透明度边界。
+// 背景适配校验居中填满、上下锚定裁切和居中完整显示的矩形/UV 边界。
 void testBackgroundImagePlacement()
 {
     using midi_play::settings::BackgroundImageAlignment;
@@ -599,7 +599,7 @@ void testPlaybackOverlayTimeline()
             "reverse seek must resolve the earlier overlay segment");
 }
 
-// 文本布局缓存按字体、角色和文本修订复用 QStaticText 结果。
+// 文本布局按角色、宽度和量化 DPR 复用，超过容量后淘汰最久未使用项。
 void testTextLayoutCache()
 {
     TextLayoutCache cache(2);

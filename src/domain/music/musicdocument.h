@@ -1,15 +1,12 @@
 #pragma once
 
+// 统一音乐领域模型：保存源事件、记谱上下文、速度索引和反复展开映射。
+// 本文件描述与输入格式无关的音乐事实；MIDI、MusicXML 基础设施负责转换，
+// 播放和可视化层以只读方式消费定稿后的 MusicDocument。
 #include <QString>
 #include <QVector>
 #include <cstdint>
 
-// 统一音乐文档、事件值对象、tempo map 和重复播放段的领域接口。
-// 音乐领域的统一数据模型。
-//
-// 本文件只描述与输入格式无关的音乐事实：音符、轨道、节拍、调号、
-// 小节、歌词和导航标记。MIDI、MusicXML 等基础设施负责把外部格式
-// 转换为这些结构；播放和可视化层再以只读方式消费 MusicDocument。
 namespace midi_play::music {
 
 // 音乐时间轴上的离散位置，单位为 PPQ tick。
@@ -58,8 +55,8 @@ struct TempoChange {
 
 // 统一后的音符事件。
 //
-// duration 表示键释放时刻；sustainEnd 若有效，则表示踏板处理后的可听
-// 结束位置。输入文件未提供的派生字段由 MusicAnalyzer 补齐。
+// duration 是从起音到键释放的 tick 时值；sustainEnd 若有效，则是踏板处理后的
+// 绝对可听结束 tick。输入文件未提供的派生字段由 MusicAnalyzer 补齐。
 struct NoteEvent {
     // start/duration 均为源文档 tick；pitch/velocity/channel 使用 MIDI 语义。
     Tick start = 0;
@@ -97,9 +94,8 @@ struct NoteEvent {
     quint64 tieGroupId = 0;
     int lane = -1;
     bool hasWrittenPitch = false;
-    // Imported performance timing, in source ticks. A negative value means
-    // pedal duration must be resolved from score controller events. duration
-    // always ends at key release, never at pedal release.
+    // 导入演奏的可听结束 tick；负值表示消费者须从踏板控制事件推导。
+    // 该字段不改变 duration 的按键时值语义。
     Tick sustainEnd = -1;
 };
 
@@ -120,7 +116,7 @@ struct Measure {
     bool dalSegno = false;
     bool toCoda = false;
     bool fine = false;
-    bool implicit = false; // Incomplete/unnumbered MusicXML measure, including pickups.
+    bool implicit = false; // MusicXML 不完整或不编号小节标记，可用于弱起。
 };
 
 // 轨道在指定 tick 的乐器、通道或音色库切换。
@@ -181,7 +177,7 @@ struct TimeSignatureChange {
     int beatType = 4;
     int metronomeClocks = 0;
     int notated32nds = 8;
-    QVector<int> beatGroups; // Optional additive meter, e.g. 3+2/8.
+    QVector<int> beatGroups; // 可选加法节拍分组，如 3+2/8 的 {3, 2}。
 };
 
 // 显式节拍单位变化，quarterNotes 表示一个点击包含多少个四分音符。
@@ -262,10 +258,11 @@ struct LyricEvent {
 
 // 源乐谱区间在反复展开后输出时间线中的映射。
 struct PlaybackSegment {
+    // 源区间为 [sourceStart, sourceEnd)，输出区间从 outputStart 起且等长。
     Tick sourceStart = 0;
     Tick sourceEnd = 0;
     Tick outputStart = 0;
-    int repeatPass = 0;
+    int repeatPass = 0; // 从 0 开始的反复轮次，用于区分同一源区间的播放实例。
     int sourceMeasureIndex = -1;
 };
 
@@ -360,8 +357,7 @@ public:
     QVector<TempoChange>& tempos() { m_tempoMap.clear(); return m_tempos; }
     // 在只读消费者启动前显式构建 tempo map。
     void rebuildTempoMap() const;
-    // SMPTE ticks encode absolute time; the synthetic tempo used for their
-    // conversion must never be interpreted as a musical beat grid.
+    // SMPTE 源文件表达绝对时间；为归一化而合成的速度不能用于推导音乐拍网格。
     bool hasMusicalTimebase() const { return m_hasMusicalTimebase; }
     void setMusicalTimebase(bool musical) { m_hasMusicalTimebase = musical; }
     // MIDI format 2 各独立序列在统一时间轴上的起点。

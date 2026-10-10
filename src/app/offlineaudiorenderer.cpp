@@ -8,6 +8,8 @@
 #include <vector>
 
 namespace midi_play::app {
+// 同步生成分离双声道浮点 PCM；sink 与进度回调均在调用线程执行。
+// totalFrames 决定固定输出长度，sink 失败或取消时不负责提交任何输出文件。
 AudioExportResult OfflineAudioRenderer::render(std::shared_ptr<const music::MusicDocument> document,
     const OfflineAudioOptions& options, Sink sink, const std::atomic_bool* canceled,
     AudioExportService::Progress progress)

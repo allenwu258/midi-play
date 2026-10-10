@@ -125,6 +125,7 @@ private:
     bool m_separatePresentQueue = false;
 };
 
+// 在资源允许的类型中满足必要属性，优先选取具备全部偏好属性的内存。
 uint32_t FallingNotesVulkanRenderer::memoryType(uint32_t bits, VkMemoryPropertyFlags required,
                                                VkMemoryPropertyFlags preferred)
 {
@@ -139,6 +140,7 @@ uint32_t FallingNotesVulkanRenderer::memoryType(uint32_t bits, VkMemoryPropertyF
     return fallback;
 }
 
+// 按映射、缓冲、内存顺序释放，并清空句柄以支持重复清理。
 void FallingNotesVulkanRenderer::destroy(Buffer& buffer)
 {
     if (buffer.mapped) m_df->vkUnmapMemory(m_device, buffer.memory);
@@ -147,6 +149,7 @@ void FallingNotesVulkanRenderer::destroy(Buffer& buffer)
     buffer = {};
 }
 
+// 容量不足时扩容主机可见缓冲；调用方须保证该图像的前次 GPU 读取已结束。
 void FallingNotesVulkanRenderer::reserve(Buffer& buffer, VkDeviceSize bytes, VkBufferUsageFlags usage)
 {
     if (buffer.capacity >= bytes && buffer.handle) return;
@@ -172,6 +175,7 @@ void FallingNotesVulkanRenderer::reserve(Buffer& buffer, VkDeviceSize bytes, VkB
     qCDebug(lcVulkan) << "Buffer capacity:" << quint64(buffer.capacity);
 }
 
+// 向已映射缓冲写入指定字节范围；非一致内存额外 flush 才能对设备可见。
 void FallingNotesVulkanRenderer::upload(Buffer& buffer, const void* source, VkDeviceSize bytes, VkDeviceSize offset)
 {
     if (!bytes) return;
@@ -186,6 +190,7 @@ void FallingNotesVulkanRenderer::upload(Buffer& buffer, const void* source, VkDe
     }
 }
 
+// 实例数量不变时合并连续变化段上传；数量变化时替换当前图像的完整副本。
 void FallingNotesVulkanRenderer::uploadDynamicUi(ImageResources& frame)
 {
     const auto& quads = m_scene.dynamicUi().quads;
@@ -208,6 +213,7 @@ void FallingNotesVulkanRenderer::uploadDynamicUi(ImageResources& frame)
     previous = quads;
 }
 
+// 首次失败锁定错误状态并通知宿主；回退和窗口销毁由宿主事件循环执行。
 void FallingNotesVulkanRenderer::fail(const QString& message)
 {
     if (m_failed) return;
@@ -216,6 +222,7 @@ void FallingNotesVulkanRenderer::fail(const QString& message)
     emit m_window->initializationFailed(message);
 }
 
+// 借用 Qt 设备与函数表，创建不依赖交换链尺寸的描述符布局、采样器和管线布局。
 void FallingNotesVulkanRenderer::initResources()
 {
     m_failed = false;
@@ -255,11 +262,13 @@ void FallingNotesVulkanRenderer::initResources()
     } catch (const std::exception& error) { fail(QString::fromUtf8(error.what())); }
 }
 
+// 复用共享场景管线，使实时窗口和离屏导出使用相同顶点格式及混合规则。
 void FallingNotesVulkanRenderer::createPipeline()
 {
     m_pipeline = createScenePipeline(m_device, m_layout, m_renderPass);
 }
 
+// 建立单颜色附件通道，结束时将交换链图像转为可呈现布局。
 void FallingNotesVulkanRenderer::createRenderPass()
 {
     // 二维场景不使用深度附件；初始布局转换显式衔接 Qt 的颜色输出 acquire 等待。
@@ -292,6 +301,7 @@ void FallingNotesVulkanRenderer::createRenderPass()
     checked(m_df->vkCreateRenderPass(m_device, &info, nullptr, &m_renderPass), "render pass");
 }
 
+// 为每张交换链图像建立独立帧缓冲、描述符及版本状态，重建时重新创建管线。
 void FallingNotesVulkanRenderer::initSwapChainResources()
 {
     if (m_failed) return;
@@ -333,6 +343,7 @@ void FallingNotesVulkanRenderer::initSwapChainResources()
     catch (const std::exception& error) { fail(QString::fromUtf8(error.what())); }
 }
 
+// 释放尺寸和图像数相关的资源，保留设备级布局供下次交换链重建使用。
 void FallingNotesVulkanRenderer::releaseSwapChainResources()
 {
     // Qt 在释放/重建交换链前已等待设备工作，以下释放不会与在途绘制竞争。
@@ -357,6 +368,7 @@ void FallingNotesVulkanRenderer::releaseSwapChainResources()
     m_descriptorPool = VK_NULL_HANDLE;
 }
 
+// 按 Qt 设备释放回调清理全部自建资源；设备本身仍归 Qt 所有。
 void FallingNotesVulkanRenderer::releaseResources()
 {
     if (!m_device) return;
@@ -370,6 +382,7 @@ void FallingNotesVulkanRenderer::releaseResources()
     m_device = VK_NULL_HANDLE; m_df = nullptr;
 }
 
+// 为当前图像创建固定尺寸文字图集，并先用有效图集视图填充两个纹理绑定。
 void FallingNotesVulkanRenderer::createAtlas(ImageResources& frame)
 {
     VkImageCreateInfo info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -400,6 +413,7 @@ void FallingNotesVulkanRenderer::createAtlas(ImageResources& frame)
     m_df->vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 }
 
+// 按当前图像的图集版本上传像素，并录制采样、传输布局之间的同步屏障。
 void FallingNotesVulkanRenderer::uploadAtlas(ImageResources& frame, VkCommandBuffer command)
 {
     if (frame.atlasRevision == m_scene.atlasRevision()) return;
@@ -429,6 +443,7 @@ void FallingNotesVulkanRenderer::uploadAtlas(ImageResources& frame, VkCommandBuf
     frame.atlasRevision = m_scene.atlasRevision();
 }
 
+// 按背景代次替换当前图像的纹理；空背景恢复图集占位绑定。
 void FallingNotesVulkanRenderer::uploadBackground(ImageResources& frame, VkCommandBuffer command)
 {
     const auto& image = m_window->backgroundImage();
@@ -504,6 +519,7 @@ void FallingNotesVulkanRenderer::uploadBackground(ImageResources& frame, VkComma
     frame.backgroundRevision = revision;
 }
 
+// 校验实例范围后录制批量绘制；每个矩形实例由着色器生成六个顶点。
 void FallingNotesVulkanRenderer::draw(VkCommandBuffer command, Buffer& buffer, uint32_t count, uint32_t first)
 {
     if (!count) return;
@@ -516,6 +532,7 @@ void FallingNotesVulkanRenderer::draw(VkCommandBuffer command, Buffer& buffer, u
     m_df->vkCmdDraw(command, 6, count, 0, first);
 }
 
+// 等待 Qt 已提交的绘制/呈现完成，保证下一轮 WSI 信号量可以复用。
 void FallingNotesVulkanRenderer::completePresentation()
 {
     // frameReady 可能同步报告设备丢失并释放资源，因此先重新检查设备有效性。
@@ -531,6 +548,7 @@ void FallingNotesVulkanRenderer::completePresentation()
         fail(QStringLiteral("Vulkan queue completion failed: %1").arg(result));
 }
 
+// 按实际取得的图像更新资源并录制帧；所有路径均向 Qt 交还当前帧。
 void FallingNotesVulkanRenderer::startNextFrame()
 {
     VkCommandBuffer command = m_window->currentCommandBuffer();

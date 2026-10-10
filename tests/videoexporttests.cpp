@@ -71,6 +71,7 @@ void testExportTimeline()
     require(fractionalRate.musicPositionUs(15) == 750'000,
             "video frame positions use the same speed ratio as audio events");
 
+    // 精确帧边界不得因分步取整多出一帧；最大时长用整数不等式验证只取整一次。
     const ExportTimeline exactBoundary(1'000'000, 60, 120, 0);
     require(exactBoundary.frameCount() == 50,
             "rational durations on a frame boundary are rounded only once");
@@ -151,9 +152,9 @@ void testUnifiedExportDialogTabs()
             "unified export dialog switches to the video tab");
 }
 
+// 可复用集成夹具：五个可辨识击声跨速度变化分布，可选反复验证展开后顺序。
 std::shared_ptr<midi_play::music::MusicDocument> integrationDocument(bool repeat)
 {
-    // 构造包含速度变化、多个标记音符和可选反复段的视频集成输入。
     using namespace midi_play::music;
     auto document = std::make_shared<MusicDocument>();
     document->setDuration(1920);

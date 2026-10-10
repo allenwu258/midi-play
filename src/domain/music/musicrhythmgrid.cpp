@@ -34,19 +34,18 @@ auto after(const QVector<T>& values, Tick tick)
 }
 
 // 判断两个拍号是否拥有相同的小节结构。
-// MIDI metronome clocks 只改变点击间隔，不改变小节长度和相位。
+// MIDI 拍号元事件的 cc 字段只改变点击间隔，不重置小节长度或相位。
 bool sameMeter(const TimeSignatureChange& a, const TimeSignatureChange& b)
 {
-    // MIDI cc changes the click spacing, not the bar length or bar phase.
     return a.beats == b.beats && a.beatType == b.beatType
         && a.notated32nds == b.notated32nds && a.beatGroups == b.beatGroups;
 }
 
 // 把拍号的记谱分母换算为 PPQ tick。
-// notated32nds 来自 MIDI 文件头的 32 分音符计数，不能固定假设为 8。
+// notated32nds 对应 SMF 拍号元事件的 bb：每个 MIDI 四分音符中的记谱三十二分音符数。
 long double denominatorTicks(const TimeSignatureChange& signature)
 {
-    // SMF bb counts notated 32nds per MIDI quarter; it is not necessarily 8.
+    // bb 不一定为 8，换算必须保留源文件的记谱单位。
     return static_cast<long double>(MusicDocument::kPpq) * 32
         / (static_cast<long double>(signature.beatType) * signature.notated32nds);
 }
@@ -112,6 +111,7 @@ bool buildGrid(const MusicDocument& document, const QVector<TimeSignatureChange>
             || unit.quarterNotes > 256) return false;
     }
 
+    // 一小节按配置变化点切片，但细分/点击序号跨切片连续；仅真正拍号变化重置音乐锚点。
     auto emitBar = [&](const Bar& bar) {
         Tick sliceStart = bar.start;
         int subdivisionIndex = 0;
@@ -164,6 +164,7 @@ bool buildGrid(const MusicDocument& document, const QVector<TimeSignatureChange>
         return true;
     };
 
+    // 真实记谱小节以导入长度为准，不能用拍号的理论长度覆盖弱起或缺拍。
     const bool hasWrittenMeasures = std::any_of(document.tracks().cbegin(), document.tracks().cend(),
         [](const Track& track) { return !track.measures.isEmpty(); });
     if (hasWrittenMeasures) {

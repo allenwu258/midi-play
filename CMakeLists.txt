@@ -329,6 +329,7 @@ if (WIN32)
     target_link_libraries(midi_play_core PRIVATE dwmapi user32 shell32)
 endif()
 
+# 安装使用平台标准目录；运行库部署脚本在 install 阶段读取最终安装前缀和 DESTDIR。
 include(GNUInstallDirs)
 if (POLICY CMP0177)
     cmake_policy(SET CMP0177 NEW)
@@ -444,6 +445,7 @@ if (BUILD_TESTING)
         set_tests_properties(note_visual_semantics_and_rendering PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
     endif()
+    # 节拍器时间线测试始终注册；真实合成音频测试仅在 Windows 运行库已配置时注册。
     add_executable(midi_play_metronome_tests tests/metronometests.cpp)
     target_link_libraries(midi_play_metronome_tests PRIVATE midi_play_core)
     add_test(NAME metronome_timeline_and_readers COMMAND midi_play_metronome_tests)
@@ -468,6 +470,7 @@ if (BUILD_TESTING)
             ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
     endif()
 
+    # 几何测试无需真实桌面；Windows 原生/DWM 与 Vulkan 用例必须串行并允许环境跳过。
     add_executable(midi_play_window_chrome_tests tests/windowchrometests.cpp)
     target_link_libraries(midi_play_window_chrome_tests PRIVATE midi_play_core)
     add_test(NAME window_chrome_geometry COMMAND midi_play_window_chrome_tests)
@@ -486,6 +489,7 @@ if (BUILD_TESTING)
         endif()
     endif()
 
+    # 导出配置测试走 offscreen 平台；编码往返测试依赖外部 FFmpeg，缺失时返回跳过码 77。
     add_executable(midi_play_video_export_tests tests/videoexporttests.cpp)
     target_link_libraries(midi_play_video_export_tests PRIVATE midi_play_core)
     target_compile_definitions(midi_play_video_export_tests PRIVATE
@@ -504,6 +508,7 @@ if (BUILD_TESTING)
             ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
     endif()
 
+    # 音源容器检查只链接 Qt Core，避免依赖真实合成器或 GUI 环境。
     add_executable(midi_play_soundfont_tests
         tests/soundfontinspectortests.cpp
         src/infrastructure/audio/soundfontinspector.h
@@ -513,6 +518,7 @@ if (BUILD_TESTING)
     target_link_libraries(midi_play_soundfont_tests PRIVATE Qt6::Core)
     add_test(NAME soundfont_inspector COMMAND midi_play_soundfont_tests)
 
+    # 领域/CPU 几何测试直接列出所需源码，不要求创建 QWidget 或 Vulkan 设备。
     add_executable(midi_play_visualization_tests
         src/presentation/theme/apptheme.h
         src/presentation/theme/apptheme.cpp
@@ -568,6 +574,7 @@ if (BUILD_TESTING)
     endif()
     add_test(NAME visualization_domain COMMAND midi_play_visualization_tests)
 
+    # 传输状态测试使用音频替身，直接编译会话依赖以验证调度、seek 和线程屏障。
     add_executable(midi_play_playback_session_tests
         tests/playbacksessiontests.cpp
         src/domain/music/musicdocument.h

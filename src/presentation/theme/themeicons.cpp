@@ -88,6 +88,7 @@ private:
 
 } // namespace
 
+// QIcon 接管新引擎所有权；引擎保存色表副本，主题切换时由调用方重新创建图标。
 QIcon themedIcon(IconGlyph glyph, const AppTheme& theme)
 {
     return QIcon(new ThemeIconEngine(glyph, theme.widgets));

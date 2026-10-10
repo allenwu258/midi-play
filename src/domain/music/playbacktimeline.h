@@ -1,12 +1,12 @@
 #pragma once
 
+// 播放时间线接口：缓存反复展开区间及源/输出时间映射，供多个只读消费者共享。
 #include "musicdocument.h"
 
 #include <QVector>
 
 #include <memory>
 
-// 将 MusicDocument 的反复段预计算为实时播放可查询的不可变时间线。
 namespace midi_play::music {
 
 // 已定稿 MusicDocument 的不可变播放顺序投影。
@@ -33,13 +33,14 @@ public:
 private:
     // 一个输出段在源时间和输出时间上的二分查找索引。
     struct SegmentIndex {
-        Tick sourceStartTick = 0;
-        Tick outputStartTick = 0;
-        Tick outputEndTick = 0;
-        qint64 outputStartUs = 0;
-        qint64 sourceStartUs = 0;
+        Tick sourceStartTick = 0; // 源文档区间起点，同一源区间可对应多个输出段。
+        Tick outputStartTick = 0; // 输出半开区间起点。
+        Tick outputEndTick = 0; // 输出半开区间终点，恰好落在此处时查询后继段。
+        qint64 outputStartUs = 0; // 此段之前所有输出段累计的微秒时长。
+        qint64 sourceStartUs = 0; // 源 tempo map 上的段起点，用于消除源绝对时间偏移。
     };
 
+    // 保持定稿文档存活；构建后外部不能修改其时间相关字段和惰性缓存。
     std::shared_ptr<const MusicDocument> m_document;
     QVector<PlaybackSegment> m_segments;
     QVector<SegmentIndex> m_segmentIndex;

@@ -34,7 +34,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
     constexpr qint64 snapshotIntervalUs = 1'000'000;
 
     auto appendSnapshot = [&](qint64 timestampUs) {
-        // 快照中的 eventIndex 指向该时刻之后第一个待重放事件。
+        // eventIndex 指向尚未应用的首个事件，检查点同时间戳的事件仍留给恢复流程重放。
         PlaybackStateSnapshot snapshot;
         snapshot.timestampUs = timestampUs;
         snapshot.eventIndex = processedEvents;
@@ -66,6 +66,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
             } else if (event.controller == 32) {
                 channels[channel].bankLsb = std::clamp(event.value, 0, 127);
             }
+            // Data Entry 只有在 RPN 0/0 被选中时更新弯音灵敏度；其他参数仍保留原控制值。
             switch (event.controller) {
             case 101: channels[channel].rpnMsb = std::clamp(event.value, 0, 127); break;
             case 100: channels[channel].rpnLsb = std::clamp(event.value, 0, 127); break;
@@ -156,6 +157,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
                     note.sustainLatched = sustainDown;
                     note.sostenutoLatched = sostenutoDown;
                     note.endTimestampUs = event.timestampUs;
+                    // 双踏板同时保持时取各自后续释放位置的最大值，避免低估恢复音符的剩余时长。
                     if (sustainDown) {
                         const auto& releases = sustainReleaseTimes[channel];
                         const auto releaseIt = std::lower_bound(releases.cbegin(), releases.cend(), event.timestampUs);
@@ -174,6 +176,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
         }
         ++processedEvents;
     }
+    // 额外保存最后事件之后的检查点，尾段跳转可直接获得最终通道状态。
     if (snapshots.isEmpty() || snapshots.back().timestampUs < nextSnapshotUs) {
         appendSnapshot(nextSnapshotUs);
     }
@@ -181,6 +184,7 @@ void buildStateSnapshots(const QVector<PlaybackEvent>& events,
 
 } // namespace
 
+// 从定稿文档一次性生成逻辑轨道、反复投影、调度事件及 seek 检查点。
 PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> document)
     : m_document(std::move(document))
 {
@@ -235,6 +239,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
                 event.tremolo = note->tremolo;
                 data.events.push_back(event);
             }
+            // 通道状态变化也按反复段重新定位；事件位于半开源区间，边界不会投影两次。
             for (const auto& change : track.instrumentChanges) {
                 if (change.tick < segment.sourceStart || change.tick >= segment.sourceEnd) continue;
                 const music::Tick outputTick = segment.outputStart + (change.tick - segment.sourceStart);
@@ -300,6 +305,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
         // NoteOff 与 NoteOn/控制事件共用时间排序流。后端必须收到明确 NoteOff，
         // 不能通过 UI 定时器释放，否则会引入不可控抖动。
         QVector<PlaybackEvent> noteOffEvents;
+        // 在表达和连音渲染之后派生释放事件，确保 NoteOff 采用最终演奏时值。
         noteOffEvents.reserve(data.events.size());
         for (const auto& event : data.events) {
             if (!event.isNoteOn() || event.durationUs <= 0) {
@@ -337,6 +343,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
 
     // 建立全曲唯一事件流用于共享通道状态重建。轨道局部流负责调度，
     // 全局流负责 seek/playback 上下文，避免不同轨道覆盖顺序不稳定。
+    // 合并时重新分配序号，使不同逻辑轨道在同时间戳/优先级下也拥有确定的全局顺序。
     quint64 globalSequence = 0;
     for (const auto& track : m_tracks) {
         for (const auto& sourceEvent : track.events) {
@@ -356,6 +363,7 @@ PlaybackModel::PlaybackModel(std::shared_ptr<const music::MusicDocument> documen
     buildStateSnapshots(m_globalEvents, m_globalSnapshots);
 }
 
+// 返回模型内部的只读轨道；未找到时为 nullptr，指针有效期与模型一致。
 const PlaybackData* PlaybackModel::track(const QString& id) const
 {
     // 轨道数量通常较少，线性查找可保持构建顺序并避免额外索引存储。

@@ -404,16 +404,16 @@ void parseBarline(QXmlStreamReader& xml, music::Measure& measure)
 
 // 单个 note 元素的暂存语义，尚未应用 divisions 换算或声部游标定位。
 struct ParsedNote {
-    QString step;
-    int alter = 0;
-    int octave = 4;
-    int durationValue = 0;
-    int voice = 1;
-    int staff = 1;
+    QString step; // 记谱音名字母，尚未换算为 MIDI pitch。
+    int alter = 0; // 升降半音数，保留等音拼写。
+    int octave = 4; // MusicXML 八度编号，C4 对应 MIDI 60。
+    int durationValue = 0; // 源 divisions 单位，不能直接当作领域 tick。
+    int voice = 1; // 非正或缺失声部回退为 1，与 staff 共同构成游标键。
+    int staff = 1; // 记谱谱表编号，不等于 MIDI 通道。
     bool rest = false;
     bool unpitched = false;
-    bool chord = false;
-    bool grace = false;
+    bool chord = false; // 与当前声部前一已记录音符共享起点，不推进声部时钟。
+    bool grace = false; // 当前实现忽略装饰音的播放事件和游标推进。
     int velocity = 90;
     bool tieStart = false;
     bool tieStop = false;
@@ -422,7 +422,7 @@ struct ParsedNote {
     bool tenuto = false;
     bool marcato = false;
     bool tremolo = false;
-    QString instrumentId;
+    QString instrumentId; // part-list 中声明的乐器 ID，空值表示没有显式切换。
     QString lyric;
     int lyricVerse = 1;
 };
@@ -485,6 +485,7 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
     music::Tick measureEnd = measureStart;
     // tick 定位下一音符，previousStart 用于和弦共享起点，remainder 缓存时值余数。
     struct VoiceCursor { music::Tick tick = 0; music::Tick previousStart = 0; qint64 remainder = 0; };
+    // 小节内游标独立，跨小节只保留各声部的 divisions 余数，避免声部之间传递舍入误差。
     QHash<QString, VoiceCursor> voiceCursors;
     QString activeVoiceKey = QStringLiteral("1/1");
     voiceCursors.insert(activeVoiceKey, {measureStart, measureStart, 0});
@@ -528,6 +529,7 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
                             // 限制公分母与分组数量，防止异常拍号导致整数或网格膨胀。
                             const int common = std::lcm(beatType, denominator);
                             if (common > 1024) { valid = false; continue; }
+                            // 公分母提高时同步缩放已有分组，保持各分组的实际音乐长度。
                             for (auto& group : groups) group *= common / beatType;
                             for (int group : pending) {
                                 if (groups.size() >= 1024) valid = false;
@@ -580,12 +582,14 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
             // 将除法余数跨音符/小节累计，减小连音时值逐音截断产生的时间漂移。
             const qint64 scaled = static_cast<qint64>(parsed.durationValue) * music::MusicDocument::kPpq + state.remainder;
             const music::Tick duration = std::max<music::Tick>(1, scaled / std::max(1, divisions));
+            // 和弦与装饰音不消耗时钟余数，否则同时起音也会引入累计时间偏移。
             if (!parsed.chord && !parsed.grace) {
                 state.remainder = scaled % std::max(1, divisions);
                 durationRemainders.insert(activeVoiceKey, state.remainder);
             }
             // 和弦音复用上一音符起点；休止推进时间，装饰音不生成事件也不推进游标。
             const music::Tick noteStart = parsed.chord ? state.previousStart : state.tick;
+            // 仅生成可演奏音符；休止仍推进时间，缺少音高的非打击乐元素不制造默认 C 音符。
             if (!parsed.rest && !parsed.grace && (!parsed.step.isEmpty() || parsed.unpitched)) {
                 music::NoteEvent event;
                 event.start = noteStart;
@@ -622,6 +626,7 @@ music::Tick parseMeasure(QXmlStreamReader& xml, music::Track& track, music::Musi
             if (!parsed.lyric.isEmpty()) track.lyrics.push_back({noteStart, parsed.lyric,
                                                                   parsed.lyricVerse,
                                                                   static_cast<quint64>(track.lyrics.size())});
+            // 以各声部推进后的最大值累积小节长度，backup 回退不会缩短已读入的内容。
             measureEnd = std::max(measureEnd, state.tick);
         } else if (xml.name() == u"forward") {
             // 当前实现对最近活动声部执行空白推进，并扩大本小节结束位置。
@@ -681,6 +686,7 @@ ReadResult MusicXmlReader::read(const QString& path) const
         }
         break;
     }
+    // 转换失败不继续解析原始 timewise，也不向调用方发布半构建文档。
     if (normalizedBytes.isEmpty()) return {nullptr, transformError};
     QBuffer buffer;
     buffer.setData(normalizedBytes);
@@ -737,12 +743,14 @@ ReadResult MusicXmlReader::read(const QString& path) const
                 for (auto& hairpin : track.hairpins) {
                     if (hairpin.end <= hairpin.start) hairpin.end = document->duration();
                 }
+                // 当前演奏列表只保留含音符的轨道，纯休止/纯元数据 part 不进入播放模型。
                 if (!track.notes.isEmpty()) document->tracks().push_back(std::move(track));
             } else xml.skipCurrentElement();
         }
     }
     if (xml.hasError()) return {nullptr, QStringLiteral("MusicXML 解析错误: %1").arg(xml.errorString())};
     if (document->tempos().isEmpty()) document->tempos().push_back({0, 120.0});
+    // 稳定排序保留同 tick 导入顺序，tempo map 随后以最后的有效速度覆盖该边界。
     std::stable_sort(document->tempos().begin(), document->tempos().end(), [](const auto& a, const auto& b) { return a.tick < b.tick; });
     // 为所有音符分配文档内唯一 ID，并汇总轨道调号和歌词。
     quint64 nextNoteId = 1;

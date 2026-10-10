@@ -10,7 +10,9 @@ layout(location=5) in vec4 uv;
 layout(location=6) in vec4 options;
 // 与 C++ FrameConstants 的字段顺序及 72 字节布局一致。
 layout(push_constant) uniform Frame {
+    // width/height 是输出物理像素；position 是相对时间基准的秒；strike 是逻辑像素 Y。
     float width; float height; float position; float strike;
+    // scale 是逻辑像素/秒，裁剪边界是逻辑像素；dpr 最后把几何统一映射到输出像素。
     float scale; float clipTop; float clipBottom; float dpr;
     float bodyOpacity;
     float noteHaloStrength;
@@ -19,6 +21,7 @@ layout(push_constant) uniform Frame {
     float strikeGlowStrength;
     float keyGlowStrength;
     float particleStrength;
+    // 导出居中偏移使用物理像素；animationSeconds 仅驱动视觉相位，不决定音符事件时间。
     float offsetX; float offsetY; float animationSeconds;
 } frame;
 layout(location=0) out vec2 local;
@@ -31,6 +34,7 @@ layout(location=6) flat out vec4 flags;
 
 // 图元类型：负数为移动网格线，0 为 UI，1..4 为尾部/主体/音头/震音。
 void main() {
+    // 一个实例用两个三角形覆盖矩形，gl_VertexIndex 由每实例六顶点的绘制契约限定。
     const vec2 corners[6] = vec2[6](vec2(0,0),vec2(1,0),vec2(1,1),vec2(0,0),vec2(1,1),vec2(0,1));
     vec2 corner = corners[gl_VertexIndex];
     vec4 r = rectangle;
