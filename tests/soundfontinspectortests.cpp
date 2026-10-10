@@ -1,3 +1,4 @@
+// SoundFont 容器检查测试：用最小 RIFF/SF2 字节流覆盖版本、压缩标志和损坏输入。
 #include "infrastructure/audio/soundfontinspector.h"
 
 #include <QCoreApplication>
@@ -15,28 +16,33 @@ using midi_play::audio::SoundFontInspector;
 
 [[noreturn]] void fail(const char* message)
 {
+    // 输出首个失败原因并以失败状态结束当前测试进程。
     std::fprintf(stderr, "FAILED: %s\n", message);
     std::exit(EXIT_FAILURE);
 }
 
 void require(bool condition, const char* message)
 {
+    // 资源检查失败时立即输出稳定文本，便于 CLI/CTest 定位失败断言。
     if (!condition) fail(message);
 }
 
 void appendTag(QByteArray& data, const char* tag)
 {
+    // 追加固定四字节 RIFF 标识，测试构造器负责保持容器布局可读。
     data.append(tag, 4);
 }
 
 void appendU16(QByteArray& data, quint16 value)
 {
+    // 按 SoundFont 使用的小端序写入 16 位整数。
     data.append(static_cast<char>(value & 0xff));
     data.append(static_cast<char>((value >> 8) & 0xff));
 }
 
 void appendU32(QByteArray& data, quint32 value)
 {
+    // 按小端序逐字节写入 32 位 RIFF 长度字段。
     for (int shift = 0; shift < 32; shift += 8) {
         data.append(static_cast<char>((value >> shift) & 0xff));
     }
@@ -44,6 +50,7 @@ void appendU32(QByteArray& data, quint32 value)
 
 QByteArray chunk(const char* tag, QByteArray payload)
 {
+    // 生成带长度和偶数填充的通用 RIFF 块。
     QByteArray result;
     appendTag(result, tag);
     appendU32(result, static_cast<quint32>(payload.size()));
@@ -54,6 +61,7 @@ QByteArray chunk(const char* tag, QByteArray payload)
 
 QByteArray list(const char* type, const QByteArray& children)
 {
+    // 在子块前写入 LIST 类型标识，构造 RIFF 层级。
     QByteArray payload;
     appendTag(payload, type);
     payload += children;
@@ -63,15 +71,16 @@ QByteArray list(const char* type, const QByteArray& children)
 QByteArray soundFont(quint16 majorVersion, bool compressedSample,
                      qsizetype sampleHeaderCount = 2)
 {
+    // 构造只包含 INFO、sdta、pdta 的最小 SoundFont，支持定向篡改字段。
     QByteArray version;
     appendU16(version, majorVersion);
     appendU16(version, 1);
 
     QByteArray sampleHeaders(46 * sampleHeaderCount, '\0');
     if (compressedSample) {
-        sampleHeaders[44] = static_cast<char>(0x11); // mono + Ogg Vorbis
+        sampleHeaders[44] = static_cast<char>(0x11); // 单声道 + Ogg Vorbis。
     } else {
-        sampleHeaders[44] = static_cast<char>(0x01); // mono PCM
+        sampleHeaders[44] = static_cast<char>(0x01); // 单声道 PCM。
     }
 
     const QByteArray body = list("INFO", chunk("ifil", version))
@@ -88,6 +97,7 @@ QByteArray soundFont(quint16 majorVersion, bool compressedSample,
 QString writeFile(const QTemporaryDir& directory, const QString& name,
                   const QByteArray& contents)
 {
+    // 将测试字节落盘，模拟真实 SF2/SF3 文件并返回临时绝对路径。
     const QString path = QDir(directory.path()).filePath(name);
     QFile file(path);
     require(file.open(QIODevice::WriteOnly), "test SoundFont must be writable");
@@ -98,6 +108,7 @@ QString writeFile(const QTemporaryDir& directory, const QString& name,
 
 void testSf2AndSf3AreDetectedFromContent()
 {
+    // 扩展名只作为提示，检测结果必须来自 RIFF 内容和版本字段。
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory must be available");
 
@@ -119,6 +130,7 @@ void testSf2AndSf3AreDetectedFromContent()
 
 void testMalformedContainersAreRejected()
 {
+    // 截断、伪造长度和非法 sample header 均应失败并返回诊断。
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory must be available");
     QString error;
@@ -165,6 +177,7 @@ void testMalformedContainersAreRejected()
 
 void testRealSoundFonts(const QStringList& paths)
 {
+    // 可选外部路径用于验证真实库文件；未提供时不影响基础测试。
     for (const QString& path : paths) {
         QString error;
         const auto result = SoundFontInspector::inspect(path, &error);
@@ -177,6 +190,7 @@ void testRealSoundFonts(const QStringList& paths)
 
 int main(int argc, char* argv[])
 {
+    // 创建无窗口 Qt 应用，运行构造器测试并按参数追加真实音源检查。
     QCoreApplication application(argc, argv);
     testSf2AndSf3AreDetectedFromContent();
     testMalformedContainersAreRejected();

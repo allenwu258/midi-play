@@ -1,3 +1,4 @@
+// 播放会话测试：覆盖设置规范化、事件时间轴、时钟倍率、seek、音源切换及节拍器生命周期。
 #include "domain/playback/iplaybackaudioservice.h"
 #include "domain/playback/playbacksession.h"
 #include "domain/playback/playbackclock.h"
@@ -48,16 +49,19 @@ using midi_play::settings::PlayerSettings;
 
 [[noreturn]] void fail(const char* message)
 {
+    // 统一失败出口，确保异步会话测试返回明确的非零状态。
     std::fprintf(stderr, "FAILED: %s\n", message);
     std::exit(EXIT_FAILURE);
 }
 
 void require(bool condition, const char* message)
 {
+    // 所有同步和异步断言都汇入同一失败路径，避免遗漏非零退出码。
     if (!condition) fail(message);
 }
 
 class RecordingAudioService final : public IPlaybackAudioService {
+    // 可记录调用顺序和可控失败/延迟的音频替身，隔离真实设备与线程实现。
 public:
     bool loadSoundFont(const QString& path, QString*) override
     {
@@ -170,6 +174,7 @@ public:
 };
 
 class MemorySettingsStore final : public midi_play::app::ISettingsStore {
+    // 内存设置存储用于观察读写次数、持久化快照和可控错误。
 public:
     PlayerSettings load(QString* warning) override
     {
@@ -195,6 +200,7 @@ public:
     int saveCount = 0;
 };
 
+// 刷新率输入按整数范围规范化，非法值回退默认值并保持周期可计算。
 void testVisualizationRefreshRateSettingsNormalizeInts()
 {
     require(midi_play::settings::normalizeVisualizationRefreshRate(30) == 30,
@@ -214,6 +220,7 @@ void testVisualizationRefreshRateSettingsNormalizeInts()
             "custom FPS must use a nanosecond period without millisecond truncation");
 }
 
+// 图形模式首次确认需持久化，传统后端同时关闭 Vulkan 特效。
 void testGraphicsModeSettings()
 {
     QTemporaryDir temporary;
@@ -268,6 +275,7 @@ void testGraphicsModeSettings()
             "traditional fallback must persist for the next launch");
 }
 
+// 标题栏模式遵守平台能力，非 Windows 构建不能恢复自定义模式。
 void testTitleBarModePlatformPolicy()
 {
     require(midi_play::settings::normalizeTitleBarMode(
@@ -296,6 +304,7 @@ void testTitleBarModePlatformPolicy()
             "invalid persisted title bar mode must normalize to native");
 }
 
+// 标题栏变更先发布有效值，再验证存储快照中的持久化整数。
 void testSettingsServicePersistsTitleBarMode()
 {
     auto store = std::make_unique<MemorySettingsStore>();
@@ -328,6 +337,7 @@ void testSettingsServicePersistsTitleBarMode()
 #endif
 }
 
+// 音源路径变更只在值实际变化时保存并发送信号。
 void testSettingsServicePersistsSoundFont()
 {
     auto store = std::make_unique<MemorySettingsStore>();
@@ -368,6 +378,7 @@ void testSettingsServicePersistsSoundFont()
             "an unchanged empty path must not emit or write again");
 }
 
+// 背景路径、启用状态、适配和透明度分别保存且按规范化值发布。
 void testSettingsServicePersistsBackgroundImage()
 {
     auto store = std::make_unique<MemorySettingsStore>();
@@ -418,6 +429,7 @@ void testSettingsServicePersistsBackgroundImage()
             "clearing the background image must persist an empty path");
 }
 
+// 重复设置相同值不应产生额外信号或写入，保存失败需独立报告。
 void testSettingsServicePersistsOnlyEffectiveChanges()
 {
     auto store = std::make_unique<MemorySettingsStore>();
@@ -457,6 +469,7 @@ void testSettingsServicePersistsOnlyEffectiveChanges()
     require(saveFailureCount == 1, "save failures must be reported");
 }
 
+// 使用临时 INI 验证 QSettingsStore 的刷新率读写和警告行为。
 void testQSettingsStorePersistsUserRefreshRate()
 {
     QTemporaryDir directory;
@@ -542,6 +555,7 @@ void testQSettingsStorePersistsUserRefreshRate()
             "reset must disable image background mode");
 }
 
+// 重复展开只构建一次缓存，后续 PlaybackContext 复用同一绝对时间线。
 void testPlaybackTimelineCachesRepeatExpansion()
 {
     auto document = std::make_shared<MusicDocument>();
@@ -579,6 +593,7 @@ void testPlaybackTimelineCachesRepeatExpansion()
             "timeline must clamp the playback endpoint to cached duration");
 }
 
+// 线程音频服务返回能力快照，外部修改不会改变内部设备能力。
 void testThreadedAudioCapabilitiesAreImmutableSnapshot()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -604,6 +619,7 @@ void testThreadedAudioCapabilitiesAreImmutableSnapshot()
             "capability reads must not cross into the audio worker");
 }
 
+// PlaybackContext 将重复段中的力度/音色变化投影到每次实际播放实例。
 void testPlaybackContextProjectsDynamicsThroughRepeats()
 {
     auto document = std::make_shared<MusicDocument>();
@@ -655,6 +671,7 @@ void testPlaybackContextProjectsDynamicsThroughRepeats()
             "spanning hairpin must restart on the repeated pass");
 }
 
+// 有效原子时钟快照驱动位置采样，跨线程读取不依赖 GUI 状态。
 void testThreadedAudioClockUsesAtomicSnapshot()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -681,6 +698,7 @@ void testThreadedAudioClockUsesAtomicSnapshot()
             "updated snapshot reads must remain independent of the worker service");
 }
 
+// 缺少时钟快照时安全回退到离散位置，不产生未初始化读数。
 void testThreadedAudioClockWithoutSnapshotFallsBackSafely()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -700,7 +718,7 @@ std::shared_ptr<const MusicDocument> testDocument()
 {
     auto document = std::make_shared<MusicDocument>();
     document->tempos().push_back({0, 120.0, 0});
-    document->setDuration(1'920); // Two seconds at 120 BPM.
+    document->setDuration(1'920); // 120 BPM 下约两秒。
 
     Track track;
     track.id = QStringLiteral("transport-test");
@@ -726,6 +744,7 @@ bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 500)
     return predicate();
 }
 
+// 只有后端声明时钟能力时，线程服务才发布可外推的采样时间。
 void testAudioClockCapabilityEnablesClockSampling()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -762,6 +781,7 @@ bool containsNoteOn(const QVector<PlaybackEvent>& events)
     return false;
 }
 
+// seek 在播放、暂停和停止状态下保留用户传输意图并清理旧事件。
 void testSeekPreservesTransportIntent()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -813,6 +833,7 @@ void testSeekPreservesTransportIntent()
             "play after paused seek must advance from the selected position");
 }
 
+// 播放中切换音源冻结旧会话，成功加载后恢复播放状态和位置。
 void testSoundFontChangeRestoresPlayingAudioState()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -843,6 +864,7 @@ void testSoundFontChangeRestoresPlayingAudioState()
     session.pause();
 }
 
+// 音源切换期间暂停音频提交，完成后恢复原先的暂停/播放传输状态。
 void testSoundFontChangeFreezesAndRestoresTransport()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -866,6 +888,7 @@ void testSoundFontChangeFreezesAndRestoresTransport()
     session.pause();
 }
 
+// 音源加载失败应恢复原音源和传输状态，并发布可操作错误。
 void testFailedSoundFontChangeRestoresTransport()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -887,6 +910,7 @@ void testFailedSoundFontChangeRestoresTransport()
     session.pause();
 }
 
+// 位置节流器丢弃旧采样，只发布截止时间前最新且有意义的值。
 void testPositionThrottlerUsesLatestSample()
 {
     PlaybackPositionThrottler throttler;
@@ -905,6 +929,7 @@ void testPositionThrottlerUsesLatestSample()
     require(!throttler.takeLatest(snapshot), "reset must discard pending samples");
 }
 
+// 播放倍率切换保持当前位置连续，新的墙钟斜率从切换点开始生效。
 void testPlaybackClockRateChangeIsContinuous()
 {
     PlaybackClock clock;
@@ -945,6 +970,7 @@ void testPlaybackClockRateChangeIsContinuous()
             "scaled clock arithmetic must saturate rather than overflow");
 }
 
+// 会话倍率变化不重建音频轨道，继续沿用当前声音和传输状态。
 void testPlaybackSessionRateChangePreservesAudioState()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -992,6 +1018,7 @@ void testPlaybackSessionRateChangePreservesAudioState()
             "a rate-adjusted playhead must still stop at the end of the song");
 }
 
+// 倍率重建事件时保持 NoteOn/NoteOff 顺序、音高和代次隔离。
 void testRateChangesPreserveEventOrderAndPitch()
 {
     auto document = std::make_shared<MusicDocument>();
@@ -1002,8 +1029,8 @@ void testRateChangesPreserveEventOrderAndPitch()
     track.id = QStringLiteral("rate-test");
     NoteEvent note;
     note.noteId = 1;
-    note.start = 48; // 50 ms of music time.
-    note.duration = 144; // Ends at 300 ms, spanning the tempo change.
+    note.start = 48; // 50 ms 的音乐时间。
+    note.duration = 144; // 在 300 ms 处结束，跨越速度变化点。
     note.pitch = 64;
     track.notes.push_back(note);
     track.controlChanges.push_back({72, 0, 64, 127, 1});
@@ -1044,6 +1071,7 @@ void testRateChangesPreserveEventOrderAndPitch()
     session.pause();
 }
 
+// 控制器在 GUI 线程排队应用倍率，新会话继承已选倍率。
 void testControllerRateChangesAreQueuedAndInherited()
 {
     midi_play::playback::PlaybackController controller;
@@ -1081,6 +1109,7 @@ void testControllerRateChangesAreQueuedAndInherited()
     require(appliedRate == 200, "song replacement must retain the current speed");
 }
 
+// 不支持倍率的后端必须显式拒绝，不能静默保持错误的播放速度。
 void testUnsupportedBackendCannotSilentlyIgnoreRate()
 {
     for (const auto capabilities : {
@@ -1095,6 +1124,7 @@ void testUnsupportedBackendCannotSilentlyIgnoreRate()
 }
 
 
+// 节拍器随播放/暂停/seek 启停，重拍标记和事件代次与运输状态一致。
 void testMetronomeTransport()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -1151,6 +1181,7 @@ void testMetronomeTransport()
             "end-of-song stops sound and retains preference");
 }
 
+// 节拍器准备失败时保留用户偏好但禁用能力，后续成功会话重新评估。
 void testMetronomeFailureAndPreference()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -1181,14 +1212,14 @@ void testMetronomeFailureAndPreference()
             && controller.loadSoundFont(QStringLiteral("test.sf2"), nullptr)
             && controller.supportsMetronome() && controller.metronomeEnabled(),
             "next supported song restores enabled metronome");
-    // The preceding blocking load posted an availability signal which has not
-    // reached the GUI queue yet. Replace that session before delivering it.
+    // 前一次阻塞加载已投递能力信号，但尚未到达 GUI 队列；先替换会话再派发该信号。
     require(controller.setDocument(testDocument(), std::make_unique<RecordingAudioService>(), nullptr),
             "replace supported session before its queued notification arrives");
     processEventsFor(10);
     require(!controller.supportsMetronome(), "old session availability cannot overwrite a replacement song");
 }
 
+// 音源/节拍器异步任务取消后不再提交旧点击，也能安全结束线程。
 void testThreadedMetronomeCancellation()
 {
     auto audio = std::make_unique<RecordingAudioService>();
@@ -1207,7 +1238,7 @@ void testThreadedMetronomeCancellation()
     threaded.submitBatch({event}, 7);
     threaded.stopMetronome();
     recording->resumeSubmission.release();
-    threaded.start(); // Worker barrier: inspect only after all queued work.
+    threaded.start(); // 等待工作线程屏障，确保所有排队任务已完成后再检查。
     require(recording->clickAccents.isEmpty() && recording->clickStopCount == 1
             && recording->submittedEvents.size() == 2, "cancel queued clicks without cancelling song MIDI");
 
@@ -1231,6 +1262,7 @@ void testThreadedMetronomeCancellation()
 
 } // namespace
 
+// 主入口按领域能力分组执行全部会话回归，不需要真实音频设备。
 int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);

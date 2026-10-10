@@ -1,4 +1,5 @@
 #include "app/playerapplicationservice.h"
+// 主题设置测试：验证持久化、保存失败反馈、图标状态和运行时窗口切换。
 #include "app/settingsservice.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/settings/qsettingsstore.h"
@@ -32,11 +33,13 @@ using midi_play::settings::ThemeMode;
 
 void require(bool condition, const char* message)
 {
+    // 统一断言出口，失败时输出消息并返回非零进程码。
     if (!condition) { std::fprintf(stderr, "FAILED: %s\n", message); std::exit(EXIT_FAILURE); }
 }
 
 void testPersistence()
 {
+    // 设置服务应恢复主题/音符色彩，并只对有效变化发出信号。
     QTemporaryDir directory;
     require(directory.isValid(), "temporary settings directory must be available");
     const auto path = directory.filePath(QStringLiteral("settings.ini"));
@@ -96,6 +99,7 @@ void testPersistence()
 }
 
 class UnwritableSettingsStore final : public midi_play::app::ISettingsStore {
+    // 可控失败存储，用于验证保存错误不隐藏且不伪造成功状态。
 public:
     midi_play::settings::PlayerSettings load(QString*) override { return {}; }
     bool save(const midi_play::settings::PlayerSettings&, QString* error) override
@@ -107,6 +111,7 @@ public:
 
 void testSaveFailure()
 {
+    // 模拟写入失败，确认服务发送 settingsSaveFailed 而不崩溃。
     SettingsService service(std::make_unique<UnwritableSettingsStore>());
     midi_play::presentation::settings::SettingsDialog dialog(&service, nullptr);
     auto* combo = dialog.findChild<QComboBox*>(QStringLiteral("themeModeCombo"));
@@ -121,6 +126,7 @@ void testSaveFailure()
 
 midi_play::visualization::VisualChartPtr sampleChart()
 {
+    // 构造覆盖多个音域和延音尾部的稳定图表，用于主题切换快照。
     midi_play::music::MusicDocument document;
     document.tempos().push_back({0, 120.0, 0});
     document.setDuration(5760);
@@ -144,6 +150,7 @@ midi_play::visualization::VisualChartPtr sampleChart()
 
 void testRuntimeTheme(const QString& snapshotDirectory)
 {
+    // 在 offscreen 窗口中切换明暗主题，比较控件和可视化快照。
     QTemporaryDir directory;
     require(directory.isValid(), "temporary settings directory must be available");
     SettingsService settings(std::make_unique<QSettingsStore>(directory.filePath(QStringLiteral("settings.ini"))));
@@ -246,6 +253,7 @@ void testRuntimeTheme(const QString& snapshotDirectory)
 
 void testIcons()
 {
+    // 检查内置图标在普通、悬停和禁用模式下均生成非空 pixmap。
     using midi_play::presentation::theme::IconGlyph;
     using midi_play::presentation::theme::themedIcon;
     for (auto mode : {ThemeMode::Dark, ThemeMode::Light}) {
@@ -263,6 +271,7 @@ void testIcons()
 
 int main(int argc, char** argv)
 {
+    // 创建 QApplication 以验证 QPalette、QIconEngine 和窗口样式行为。
     QApplication app(argc, argv);
     testPersistence();
     testSaveFailure();

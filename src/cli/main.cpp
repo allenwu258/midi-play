@@ -108,6 +108,7 @@ int runAudioExport(const QStringList& arguments)
     for (int index = 4; index < arguments.size();) {
         const QString flag = arguments.at(index++);
         if (flag == QStringLiteral("--metronome")) {
+            // 无值开关只改变导出选项，循环继续读取下一个参数。
             options.includeMetronome = true;
             continue;
         }
@@ -116,6 +117,7 @@ int runAudioExport(const QStringList& arguments)
             return 2;
         }
         const QString value = arguments.at(index++);
+        // 字符串路径直接传递；数值选项先转换，非法文本立即报告使用错误。
         bool validNumber = false;
         if (flag == QStringLiteral("--soundfont")) options.soundFontPath = value;
         else if (flag == QStringLiteral("--bitrate")) {
@@ -133,6 +135,7 @@ int runAudioExport(const QStringList& arguments)
         }
     }
     if (options.soundFontPath.isEmpty()) {
+        // 音频导出必须显式指定外部 SoundFont，避免隐式依赖用户环境。
         qCritical() << "--soundfont is required";
         return 2;
     }
@@ -312,18 +315,23 @@ int main(int argc, char* argv[])
         return 0;
     }
     if (command == QStringLiteral("--audio-test") && arguments.size() >= 3 && arguments.size() <= 4) {
+        // 音源试听允许一个主音源和一个可选替换音源，用于验证重复加载。
         return runAudioTest(arguments, *application);
     }
     if (command == QStringLiteral("--midi-test") && arguments.size() == 3) {
+        // MIDI 专项命令只接受一个输入文件，并直接报告文档摘要。
         return runMidiTest(arguments.at(2));
     }
     if (command == QStringLiteral("--export-mp3") || command == QStringLiteral("--export-wav")) {
+        // 导出命令由函数内部统一解析选项、读入文件并报告应用服务结果。
         return runAudioExport(arguments);
     }
     if (command == QStringLiteral("--render-test")) {
+        // 渲染命令在已创建的 QGuiApplication 中生成单帧 PNG。
         return runRenderTest(arguments);
     }
     if (!command.startsWith(QLatin1Char('-')) && arguments.size() == 2) {
+        // 无前缀命令名表示按扩展名执行最小读入 smoke test。
         return runReaderSmokeTest(command);
     }
     printUsage(stderr);

@@ -3,6 +3,7 @@
 #include "infrastructure/settings/qsettingsstore.h"
 #include "presentation/mainwindow.h"
 #include "presentation/settings/settingsdialog.h"
+// 音源首次设置流程测试：覆盖跳过、启动验证、异步选择和加载期间的交互保护。
 #include "presentation/settings/soundfontsetup.h"
 
 #include <QApplication>
@@ -32,6 +33,7 @@ QString snapshotDirectory;
 
 void require(bool condition, const char* message)
 {
+    // 测试失败立即退出，避免异步对象在错误状态下继续派发信号。
     if (condition) return;
     std::fprintf(stderr, "FAILED: %s\n", message);
     std::exit(EXIT_FAILURE);
@@ -39,6 +41,7 @@ void require(bool condition, const char* message)
 
 bool waitUntil(const std::function<bool()>& condition)
 {
+    // 轮询 Qt 事件循环，给 QFutureWatcher 和对话框信号一个确定的等待窗口。
     QElapsedTimer timer;
     timer.start();
     while (!condition() && timer.elapsed() < 30'000) {
@@ -49,6 +52,7 @@ bool waitUntil(const std::function<bool()>& condition)
 }
 
 struct Harness {
+    // 组装设置服务、主窗口和 SoundFont 流程对象，统一驱动异步用例。
     QTemporaryDir directory;
     app::SettingsService settings{std::make_unique<QSettingsStore>(directory.filePath("settings.ini"))};
     app::PlayerApplicationService player;
@@ -59,7 +63,7 @@ struct Harness {
     explicit Harness(const QString& configured = {})
     {
         require(directory.isValid(), "temporary settings directory");
-        // Simulate the existing persisted key, including a missing user file.
+        // 写入已有持久化键，覆盖用户文件缺失或路径为空的启动场景。
         QSettings old(directory.filePath("settings.ini"), QSettings::IniFormat);
         old.setValue("Audio/soundFontPath", configured);
         old.sync();
@@ -80,6 +84,7 @@ struct Harness {
 
     void open(const QString& fixture)
     {
+        // 将命令行/固定 fixture 读入播放器，验证设置流程完成后才允许导入。
         player.openFile(fixture);
         require(waitUntil([this] { return player.session() != nullptr; }), "score must load without a SoundFont");
         require(window->findChild<QToolButton*>("exportButton")->isEnabled(),
@@ -89,6 +94,7 @@ struct Harness {
 
 void testSkipAndInlinePlaybackError(const QString& fixture)
 {
+    // 用户跳过配置后仍可查看乐曲，但播放必须以内联错误提示拒绝。
     Harness h;
     h.setup->start();
     require(h.dialog() && h.dialog()->isVisible(), "unconfigured startup prompts once");
@@ -129,6 +135,7 @@ void testSkipAndInlinePlaybackError(const QString& fixture)
 
 void testInvalidStartup()
 {
+    // 已保存路径不可读时启动检查应转入设置对话框，而不是静默完成。
     QTemporaryDir files;
     const auto missing = files.filePath("missing.sf2");
     const auto corrupt = files.filePath("corrupt.sf3");
@@ -149,6 +156,7 @@ void testInvalidStartup()
 
 void testValidStartupAndLateConfiguration(const QString& fixture, const QString& font)
 {
+    // 有效音源自动验证成功；之后的运行时切换仍应只在成功后提交路径。
     QTemporaryDir files;
     const QString copied = files.filePath("external.sf3");
     require(QFile::copy(font, copied), "copy external fixture for removal test");
@@ -196,13 +204,14 @@ void testValidStartupAndLateConfiguration(const QString& fixture, const QString&
 
 void testSetupSelectionAndLoadingGuard(const QString& font)
 {
+    // 加载过程中禁用重复选择和跳过，完成后才发布一次 finished。
     Harness h;
     h.setup->start();
     h.player.requestSoundFontLoad(font);
     require(h.player.isSoundFontLoading(), "validation is asynchronous");
     h.dialog()->reject();
     require(h.finished == 0, "cannot race an in-flight validation by skipping");
-    // A play-time diagnostic must not be mistaken for startup completion.
+    // 播放期诊断不能被误判为启动流程已完成。
     h.player.play();
     require(h.finished == 0, "inline errors do not complete font selection");
     require(waitUntil([&] { return h.finished == 1; }), "successful setup closes the dialog");
@@ -213,6 +222,7 @@ void testSetupSelectionAndLoadingGuard(const QString& font)
 
 int main(int argc, char** argv)
 {
+    // 在临时设置目录运行四组启动/选择场景，避免污染用户配置。
     QApplication application(argc, argv);
     const auto args = application.arguments();
     const int snapshots = args.indexOf("--snapshots");

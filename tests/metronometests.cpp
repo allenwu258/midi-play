@@ -1,3 +1,4 @@
+// 节拍器测试：覆盖拍号、速度、弱起、反复及调度器，并比较音频与可视化的重拍。
 #include "domain/playback/metronometimeline.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/musicxml/musicxmlreader.h"
@@ -13,6 +14,7 @@
 #include <cstdlib>
 
 namespace midi_play::audio {
+// 测试专用访问器，用于观察动态 FluidSynth 实例的音色、渲染和声音数状态。
 struct FluidSynthEngineTestAccess {
     static bool initializeOffline(FluidSynthEngine& engine, const QString& path, QString* error)
     {
@@ -42,6 +44,7 @@ using playback::MetronomeAccent;
 
 void require(bool condition, const char* message)
 {
+    // 节拍时间属于精确回归数据，首个差异立即终止测试。
     if (condition) return;
     std::fprintf(stderr, "FAILED: %s\n", message);
     std::exit(EXIT_FAILURE);
@@ -49,6 +52,7 @@ void require(bool condition, const char* message)
 
 std::shared_ptr<MusicDocument> document(music::Tick duration = 3840)
 {
+    // 构造统一 120 BPM 的基准文档，具体用例再叠加拍号、反复和速度变化。
     auto result = std::make_shared<MusicDocument>();
     result->setDuration(duration);
     result->tempos().push_back({0, 120});
@@ -64,11 +68,13 @@ std::shared_ptr<MusicDocument> document(music::Tick duration = 3840)
 
 MetronomeTimeline timeline(const std::shared_ptr<MusicDocument>& score)
 {
+    // 使用与播放器相同的 PlaybackTimeline，确保观察真实时间轴而非测试替身。
     return MetronomeTimeline(score, std::make_shared<music::PlaybackTimeline>(score));
 }
 
 void expectTimes(const MetronomeTimeline& grid, const QVector<qint64>& expected)
 {
+    // 逐项比较绝对微秒位置，失败时打印实际索引和期望值。
     require(grid.available(), qPrintable(grid.unavailableReason()));
     require(grid.beats().size() == expected.size(), "beat count");
     for (int i = 0; i < expected.size(); ++i) {
@@ -82,6 +88,7 @@ void expectTimes(const MetronomeTimeline& grid, const QVector<qint64>& expected)
 
 void testMetersAndTempo()
 {
+    // 验证常见拍号、复合拍、显式 subdivision 以及速度变化。
     auto score = document();
     auto grid = timeline(score);
     expectTimes(grid, {0, 500000, 1000000, 1500000, 2000000, 2500000, 3000000, 3500000});
@@ -120,16 +127,16 @@ void testMetersAndTempo()
 
 void testClickUnitPhase()
 {
+    // 点击单位切换沿用当前小节相位，不在非网格位置插入拍点。
     auto score = document(3840);
     score->metronomeUnits() = {{0, 1}, {240, 1}, {840, 1}, {2280, 1}};
     expectTimes(timeline(score), {0, 500000, 1000000, 1500000,
                                   2000000, 2500000, 3000000, 3500000});
-    // A real tempo change changes elapsed time, never the quarter-note phase.
+    // 真实速度变化只改变经过时间，不改变四分音符相位。
     score->tempos().push_back({240, 60});
     expectTimes(timeline(score), {0, 750000, 1750000, 2750000,
                                   3750000, 4750000, 5750000, 6750000});
-    // Changing to an eighth at an off-grid point must wait for the next
-    // eighth on the existing bar grid; it must not insert an offbeat click.
+    // 在非网格位置切换为八分音符时，应等待现有小节网格中的下一拍，不能插入离拍点击。
     score = document(1920);
     score->metronomeUnits() = {{0, 1}, {360, 0.5}};
     expectTimes(timeline(score), {0, 500000, 750000, 1000000, 1250000, 1500000, 1750000});
@@ -164,6 +171,7 @@ void testClickUnitPhase()
 
 void testWrittenPickupAndRepeats()
 {
+    // 弱起不生成虚假重音，反复展开后每次出现的小节均保留重拍。
     auto score = document(4320);
     music::Measure pickup;
     pickup.duration = 480;
@@ -194,6 +202,7 @@ void testWrittenPickupAndRepeats()
 
 void testScheduler()
 {
+    // 调度器不追赶停顿期间的旧点击，并按墙钟倍率判断拍点是否迟到。
     const auto grid = timeline(document());
     playback::MetronomeScheduler scheduler;
     scheduler.seek(grid, 0);
@@ -215,6 +224,7 @@ void testScheduler()
 void expectSharedDownbeats(const std::shared_ptr<MusicDocument>& score,
                           const QVector<qint64>& expected)
 {
+    // 对比音频时间线和视觉投影的重拍位置，防止两条投影发生漂移。
     const auto audio = timeline(score);
     const auto visual = visualization::PlaybackVisualizationProjector().project(*score, 1, {});
     require(audio.available() && visual, "both rhythm projections must succeed");
@@ -229,6 +239,7 @@ void expectSharedDownbeats(const std::shared_ptr<MusicDocument>& score,
 
 void testSharedRhythmProjections()
 {
+    // 验证节拍器和视觉投影共享重拍边界，同时保留各自的细分网格。
     auto score = document(3840);
     score->tracks()[0].timeSignatures = {{0, 4, 4, 24, 16}};
     expectSharedDownbeats(score, {0, 1000000, 2000000, 3000000});
@@ -285,6 +296,7 @@ void testSharedRhythmProjections()
 
 void testMusicXmlMetadata()
 {
+    // 从最小 MusicXML 读取弱起、加法拍号、速度覆盖和显式点击单位。
     QTemporaryFile xml;
     require(xml.open(), "temporary XML");
     const QByteArray data = R"(<score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1">
@@ -308,6 +320,7 @@ void testMusicXmlMetadata()
 
 void testMidiSequenceMetadata()
 {
+    // 验证 MIDI Format 2 的序列起点、拍号和附点四分音符点击单位。
     midi::MidiParsedFile source;
     source.header.format = 2;
     for (int i = 0; i < 2; ++i) {
@@ -321,10 +334,10 @@ void testMidiSequenceMetadata()
             midi::MidiRawEvent tempo;
             tempo.kind = midi::MidiMessageKind::Meta;
             tempo.metaType = 0x51;
-            tempo.payload = QByteArray::fromHex("0f4240"); // 60 BPM
+            tempo.payload = QByteArray::fromHex("0f4240"); // 60 BPM。
             track.events.push_back(tempo);
             tempo.metaType = 0x58;
-            tempo.payload = QByteArray::fromHex("06032408"); // 6/8, dotted quarter
+            tempo.payload = QByteArray::fromHex("06032408"); // 6/8，附点四分音符。
             track.events.push_back(tempo);
         }
         track.events += {on, off};
@@ -342,14 +355,13 @@ void testMidiSequenceMetadata()
 
 void testFluidSynthAudio()
 {
-    // A tiny melodic-only user font deliberately lacks drums. Independent
-    // built-in clicks must still work and must survive replacing this font.
+    // 构造不含鼓组的极简用户音源，验证独立内置点击仍可工作并能跨音源替换保留。
     QFile resource(QStringLiteral(":/midi_play/audio/metronome.sf2"));
     require(resource.open(QIODevice::ReadOnly), "embedded click resource linked");
     QByteArray data = resource.readAll();
     const int header = data.indexOf("phdr");
     require(header > 0, "preset header");
-    for (int i = 0; i < 4; ++i) data[header + 8 + 20 + i] = 0; // bank 0/program 0
+    for (int i = 0; i < 4; ++i) data[header + 8 + 20 + i] = 0; // 将 bank/program 改为 0。
     QTemporaryFile userFont;
     require(userFont.open() && userFont.write(data) == data.size() && userFont.flush(), "test user font");
     const auto userPath = userFont.fileName();
@@ -402,7 +414,7 @@ void testFluidSynthAudio()
     int font = -1, bank = -1, preset = -1;
     require(program(clickSynth, 0, &font, &bank, &preset) == 0
         && font == clickFont && bank == 128 && preset == 127, "restore private font after reset and replacement");
-    energy(22050); // Drain any pre-existing song reverb after the reset.
+    energy(22050); // 重置后先排空此前残留的歌曲混响。
     engine.submitMetronomeClick(true);
     require(energy(4410) > 0.001, "click still sounds after reset/font replacement");
     engine.submitMetronomeClick(true);
@@ -410,8 +422,7 @@ void testFluidSynthAudio()
     require(energy(4410) < strong * 0.001, "stop cancels only the click voice immediately");
     std::printf("FluidSynth click energy: strong=%g weak=%g tail=%g\n", strong, weak, tail);
 
-    // Give the test font two sample layers across the full keyboard. Fill the
-    // actual song voice pool, including layered presets, before adding clicks.
+    // 为测试音源扩展全键盘的两层 sample；加入点击前先填满真实歌曲声部池。
     const int igen = data.indexOf("igen");
     require(igen > 0, "instrument generators");
     for (int i = 0; i < 24; ++i) {
@@ -462,6 +473,7 @@ void testFluidSynthAudio()
 
 int main(int argc, char** argv)
 {
+    // 顺序运行纯时间线、读入器元数据、调度器和可选 FluidSynth 声音测试。
     QCoreApplication app(argc, argv);
     if (app.arguments().contains(QStringLiteral("--audio"))) testFluidSynthAudio();
     else {

@@ -1,3 +1,4 @@
+// 可视化行为测试：覆盖踏板/连音投影、几何布局、主题材质、背景和 Vulkan 帧快照。
 #include "domain/music/musicanalysis.h"
 #include "domain/playback/playbackmodel.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
@@ -37,11 +38,13 @@ using midi_play::settings::NoteColorMode;
 
 void require(bool condition, const char* message)
 {
+    // 视觉回归失败直接退出，避免后续像素比较掩盖首个原因。
     if (!condition) { std::fprintf(stderr, "FAILED: %s\n", message); std::exit(EXIT_FAILURE); }
 }
 
 void testWebPBackgroundImage()
 {
+    // 验证 WebP 解码路径与透明通道在背景加载前保持可用。
     QTemporaryDir directory;
     require(directory.isValid(), "WebP test directory must be available");
     QImage original(2, 2, QImage::Format_RGBA8888);
@@ -104,6 +107,7 @@ void testWebPBackgroundImage()
 
 midi::MidiRawEvent event(midi::MidiMessageKind kind, music::Tick tick, int data1, int data2 = 0)
 {
+    // 构造带绝对 tick 和消息数据的原始 MIDI 事件。
     midi::MidiRawEvent result;
     result.kind = kind;
     result.tick = tick;
@@ -114,6 +118,7 @@ midi::MidiRawEvent event(midi::MidiMessageKind kind, music::Tick tick, int data1
 
 std::shared_ptr<music::MusicDocument> importEvents(QVector<midi::MidiRawEvent> events)
 {
+    // 复用生产环境的规范化器和文档构建器，避免测试绕过导入语义。
     midi::MidiParsedFile source;
     source.header.trackCount = 1;
     source.tracks.resize(1);
@@ -128,6 +133,7 @@ std::shared_ptr<music::MusicDocument> importEvents(QVector<midi::MidiRawEvent> e
 
 void testPedalTimingSurvivesImport()
 {
+    // 延音踏板应延长可视音符尾部，但不改变原始按下位置。
     using K = midi::MidiMessageKind;
     const auto document = importEvents({event(K::ControlChange, 0, 64, 127),
         event(K::NoteOn, 0, 60, 96), event(K::NoteOff, 288, 60),
@@ -148,6 +154,7 @@ void testPedalTimingSurvivesImport()
 
 void testSostenutoCapturesOnlyHeldInstances()
 {
+    // 中音踏板只捕获按下瞬间已发声的音符，不延长之后出现的实例。
     using K = midi::MidiMessageKind;
     const auto document = importEvents({event(K::NoteOn, 0, 60, 90),
         event(K::ControlChange, 60, 66, 127), event(K::ControlChange, 70, 64, 127),
@@ -161,6 +168,7 @@ void testSostenutoCapturesOnlyHeldInstances()
 
 music::MusicDocument basicDocument()
 {
+    // 创建带统一速度和单轨道的最小音乐文档，供几何测试扩展。
     music::MusicDocument document;
     document.setDuration(5760);
     document.tempos().push_back({0, 120.0, 0});
@@ -172,6 +180,7 @@ music::MusicDocument basicDocument()
 
 void testContinuousBarsAndPolyphonicTies()
 {
+    // 连续小节和同音高复音连音分别保持分段边界与实例身份。
     auto document = basicDocument();
     auto& track = document.tracks()[0];
     track.measures = {{1, 0, 480}, {2, 480, 480}};
@@ -203,6 +212,7 @@ void testContinuousBarsAndPolyphonicTies()
 
 void testGeometryAndMaterials()
 {
+    // 同一图表在不同画布尺寸下保持键位映射、重叠布局和材质稳定。
     auto document = basicDocument();
     for (int pitch = 48; pitch <= 84; ++pitch) {
         music::NoteEvent note;
@@ -237,6 +247,7 @@ void testGeometryAndMaterials()
 
 void testVisualClock()
 {
+    // 视觉时钟按采样时间和倍率外推，并在 seek/暂停等跳变后重置。
     VisualPlaybackClock clock;
     clock.setPlaying(true);
     clock.sample(500'000, 5'000'000, 1'000'000);
@@ -253,6 +264,7 @@ void testVisualClock()
 
 visualization::VisualChartPtr denseChart()
 {
+    // 构造跨音域、跨轨道且带踏板尾音的密集图表，用于压力渲染。
     auto document = basicDocument();
     document.tracks().push_back(document.tracks()[0]);
     document.tracks()[1].id = QStringLiteral("strings");
@@ -298,6 +310,8 @@ QImage renderRaster(const visualization::VisualChartPtr& chart, qint64 time, QSi
 
 void testNotationStripGeometry(const visualization::VisualChartPtr& chart)
 {
+    // 按给定时间、DPR 和后端状态绘制一帧，可选复用已有栅格渲染器。
+    // 简谱条开关只改变判定带和布局高度，不改变音符时间轴。
     for (QSize size : {QSize(640, 440), QSize(1280, 720), QSize(2560, 1440)}) {
         for (bool show : {false, true}) {
             const auto geometry = SceneLayoutEngine().layout(size, chart.get(), 5'000'000, show);
@@ -324,6 +338,7 @@ void testNotationStripGeometry(const visualization::VisualChartPtr& chart)
 
 void testThemeMaterialsAndRaster(const visualization::VisualChartPtr& chart)
 {
+    // 明暗主题及普通/鲜明配色应产生可区分且稳定的像素输出。
     const auto geometry = SceneLayoutEngine().layout({1280, 720}, chart.get(), 5'000'000);
     NoteRenderCache cache;
     cache.prepare(chart, geometry);
@@ -359,6 +374,7 @@ void testThemeMaterialsAndRaster(const visualization::VisualChartPtr& chart)
 
 void testFrameEffects(const visualization::VisualChartPtr& chart)
 {
+    // 检查高亮、拖尾和加载遮罩的生命周期，防止跨帧残留。
     const auto geometry = SceneLayoutEngine().layout({1280, 720}, chart.get(), 5'000'000);
     NoteRenderCache cache;
     cache.prepare(chart, geometry);
@@ -403,6 +419,7 @@ visualization::VisualChartPtr stressChart()
 
 void testVulkanStaticKeyboard(const visualization::VisualChartPtr& chart)
 {
+    // Vulkan 后端的静态键盘与传统布局保持相同白键/黑键边界。
     VulkanScene scene;
     visualization::PlaybackSceneState state;
     state.chart = chart;
@@ -416,7 +433,7 @@ void testVulkanStaticKeyboard(const visualization::VisualChartPtr& chart)
         require(scene.staticUiRevision() == revision && scene.staticUi().quads == keyboard,
                 "animation and seeking must not rebuild the static keyboard");
     }
-    // Static vertices use logical coordinates and contain no atlas UVs.
+// 静态顶点使用逻辑坐标，不包含字体图集 UV。
     scene.prepare(state, {1280, 720}, 2, QFont(QStringLiteral("Arial"), 12));
     require(scene.staticUiRevision() == revision && scene.staticUi().quads == keyboard,
             "DPI and font changes must not invalidate atlas-independent geometry");
@@ -440,6 +457,7 @@ void testVulkanStaticKeyboard(const visualization::VisualChartPtr& chart)
 
 void testVulkanThemes(const visualization::VisualChartPtr& chart)
 {
+    // Vulkan 主题切换需重建颜色资源但保留图表和传输状态。
     VulkanScene scene;
     visualization::PlaybackSceneState state;
     state.chart = chart;
@@ -504,6 +522,7 @@ void testVulkanThemes(const visualization::VisualChartPtr& chart)
 
 void testVulkanSingleImageBackground(const visualization::VisualChartPtr& chart)
 {
+    // 单图背景在裁剪、完整显示和透明度变化下覆盖区域连续且不越界。
     VulkanScene scene;
     visualization::PlaybackSceneState state;
     state.chart = chart;
@@ -533,6 +552,7 @@ void testVulkanSingleImageBackground(const visualization::VisualChartPtr& chart)
 
 void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const QString& directory)
 {
+    // 连续采集 Vulkan 帧并输出诊断快照，验证 GPU 资源生命周期和帧推进。
     qputenv("MIDI_PLAY_VULKAN_VALIDATE_RESOURCES", "1");
     QVulkanInstance instance;
     std::atomic<int> validationErrors = 0;
@@ -613,7 +633,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
         noteIndex.query(state.visibleWindowStartUs, state.visibleWindowEndUs, indices);
         state.candidateNoteIndices = {indices.constData(), size_t(indices.size())};
         noteFrame.prepare(state, geometry, cache);
-        // Interior samples avoid borders, labels and black/white key overlap.
+        // 采样点避开边框、标签以及黑白键重叠区域。
         for (const auto& slot : geometry.pitches) {
             if (!slot.valid) continue;
             const QPointF sample(slot.keyRect.center().x(), slot.keyRect.top() + slot.keyRect.height() * .8);
@@ -648,6 +668,7 @@ void testVulkanKeyboardFrames(const visualization::VisualChartPtr& chart, const 
 void captureVulkan(const visualization::VisualChartPtr& chart, const QString& directory, bool showNotationStrip,
                    ThemeMode mode, NoteColorMode colors, bool effectsEnabled = true)
 {
+    // 创建 Vulkan 测试宿主，等待首帧后保存可比较图像和统计值。
     QVulkanInstance instance;
     require(instance.create(), "Vulkan instance must initialize");
     FallingNotesVulkanWindow window;
@@ -679,10 +700,8 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     require(reference.save(directory + QStringLiteral("/notes-qt-matched.png")), "matched raster snapshot must save");
     QImage comparison = image;
     if (effectsEnabled) {
-        // The enhanced Vulkan image is intentionally brighter than the
-        // traditional renderer. Compare the same window with effects disabled
-        // to keep geometry/material regression coverage independent from the
-        // visual treatment under review.
+        // Vulkan 增强图像会有意亮于传统渲染器；关闭特效后比较同一窗口，
+        // 使几何/材质回归与当前视觉处理相互独立。
         window.setVisualEffectsEnabled(false);
         for (int i = 0; i < 3; ++i) QApplication::processEvents();
         comparison = window.grab();
@@ -708,9 +727,8 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     int keyboardPixels = 0;
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid) continue;
-        // QPainter centers its pen; Vulkan uses an inset analytic border.
-        // Compare filled interiors, excluding that known rasterization and
-        // font difference. Black-key samples still verify white-key occlusion.
+        // QPainter 将画笔居中，Vulkan 使用内缩的解析边框；比较填充内部以排除已知的
+        // 光栅化和字体差异，同时保留黑键采样来验证对白键的遮挡。
         QRectF interior = slot.keyRect.adjusted(3, 8, -3, -20);
         if (!slot.blackKey)
             interior.setTop(geometry.keyboardRect.top() + geometry.keyboardRect.height() * .62 + 3);
@@ -735,6 +753,7 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
 
 void benchmarkRaster(int noteCount, bool pedalTails, NoteColorMode colors)
 {
+    // 大量音符压力测试只记录栅格渲染性能，不改变正式测试判定。
     auto document = basicDocument();
     for (int i = 0; i < noteCount; ++i) {
         music::NoteEvent note;
@@ -777,6 +796,7 @@ void benchmarkRaster(int noteCount, bool pedalTails, NoteColorMode colors)
 
 } // namespace
 
+// 主测试入口先执行后端无关回归，再按参数追加 GPU 测试和压力场景。
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);

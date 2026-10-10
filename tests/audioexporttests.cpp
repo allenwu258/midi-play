@@ -1,3 +1,4 @@
+// 音频导出端到端测试：验证离线合成、WAV/MP3 编码、取消保护和重复小节展开。
 #include "app/audioexportservice.h"
 
 #include <QCoreApplication>
@@ -12,6 +13,7 @@ namespace {
 
 void require(bool condition, const char* message)
 {
+    // 测试采用失败即退出策略，避免后续断言在无效输出上继续运行。
     if (condition) return;
     std::fprintf(stderr, "FAILED: %s\n", message);
     std::exit(EXIT_FAILURE);
@@ -19,6 +21,7 @@ void require(bool condition, const char* message)
 
 QByteArray readFile(const QString& path)
 {
+    // 读取整个临时成品，用于比较容器头、长度、确定性和取消保护。
     QFile file(path);
     require(file.open(QIODevice::ReadOnly), "exported file is readable");
     return file.readAll();
@@ -26,6 +29,7 @@ QByteArray readFile(const QString& path)
 
 std::shared_ptr<const midi_play::music::MusicDocument> testDocument()
 {
+    // 构造含一条延迟音符和点击音色的最小有效文档，时间单位为 tick。
     using namespace midi_play::music;
     auto document = std::make_shared<MusicDocument>();
     document->setDuration(960);
@@ -40,7 +44,7 @@ std::shared_ptr<const midi_play::music::MusicDocument> testDocument()
     preset.bankMsb = 1;
     track.instrumentChanges.push_back(preset);
     NoteEvent note;
-    note.start = 240; // 250 ms at 120 BPM.
+    note.start = 240; // 120 BPM 下延迟 250 ms。
     note.duration = 120;
     note.pitch = 60;
     note.velocity = 100;
@@ -53,6 +57,7 @@ std::shared_ptr<const midi_play::music::MusicDocument> testDocument()
 
 bool hasAudio(const QByteArray& wav, int firstFrame, int lastFrame)
 {
+    // 按 16-bit 双声道 WAV 数据区扫描非零帧，验证事件边界而非听感。
     for (int frame = firstFrame; frame < lastFrame; ++frame) {
         const int offset = 44 + frame * 4;
         if (wav[offset] || wav[offset + 1] || wav[offset + 2] || wav[offset + 3]) return true;
@@ -64,6 +69,7 @@ bool hasAudio(const QByteArray& wav, int firstFrame, int lastFrame)
 
 int main(int argc, char** argv)
 {
+    // 在临时目录中依次验证正常导出、取消、错误和重复展开路径。
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
     require(directory.isValid(), "temporary output directory");

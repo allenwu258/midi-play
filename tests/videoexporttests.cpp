@@ -1,3 +1,4 @@
+// 视频导出测试：验证时间线取整、应用校验、取消和临时文件保护。
 #include "app/exporttimeline.h"
 #include "app/audioexportservice.h"
 #include "app/playerapplicationservice.h"
@@ -34,6 +35,7 @@ namespace {
 
 void require(bool condition, const char* message)
 {
+    // 失败立即终止，避免继续操作可能未提交的临时输出。
     if (condition) return;
     std::fprintf(stderr, "FAILED: %s\n", message);
     std::exit(EXIT_FAILURE);
@@ -41,6 +43,7 @@ void require(bool condition, const char* message)
 
 void testExportTimeline()
 {
+    // 覆盖倍率、尾音、无效参数及 44.1 kHz 与 CFR 帧数的精确映射。
     using midi_play::app::ExportTimeline;
 
     const ExportTimeline normal(1'000'000, 60, 100, 500);
@@ -93,6 +96,7 @@ void testExportTimeline()
 
 void testFfmpegProbe()
 {
+    // 验证 FFmpeg 路径探测能区分缺失可执行文件与可用安装。
     const auto missing = midi_play::encoding::probeFfmpeg(
         QStringLiteral("C:/this/path/does/not/contain/ffmpeg"), false);
     require(!missing.valid && !missing.error.isEmpty(), "invalid FFmpeg path is rejected");
@@ -106,6 +110,7 @@ void testFfmpegProbe()
 
 void testFfmpegSettings()
 {
+    // 验证手动 FFmpeg 路径和使用方式写入设置后可被规范化恢复。
     QTemporaryDir directory;
     require(directory.isValid(), "temporary settings directory is available");
     const QString settingsPath = directory.filePath(QStringLiteral("settings.ini"));
@@ -126,6 +131,7 @@ void testFfmpegSettings()
 
 void testUnifiedExportDialogTabs()
 {
+    // 验证统一导出对话框的音频/视频页签和默认导出类型。
     QTemporaryDir directory;
     require(directory.isValid(), "temporary UI settings directory is available");
     midi_play::app::VideoExportOptions defaults;
@@ -147,6 +153,7 @@ void testUnifiedExportDialogTabs()
 
 std::shared_ptr<midi_play::music::MusicDocument> integrationDocument(bool repeat)
 {
+    // 构造包含速度变化、多个标记音符和可选反复段的视频集成输入。
     using namespace midi_play::music;
     auto document = std::make_shared<MusicDocument>();
     document->setDuration(1920);
@@ -186,6 +193,7 @@ std::shared_ptr<midi_play::music::MusicDocument> integrationDocument(bool repeat
 
 QByteArray decode(const QString& ffmpeg, const QStringList& arguments)
 {
+    // 在无交互模式运行 FFmpeg，并把标准输出作为结构化测试数据返回。
     QProcess process;
     process.start(ffmpeg, QStringList{"-v", "error", "-nostdin"} + arguments);
     require(process.waitForStarted(3000), "integration decoder starts");
@@ -197,6 +205,7 @@ QByteArray decode(const QString& ffmpeg, const QStringList& arguments)
 
 std::vector<float> decodeAudio(const QString& ffmpeg, const QString& path)
 {
+    // 将导出文件解码为 44.1 kHz 双声道 PCM，统一音频比较格式。
         const QByteArray bytes = decode(ffmpeg, {"-i", path, "-map", "0:a:0", "-f", "f32le",
                                             "-ar", "44100", "-ac", "2", "pipe:1"});
     require(bytes.size() % 8 == 0, "integration audio is complete stereo PCM");
@@ -207,6 +216,7 @@ std::vector<float> decodeAudio(const QString& ffmpeg, const QString& path)
 
 void compareWithAudioExport(const QString& ffmpeg, const QString& mp4, const QString& wav)
 {
+    // 将视频音频与独立 WAV 导出对齐比较，允许封装延迟但拒绝时间偏移和重复混音。
     const auto expected = decodeAudio(ffmpeg, wav);
     const auto decoded = decodeAudio(ffmpeg, mp4);
     require(decoded.size() >= expected.size() && decoded.size() - expected.size() < (1600 + 1024) * 2,
@@ -226,6 +236,7 @@ void compareWithAudioExport(const QString& ffmpeg, const QString& mp4, const QSt
 
 void verifyMovingScene(const QString& ffmpeg, const QString& mp4, qint64 frames)
 {
+    // 抽取首帧和中间帧，确认 Vulkan 视频既非空白又随时间推进。
     const QByteArray pixels = decode(ffmpeg, {"-i", mp4, "-map", "0:v:0", "-vf",
         QStringLiteral("select=eq(n\\,0)+eq(n\\,%1)").arg(frames / 2),
         "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"});
@@ -249,6 +260,7 @@ void verifyMovingScene(const QString& ffmpeg, const QString& mp4, qint64 frames)
 
 void testVideoIntegration()
 {
+    // 在多 FPS、多倍率及反复/节拍器组合下覆盖完整 Vulkan 到 FFmpeg 导出链路。
     const auto ffmpeg = midi_play::encoding::probeFfmpeg(
         QStandardPaths::findExecutable(QStringLiteral("ffmpeg")), false);
     require(ffmpeg.valid, "integration requires a usable FFmpeg installation");
@@ -285,9 +297,8 @@ void testVideoIntegration()
             require(result.metrics.peakInFlightFrames >= 2,
                     "concurrent pipeline keeps multiple Vulkan frames in flight");
 
-            // The reference calls the existing standalone export service.
-            // Speed is represented as a tempo change in its input document,
-            // since that service intentionally has no video rate parameter.
+            // 参考结果调用现有独立音频导出服务；该服务没有视频倍率参数，
+            // 因此通过修改输入文档速度来表示倍率。
             auto reference = std::make_shared<midi_play::music::MusicDocument>(*document);
             for (auto& tempo : reference->tempos()) tempo.bpm *= rate / 100.0;
             midi_play::app::AudioExportOptions audio;
@@ -309,6 +320,7 @@ void testVideoIntegration()
 
 void benchmarkVideoExport()
 {
+    // 测量不同输出分辨率下的编码、GPU 提交和图像回读耗时。
 #if MIDI_PLAY_HAS_VULKAN
     using midi_play::presentation::visualization::VulkanOffscreenRenderer;
     using midi_play::presentation::visualization::VulkanRenderTicket;
@@ -345,8 +357,7 @@ void benchmarkVideoExport()
         VulkanOffscreenRenderer renderer;
         QString error;
         require(renderer.initialize(scene, &error), "benchmark renderer initializes");
-        // Reuse three images and warm each Vulkan slot before measuring to
-        // distinguish steady readback cost from allocation and shader startup.
+        // 复用三张图像并预热每个 Vulkan slot，将稳定回读耗时与分配/着色器启动成本分离。
         QImage frames[3];
         for (auto& frame : frames) frame = QImage(size, QImage::Format_RGBA8888);
         std::deque<VulkanRenderTicket> pending;
@@ -392,6 +403,7 @@ void benchmarkVideoExport()
 
 } // namespace
 
+// 运行纯时间线/配置测试；--integration 和 --benchmark 追加完整导出与性能检查。
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);

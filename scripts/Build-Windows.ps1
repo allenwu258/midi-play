@@ -16,10 +16,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# 统一从仓库根目录解析输入和输出，避免脚本从其他当前目录运行时污染环境。
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $EnvironmentFile) { $EnvironmentFile = Join-Path $repo 'build.env.psd1' }
 
 function Require-File([string] $Path, [string] $Description) {
+    # 所有外部工具和 SDK 入口先做文件级校验，并返回规范绝对路径。
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Description not found: $Path. Check $EnvironmentFile."
     }
@@ -27,6 +29,7 @@ function Require-File([string] $Path, [string] $Description) {
 }
 
 function Invoke-Checked([string] $Program, [string[]] $Arguments) {
+    # 统一转发命令输出；非零退出码立即中止后续构建或打包步骤。
     & $Program @Arguments | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "$([IO.Path]::GetFileName($Program)) failed with exit code $LASTEXITCODE."
@@ -34,6 +37,7 @@ function Invoke-Checked([string] $Program, [string[]] $Arguments) {
 }
 
 function Assert-OutputPath([string] $Path, [string] $Root) {
+    # 只允许写入仓库受控子树，并拒绝穿越链接或 junction。
     $full = [IO.Path]::GetFullPath($Path)
     if (-not $full.StartsWith($Root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
         throw "Output must be inside ${Root}: $full"
@@ -50,6 +54,7 @@ function Assert-OutputPath([string] $Path, [string] $Root) {
 }
 
 function Remove-OwnedPackage([string] $Path) {
+    # 仅删除带所有权标记且不含链接的本脚本产物，保护用户已有目录。
     Assert-OutputPath $Path (Join-Path $repo 'dist')
     if (-not (Test-Path -LiteralPath (Join-Path $Path '.midi-play-package') -PathType Leaf)) {
         throw "Refusing to remove a directory not created by this build script: $Path"
@@ -64,6 +69,7 @@ $savedEnvironment = [Environment]::GetEnvironmentVariables('Process')
 $buildLock = $null
 $stage = $null
 try {
+    # 先验证宿主、环境文件和 SDK，再清理进程环境，确保依赖发现不受调用者污染。
     if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitProcess) {
         throw 'Run this script with 64-bit PowerShell on Windows.'
     }
@@ -86,6 +92,7 @@ try {
         if (-not $settings.ContainsKey($key)) { $settings[$key] = '' }
         if (-not ($settings[$key] -is [string])) { throw "$key must be a string." }
     }
+    # Traditional 模式强制关闭 Vulkan；否则沿用环境文件中的能力开关。
     $enableVulkan = $settings.EnableVulkan -and -not $Traditional
     foreach ($key in @('VisualStudioRoot', 'QtRoot', 'VcpkgRoot', 'VulkanSdk', 'CMakeExe')) {
         if ($settings[$key]) {
@@ -130,13 +137,14 @@ try {
         $glslang = Require-File "$($settings.VulkanSdk)\Bin\glslangValidator.exe" 'Vulkan shader compiler'
     }
 
-    # Keep dependency discovery independent of the caller's SDK and CMake setup.
+    # 清理调用者注入的 SDK/CMake/Vulkan 变量，使后续探测只使用本次配置。
     foreach ($entry in @(Get-ChildItem Env:)) {
         if ($entry.Name -match '^(QT_|QML|Qt6|CMAKE_|VCPKG_OVERLAY|VCPKG_DEFAULT|VCPKG_INSTALLED|VCPKG_CHAINLOAD|VK_|VULKAN_SDK|VCPKG_ROOT)' -or
             $entry.Name -match '^(INCLUDE|LIB|LIBPATH|CL|_CL_|LINK|_LINK_|CC|CXX|CFLAGS|CXXFLAGS|LDFLAGS|VSINSTALLDIR|VCINSTALLDIR|VCTools.*|WindowsSDK.*|UniversalCRTSdkDir|UCRTVersion|VSCMD_.*|__VSCMD_.*)$') {
             [Environment]::SetEnvironmentVariable($entry.Name, $null, 'Process')
         }
     }
+    # 先用最小系统 PATH 启动 VS 开发环境，防止错误版本的 cl.exe 被提前命中。
     $systemPath = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
     $env:PATH = "$systemPath;$(Split-Path $git)"
     & $devShell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation | Out-Host
@@ -181,8 +189,10 @@ try {
     $crtDirectory = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT'
     $null = Require-File "$crtDirectory\vcruntime140.dll" 'MSVC x64 redistributable DLLs'
     Write-Host "Environment OK: MSVC $($env:VCToolsVersion.TrimEnd('\')), Qt $qtVersion, $cmakeVersion; Vulkan=$enableVulkan"
+    # CheckEnvironment 在完成全部工具和版本校验后提前返回，不创建构建或发布目录。
     if ($CheckEnvironment) { return }
 
+    # 构建、依赖安装和最终包分别位于 build/dist 受控目录，并用锁阻止并发发布。
     $buildDirectory = Join-Path $repo "build\$BuildName"
     $installedDirectory = Join-Path $repo 'build\dependencies\vcpkg_installed'
     $packageDirectory = Join-Path $repo "dist\$PackageName"
@@ -199,6 +209,7 @@ try {
         $bootstrap = Require-File "$vcpkgRoot\bootstrap-vcpkg.bat" 'vcpkg bootstrap script'
         Invoke-Checked $bootstrap @('-disableMetrics')
     }
+    # 以仓库 manifest 和隔离安装根安装固定 triplet 依赖，避免使用用户全局包。
     Write-Host 'Installing manifest dependencies (x64-windows)...'
     Invoke-Checked $vcpkg @('install', '--triplet=x64-windows', '--host-triplet=x64-windows',
         "--x-manifest-root=$repo", "--x-install-root=$installedDirectory", '--disable-metrics')
@@ -206,6 +217,7 @@ try {
     $webPConfig = Require-File "$installedDirectory\x64-windows\share\WebP\WebPConfig.cmake" 'Installed WebP CMake package'
     $lameConfig = Require-File "$installedDirectory\x64-windows\share\mp3lame\mp3lame-config.cmake" 'Installed LAME CMake package'
 
+    # 生成 CMake 参数：Release、x64、测试开启，并将实际依赖路径显式传入。
     $vulkanOption = if ($enableVulkan) { 'ON' } else { 'OFF' }
     $configure = @('--fresh', '-S', $repo, '-B', $buildDirectory, '-G', 'Visual Studio 17 2022', '-A', 'x64',
         '-T', "v143,host=x64,version=$($env:VCToolsVersion.TrimEnd('\'))",
@@ -228,6 +240,7 @@ try {
     Invoke-Checked $cmake @('--build', $buildDirectory, '--config', 'Release', '--parallel', "$Jobs")
     Invoke-Checked $ctest @('--test-dir', $buildDirectory, '-C', 'Release', '--output-on-failure', '--timeout', '60')
 
+    # 先在随机 staging 目录完成安装、Qt 部署和离线验证，全部通过后再替换正式包。
     $stage = Join-Path $repo "dist\.$PackageName-staging-$([Guid]::NewGuid().ToString('N'))"
     Assert-OutputPath $stage (Join-Path $repo 'dist')
     $null = New-Item -ItemType Directory -Path $stage
@@ -235,7 +248,7 @@ try {
     Invoke-Checked $cmake @('--install', $buildDirectory, '--config', 'Release', '--prefix', $stage)
     Invoke-Checked $deployQt @('--release', '--no-compiler-runtime', '--no-translations', '--no-opengl-sw',
         '--qtpaths', $qtPaths, '--dir', $stage, "$stage\midi_play.exe", "$stage\midi_play_cli.exe")
-    # windeployqt may only supply the VC installer. Deploy the actual CRT app-local.
+    # windeployqt 可能只提供 VC 安装器；这里显式部署实际的 app-local CRT。
     Get-ChildItem -LiteralPath $crtDirectory -Filter '*.dll' | Copy-Item -Destination $stage
     Copy-Item -LiteralPath "$repo\LICENSE" -Destination $stage
     $licenseDirectory = Join-Path $stage 'licenses\vcpkg'
@@ -252,6 +265,7 @@ try {
         Copy-Item -LiteralPath "$qtRoot\sbom" -Destination "$stage\licenses\qt-sbom" -Recurse
     }
 
+    # 从 PATH 移除开发 SDK 后运行依赖扫描、CLI 渲染和 MP3 导出 smoke test。
     Write-Host 'Checking the package with SDK directories removed from PATH...'
     $developmentPath = $env:PATH
     $env:PATH = $systemPath
@@ -278,6 +292,7 @@ try {
         } finally { Pop-Location }
     } finally { $env:PATH = $developmentPath }
 
+    # 写入源码版本、工具版本和 Vulkan 配置，形成可追溯的发布元数据。
     $revision = & $git -C $repo rev-parse HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Unable to read source revision.' }
     $dirty = @(& $git -C $repo status --porcelain).Count -gt 0
@@ -296,7 +311,7 @@ try {
         audioSmokePassed = [bool]$AudioSmoke
     } | ConvertTo-Json | Set-Content -LiteralPath "$stage\build-info.json" -Encoding UTF8
 
-    # Preserve the last successful package until every deployment check has passed.
+    # 保留上一份成功包，直到新包全部验证通过并完成原子目录替换。
     $previous = $null
     if (Test-Path -LiteralPath $packageDirectory) {
         if (-not (Test-Path -LiteralPath "$packageDirectory\.midi-play-package" -PathType Leaf)) {
@@ -318,6 +333,7 @@ try {
     }
     Write-Host "Release package ready: $packageDirectory"
 } finally {
+    # 无论成功或失败都释放锁、恢复调用前环境；失败 staging 目录故意保留供诊断。
     if ($stage -and (Test-Path -LiteralPath $stage)) {
         Write-Warning "Build did not publish a release; diagnostic staging directory retained: $stage"
     }

@@ -1,8 +1,10 @@
+# 发布后校验脚本：检查必需文件、运行时依赖闭包及应用目录隔离性。
 cmake_minimum_required(VERSION 3.24)
 
 if (NOT IS_DIRECTORY "${PACKAGE_DIR}" OR NOT EXISTS "${DUMPBIN_EXE}")
     message(FATAL_ERROR "PACKAGE_DIR and DUMPBIN_EXE must identify the package and MSVC dumpbin")
 endif()
+# 最小文件集合覆盖 GUI/CLI、Qt 平台插件、音频编解码器和 app-local MSVC CRT。
 foreach (required IN ITEMS midi_play.exe midi_play_cli.exe Qt6Core.dll Qt6Gui.dll
          Qt6Widgets.dll Qt6Xml.dll platforms/qwindows.dll libfluidsynth-3.dll
          libwebp.dll libmp3lame.dll
@@ -12,14 +14,13 @@ foreach (required IN ITEMS midi_play.exe midi_play_cli.exe Qt6Core.dll Qt6Gui.dl
     endif()
 endforeach()
 
-# Musical SoundFonts are user-provided. Catch stale or accidentally copied
-# resources; the tiny procedural metronome remains embedded in the executable.
+# SoundFont 属于用户资源，不允许随发布包携带；小型程序化节拍器已嵌入可执行文件。
 file(GLOB_RECURSE unexpected_soundfonts "${PACKAGE_DIR}/*.sf2" "${PACKAGE_DIR}/*.sf3")
 if (unexpected_soundfonts)
     message(FATAL_ERROR "Release packages must not bundle SoundFonts: ${unexpected_soundfonts}")
 endif()
 
-# Scan every plugin as a root, including FluidSynth which is loaded via QLibrary.
+# 将所有 DLL（包含 QLibrary 动态加载的 FluidSynth）作为依赖根，检查完整闭包。
 set(CMAKE_GET_RUNTIME_DEPENDENCIES_PLATFORM "windows+pe")
 set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL "dumpbin")
 set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${DUMPBIN_EXE}")
@@ -33,14 +34,13 @@ file(GET_RUNTIME_DEPENDENCIES
     CONFLICTING_DEPENDENCIES_PREFIX conflicts
     PRE_EXCLUDE_REGEXES "^api-ms-.*" "^ext-ms-.*" "^vulkan-1\\.dll$"
     POST_INCLUDE_REGEXES ".*[/\\\\](msvcp140[^/\\\\]*|vcruntime140[^/\\\\]*|vccorlib140|concrt140)\\.dll$"
-    # Do not traverse Windows internals or resolve their private API sets.
+    # 不遍历 Windows 系统目录，也不解析其私有 API 集合。
     POST_EXCLUDE_REGEXES ".*[/\\\\][Ss][Yy][Ss][Tt][Ee][Mm]32[/\\\\].*")
 if (unresolved)
     message(FATAL_ERROR "Incomplete dependency closure: unresolved=${unresolved}")
 endif()
 
-# CMake resolves plugin imports against System32 before DIRECTORIES. The Windows
-# application uses its app-local CRT; allow only that specific resolution conflict.
+# CMake 可能先从 System32 解析插件导入；仅允许已部署的 app-local CRT 产生该冲突。
 foreach (name IN LISTS conflicts_FILENAMES)
     string(TOLOWER "${name}" lower_name)
     if (NOT lower_name MATCHES "^(msvcp140.*|vcruntime140.*|vccorlib140|concrt140)\\.dll$"
@@ -68,4 +68,5 @@ foreach (dependency IN LISTS resolved)
         message(FATAL_ERROR "MSVC runtime must be deployed app-local: ${dependency_name}")
     endif()
 endforeach()
+# 到达此处表示包文件、依赖来源和 app-local 运行库均已通过校验。
 message(STATUS "Windows package dependency closure verified")

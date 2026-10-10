@@ -1,3 +1,4 @@
+// 展示层测试：验证传统/Vulkan 视图、设置即时生效、倍率交互和节拍器控件联动。
 #include "app/settingsservice.h"
 #include "app/playerapplicationservice.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
@@ -47,6 +48,7 @@ using midi_play::presentation::visualization::FallingNotesView;
 
 void require(bool condition, const char* message)
 {
+    // Qt 窗口测试失败立即退出，避免后续事件循环掩盖根因。
     if (!condition) {
         std::fprintf(stderr, "FAILED: %s\n", message);
         std::exit(EXIT_FAILURE);
@@ -55,6 +57,7 @@ void require(bool condition, const char* message)
 
 midi_play::visualization::VisualChartPtr makeChart()
 {
+    // 构造稳定的钢琴样例图表，供传统和 Vulkan 视图复用。
     midi_play::music::MusicDocument document;
     document.tempos().push_back({0, 120.0, 0});
     document.setDuration(1920);
@@ -77,7 +80,7 @@ midi_play::visualization::VisualChartPtr makeChart()
 
 QImage capture(FallingNotesView& view)
 {
-    // grab() resolves pending parent layout changes before allocating the image.
+    // grab() 会先完成父布局的待处理变更，再分配并读取图像。
     const QImage image = view.grab().toImage();
     require(image.pixelColor(image.width() / 2, image.height() / 2).alpha() == 255,
             "traditional view must paint an opaque frame");
@@ -86,6 +89,7 @@ QImage capture(FallingNotesView& view)
 
 void testTraditionalViewUpdates(ThemeMode theme)
 {
+    // 主题、位置和播放状态更新必须反映到传统渲染视图快照。
     FallingNotesView view;
     view.setThemeMode(theme);
     view.resize(960, 640);
@@ -126,6 +130,7 @@ void testTraditionalViewUpdates(ThemeMode theme)
 
 void testGraphicsModePreference()
 {
+    // 图形模式即时切换只更新设置和后端选择，不丢失当前图表。
     QTemporaryDir temporary;
     require(temporary.isValid(), "temporary settings directory must be available");
     const auto path = temporary.filePath(QStringLiteral("settings.ini"));
@@ -158,6 +163,7 @@ void testGraphicsModePreference()
 
 void testVisualEffectsPreference()
 {
+    // 特效开关/等级遵守 Vulkan 能力限制，并按服务信号刷新控件。
     QTemporaryDir temporary;
     require(temporary.isValid(), "temporary settings directory must be available");
     const auto path = temporary.filePath(QStringLiteral("settings.ini"));
@@ -207,8 +213,7 @@ void testVisualEffectsPreference()
 #else
     require(!settings.visualEffectsEnabled() && levelChanges == 0 && changes == 0,
             "traditional-only builds must keep visual effects disabled");
-    // The level remains a portable preference even when this build cannot
-    // render it; set it explicitly before checking restart persistence.
+    // 即使当前构建无法渲染该等级，它仍是可移植偏好；先显式设置再检查重启持久化。
     settings.setVisualEffectsLevel(VisualEffectLevel::High);
 #endif
     settings.setVisualEffectsEnabled(false);
@@ -257,6 +262,7 @@ void testVisualEffectsPreference()
 
 void testBackgroundModePreference()
 {
+    // 背景启用、路径和透明度彼此独立，关闭时只隐藏编辑行。
     QTemporaryDir temporary;
     require(temporary.isValid(), "temporary settings directory must be available");
     const auto path = temporary.filePath(QStringLiteral("settings.ini"));
@@ -312,6 +318,7 @@ void testBackgroundModePreference()
 
 void testNotationStripPreference()
 {
+    // 简谱条设置在设置页和视图之间双向同步且不产生反馈循环。
     QTemporaryDir temporary;
     require(temporary.isValid(), "temporary settings directory must be available");
     const auto path = temporary.filePath(QStringLiteral("settings.ini"));
@@ -331,9 +338,8 @@ void testNotationStripPreference()
     midi_play::presentation::MainWindow window(&player, &settings);
     auto* view = window.findChild<FallingNotesView*>();
     require(view && !view->showNotationStrip(), "main window must apply the hidden default");
-    // This preference test validates the synchronous QPainter relayout. Keep
-    // it independent from the machine's Vulkan presentation surface; the
-    // dedicated Vulkan smoke test below covers that backend separately.
+    // 本用例验证同步 QPainter 重排，与机器上的 Vulkan 展示面解耦；Vulkan 专项 smoke
+    // test 在下方单独覆盖该后端。
     view->setGraphicsMode(GraphicsMode::Traditional);
     const auto chart = makeChart();
     view->resize(960, 640);
@@ -381,6 +387,7 @@ void testNotationStripPreference()
 
 void processEventsFor(int milliseconds)
 {
+    // 在固定时长内泵送 Qt 事件，给异步设置和窗口信号留出处理机会。
     QElapsedTimer timer;
     timer.start();
     while (timer.elapsed() < milliseconds) {
@@ -391,6 +398,7 @@ void processEventsFor(int milliseconds)
 
 void typePercent(QSpinBox* editor, const QString& digits)
 {
+    // 通过真实键盘事件输入百分比，覆盖编辑器的文本提交路径。
     editor->selectAll();
     auto* lineEdit = editor->findChild<QLineEdit*>();
     require(lineEdit != nullptr, "percentage editor must accept text input");
@@ -403,6 +411,7 @@ void typePercent(QSpinBox* editor, const QString& digits)
 
 void testPlaybackRateInteraction(GraphicsMode mode = GraphicsMode::Traditional)
 {
+    // 模拟滑块、步进、完整文本提交及 Esc 撤销，检查倍率输入时序。
     midi_play::app::PlayerApplicationService service;
     midi_play::presentation::theme::ThemeController theme;
     midi_play::presentation::MainWindow window(&service, nullptr, nullptr, &theme);
@@ -474,8 +483,7 @@ void testPlaybackRateInteraction(GraphicsMode mode = GraphicsMode::Traditional)
     button->click();
     processEventsFor(30);
     typePercent(editor, QStringLiteral("90"));
-    // Match native clicking: the OS activates the target window before Qt
-    // receives its mouse event. sendEvent alone does not perform activation.
+    // 模拟原生点击：操作系统会在 Qt 收到鼠标事件前激活目标窗口，sendEvent 本身不会激活。
     window.activateWindow();
     processEventsFor(30);
     const QPoint outside = window.mapToGlobal(QPoint(window.width() - 20, 100));
@@ -601,6 +609,7 @@ void testVulkanSwitching()
 
 void testMetronomeControl(GraphicsMode mode = GraphicsMode::Traditional)
 {
+    // 节拍器按钮只在服务报告可用时启用，模型回填不会重复触发用户信号。
     midi_play::app::PlayerApplicationService service;
     midi_play::presentation::MainWindow window(&service, nullptr);
     window.findChild<FallingNotesView*>()->setGraphicsMode(mode);
@@ -625,6 +634,7 @@ void testMetronomeControl(GraphicsMode mode = GraphicsMode::Traditional)
 
 } // namespace
 
+// 主入口运行 offscreen GUI 回归；--vulkan-smoke 时追加 GPU 依赖场景。
 int main(int argc, char* argv[])
 {
     QApplication application(argc, argv);

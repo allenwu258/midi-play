@@ -9,17 +9,21 @@ import random
 import struct
 
 def chunk(tag, data):
-    # SF2 requires even chunk sizes (including string terminators/padding).
+    # 将 RIFF/SF2 子块编码为带偶数字节填充的块。
+    # SF2 要求块长度为偶数，字符串终止符和补齐字节也计入长度。
     data += b"\0" * (len(data) % 2)
     return tag.encode("ascii") + struct.pack("<I", len(data)) + data
 
 def listing(kind, chunks):
+    # 将多个子块封装为带类型标识的 RIFF LIST。
     return chunk("LIST", kind.encode("ascii") + b"".join(chunks))
 
 def name(value):
+    # 将对象名编码为 SF2 固定 20 字节字段。
     return value.encode("ascii")[:20].ljust(20, b"\0")
 
 def generate():
+    # 生成两个带确定性噪声种子的短击声音及其 SF2 区域索引。
     rate = 44100
     pcm = []
     headers = []
@@ -42,7 +46,7 @@ def generate():
         headers.append(name(label) + struct.pack("<IIIIIBbHH", start, end, start + 8,
                                                  end - 8, rate, key, 0, 0, 1))
     headers.append(name("EOS") + bytes(26))
-    # Key range must precede other generators; sampleID is last in a local zone.
+    # 每个局部区域先写键位范围，sampleID 放在生成器末尾，符合 SF2 解析顺序。
     generators = []
     bags = []
     for sample, key in enumerate((60, 61)):
@@ -71,6 +75,7 @@ def generate():
     return chunk("RIFF", b"sfbk" + info + sdta + pdta)
 
 if __name__ == "__main__":
+    # 输出到仓库内固定资源路径；运行时播放器直接从 Qt 资源读取该文件。
     target = Path(__file__).resolve().parents[1] / "assets" / "metronome.sf2"
     target.write_bytes(generate())
     print(f"{target}: {target.stat().st_size} bytes")

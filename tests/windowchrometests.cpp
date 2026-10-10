@@ -1,3 +1,4 @@
+// 窗口装饰测试：覆盖几何命中、DPI、Win32 DWM 桥接、系统按钮和状态往返。
 #include "presentation/windowchrome/windowchromecontroller.h"
 #include "presentation/windowchrome/windowchromegeometry.h"
 #include "presentation/windowchrome/captionbuttons.h"
@@ -39,6 +40,7 @@ using midi_play::settings::ThemeMode;
 
 void require(bool condition, const char* message)
 {
+    // 原生窗口测试失败立即退出，避免残留窗口继续接收消息。
     if (!condition) {
         std::fprintf(stderr, "FAILED: %s\n", message);
         std::exit(EXIT_FAILURE);
@@ -47,6 +49,7 @@ void require(bool condition, const char* message)
 
 void testGeometry()
 {
+    // 多种缩放比例、窗口状态和负屏幕坐标下验证边框命中优先级。
     for (qreal scale : {1.0, 1.25, 1.5, 1.75, 2.0, 2.5}) {
         FrameGeometry g;
         g.window = QRectF(0, 0, 800 * scale, 500 * scale);
@@ -94,6 +97,7 @@ void testGeometry()
 #if defined(Q_OS_WIN)
 void waitFor(const std::function<bool()>& condition, const char* message)
 {
+    // 处理 Qt 事件并短暂让出线程，等待 Win32 状态同步。
     QElapsedTimer timer;
     timer.start();
     do {
@@ -105,6 +109,7 @@ void waitFor(const std::function<bool()>& condition, const char* message)
 }
 
 class ChromeWindow final : public QWidget {
+    // 测试宿主包含 Qt 顶栏、禁用嵌套控件和原生 QWindow 子窗口。
 public:
     ChromeWindow()
     {
@@ -124,7 +129,7 @@ public:
         titleLayout->addWidget(icon);
         titleLayout->addWidget(new QLabel(QStringLiteral("Caption"), title));
         titleLayout->addStretch();
-        // A nested, disabled interactive control must remain HTCLIENT.
+// 嵌套且禁用的交互控件仍必须命中 HTCLIENT。
         auto* nested = new QWidget(title);
         auto* nestedLayout = new QHBoxLayout(nested);
         nestedLayout->setContentsMargins(0, 0, 0, 0);
@@ -176,6 +181,7 @@ protected:
 
 LPARAM hitCoordinates(HWND hwnd, QPoint logicalPoint, qreal scale)
 {
+    // 将逻辑客户区坐标缩放并转换为屏幕坐标，供 Win32 消息命中测试使用。
     POINT point {qRound(logicalPoint.x() * scale), qRound(logicalPoint.y() * scale)};
     ClientToScreen(hwnd, &point);
     return MAKELPARAM(point.x, point.y);
@@ -183,6 +189,7 @@ LPARAM hitCoordinates(HWND hwnd, QPoint logicalPoint, qreal scale)
 
 void testNativeFrame()
 {
+    // 自定义/原生模式切换不应丢失 HWND、原始 DWM 属性或系统命令行为。
     ChromeWindow window;
     window.show();
     const auto hwnd = reinterpret_cast<HWND>(window.winId());
@@ -252,7 +259,7 @@ void testNativeFrame()
     window.chrome->maximizeOrRestore();
     waitFor([&] { return !IsZoomed(hwnd); }, "mouse caption restore must complete");
 
-    // UI Automation / keyboard Invoke follows the same system-command path.
+// UI Automation/键盘 Invoke 复用同一系统命令路径。
     maximize->click();
     waitFor([&] { return IsZoomed(hwnd) && window.isMaximized(); }, "caption Invoke must maximize once");
     window.chrome->maximizeOrRestore();
@@ -322,6 +329,7 @@ void testNativeFrame()
 
 bool testMainWindow(bool useVulkan)
 {
+    // 组合主窗口与设置服务、渲染视图，检查标题栏往返保持播放状态。
     using midi_play::settings::GraphicsMode;
     using midi_play::presentation::visualization::FallingNotesView;
     QTemporaryDir directory;
@@ -427,6 +435,7 @@ bool testMainWindow(bool useVulkan)
 
 } // namespace
 
+// 先运行平台无关几何测试；--native 在真实 Windows/DWM 环境追加集成测试。
 int main(int argc, char** argv)
 {
     testGeometry();

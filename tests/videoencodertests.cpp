@@ -1,3 +1,4 @@
+// FFmpeg 编码测试：校验时间线、PCM 对齐、帧队列反压、取消和多倍率 CFR 输出。
 #include "app/exporttimeline.h"
 #include "infrastructure/encoding/ffmpegvideoencoder.h"
 #include "infrastructure/encoding/ffmpegvideoencoderworker.h"
@@ -30,6 +31,7 @@ constexpr qint64 markerTimesUs[] {0, 137'009, 641'007, 1'291'001, 1'969'019};
 
 void require(bool condition, const char* message, const QString& detail = {})
 {
+    // 外部 FFmpeg 失败附带 stderr，便于区分环境缺失与编码错误。
     if (condition) return;
     std::fprintf(stderr, "FAILED: %s %s\n", message, detail.toUtf8().constData());
     std::exit(EXIT_FAILURE);
@@ -37,6 +39,7 @@ void require(bool condition, const char* message, const QString& detail = {})
 
 QByteArray run(const QString& executable, const QStringList& arguments)
 {
+    // 同步运行探测命令，限制 30 秒并返回 stdout 供元数据解析。
     QProcess process;
     process.start(executable, arguments);
     require(process.waitForStarted(3000), "test process starts", process.errorString());
@@ -49,6 +52,7 @@ QByteArray run(const QString& executable, const QStringList& arguments)
 
 std::vector<float> decodeAudio(const QString& ffmpeg, const QString& path)
 {
+    // 调用 FFmpeg 解码为 44.1 kHz 双声道浮点 PCM，供波形比较。
     const QByteArray bytes = run(ffmpeg, {"-v", "error", "-nostdin", "-i", path,
         "-map", "0:a:0", "-f", "f32le", "-ar", "44100", "-ac", "2", "pipe:1"});
     require(bytes.size() % (sizeof(float) * channels) == 0, "decoded stereo PCM is complete");
@@ -59,6 +63,7 @@ std::vector<float> decodeAudio(const QString& ffmpeg, const QString& path)
 
 std::vector<float> referenceAudio(const midi_play::app::ExportTimeline& timeline)
 {
+    // 按固定 marker 生成无编码误差的参考 PCM，验证事件仅出现一次。
     std::vector<float> samples(size_t(timeline.sampleCount()) * channels);
     int marker = 0;
     for (const qint64 time : markerTimesUs) {
@@ -81,6 +86,7 @@ std::vector<float> referenceAudio(const midi_play::app::ExportTimeline& timeline
 void compareAudio(const std::vector<float>& expected, const std::vector<float>& decoded,
                   const midi_play::app::ExportTimeline& timeline)
 {
+    // 允许编码延迟带来的有限样本偏移，再比较 marker 波形位置和幅值。
     const qint64 expectedFrames = qint64(expected.size() / channels);
     const qint64 decodedFrames = qint64(decoded.size() / channels);
     require(std::abs(decodedFrames - expectedFrames) <= 16
@@ -130,8 +136,7 @@ void compareAudio(const std::vector<float>& expected, const std::vector<float>& 
         }
     }
 
-    // Exclude AAC pre/post-ringing around markers; every other sample must
-    // remain silent. This catches extra copies that onset-only tests miss.
+// 排除 marker 前后的 AAC 振铃区间，其余样本必须保持静音；这能发现仅检查起点无法捕获的重复拷贝。
     double silentEnergy = 0;
     qint64 silentSamples = 0;
     for (qint64 i = 0; i < std::min(timeline.sampleCount(), decodedFrames); ++i) {
@@ -155,6 +160,7 @@ void compareAudio(const std::vector<float>& expected, const std::vector<float>& 
 void verifyVideoPts(const QString& ffprobe, const QString& path,
                     const midi_play::app::ExportTimeline& timeline, int fps)
 {
+    // 用 ffprobe 检查视频 PTS/DTS 单调性和帧数，避免封装后的时间轴偏移。
     if (ffprobe.isEmpty()) return;
     const QByteArray json = run(ffprobe, {"-v", "error", "-select_streams", "v:0",
         "-show_frames", "-show_entries", "frame=best_effort_timestamp_time,pkt_dts_time", "-of", "json", path});
@@ -180,6 +186,7 @@ void verifyVideoPts(const QString& ffprobe, const QString& path,
 void testEncoding(const QString& ffmpeg, const QString& ffprobe, const QString& directory,
                   int fps, int rate, bool includeAudio)
 {
+    // 生成标记 PCM 和视频帧，验证指定 FPS/倍率/音频开关的真实封装结果。
     const midi_play::app::ExportTimeline timeline(2'000'003, fps, rate, 123);
     const QString stem = QStringLiteral("%1-%2-%3").arg(fps).arg(rate).arg(includeAudio);
     const QString output = directory + QLatin1Char('/') + stem + QStringLiteral(".mp4");
@@ -229,6 +236,7 @@ void testEncoding(const QString& ffmpeg, const QString& ffprobe, const QString& 
 
 void testInvalidPcm(const QString& ffmpeg, const QString& directory)
 {
+    // PCM 长度与时间线不一致时，编码器必须在启动前拒绝输入。
     const QString pcmPath = directory + QStringLiteral("/incomplete.pcm");
     QFile pcm(pcmPath);
     require(pcm.open(QIODevice::WriteOnly), "incomplete PCM is writable");
@@ -247,6 +255,7 @@ void testInvalidPcm(const QString& ffmpeg, const QString& directory)
 void testEncoderWorker(const QString& ffmpeg, const QString& ffprobe, const QString& directory,
                        bool reuseBuffers)
 {
+    // 对比回收缓冲和外部 QImage 两种提交路径，确认有界队列不丢帧。
     const midi_play::app::ExportTimeline timeline(500'003, 30, 100, 0);
     const QString output = directory + (reuseBuffers ? QStringLiteral("/worker-pooled.mp4")
                                                      : QStringLiteral("/worker.mp4"));
@@ -295,6 +304,7 @@ void testEncoderWorker(const QString& ffmpeg, const QString& ffprobe, const QStr
 
 void testCanceledFrameAcquisition(const QString& ffmpeg, const QString& directory)
 {
+    // 取消等待回收帧时应及时唤醒生产者，工作线程仍能正常 join。
     std::atomic_bool canceled {false};
     midi_play::encoding::FfmpegVideoEncoderWorker worker(1);
     QString error;
@@ -317,6 +327,7 @@ void testCanceledFrameAcquisition(const QString& ffmpeg, const QString& director
 
 } // namespace
 
+// 缺少 FFmpeg 时返回 CTest 跳过码，否则覆盖全部 FPS 与倍率组合。
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);

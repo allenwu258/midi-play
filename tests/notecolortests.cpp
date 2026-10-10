@@ -1,3 +1,4 @@
+// 音符配色测试：验证设置持久化、材质键隔离、缓存失效和两种后端的渲染快照。
 #include "app/playerapplicationservice.h"
 #include "app/settingsservice.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
@@ -38,11 +39,13 @@ using settings::VisualEffectLevel;
 
 void require(bool value, const char* message)
 {
+    // 颜色差异属于像素级回归，失败时立即退出并保留首个断言信息。
     if (!value) { std::fprintf(stderr, "FAILED: %s\n", message); std::exit(EXIT_FAILURE); }
 }
 
 visualization::VisualChartPtr sampleChart(int count = 132, bool varied = true)
 {
+    // 构造多轨道样例图表，为材质、缓存和渲染测试提供稳定输入。
     music::MusicDocument document;
     document.tempos().push_back({0, 120.0, 0});
     document.setDuration(std::max<qint64>(5760, qint64(count) * 60));
@@ -73,6 +76,7 @@ visualization::VisualChartPtr sampleChart(int count = 132, bool varied = true)
 
 void testPersistence()
 {
+    // 检查 NoteColorMode 的持久化整数、恢复值和 SettingsService 信号。
     QTemporaryDir directory;
     require(directory.isValid(), "temporary settings directory must exist");
     const auto path = directory.filePath(QStringLiteral("settings.ini"));
@@ -129,11 +133,11 @@ void testPersistence()
 }
 
 class ControlledStore final : public app::ISettingsStore {
+    // 可配置写入结果的内存存储，用于检查保存失败时的内存状态和错误信号。
 public:
     ControlledStore()
     {
-        // This fixture models an existing user with an explicit graphics
-        // preference; the test focuses on note-color save failures.
+// 该 fixture 模拟已保存图形偏好的用户，测试重点是音符配色保存失败。
         saved.graphicsMode = settings::GraphicsMode::Traditional;
         saved.graphicsModeConfigured = true;
     }
@@ -149,7 +153,7 @@ public:
     bool save(const settings::PlayerSettings& value, QString*) override
     {
         ++writes;
-        if (fail) return false; // The service must still provide an error message.
+        if (fail) return false; // 服务仍必须提供错误消息。
         saved = value;
         return true;
     }
@@ -157,6 +161,7 @@ public:
 
 void testSaveFailureAndControls()
 {
+    // 失败保存不回滚已应用的颜色设置，也不重复写入相同值。
     auto store = std::make_unique<ControlledStore>();
     auto* persistence = store.get();
     SettingsService service(std::move(store));
@@ -189,11 +194,12 @@ void testSaveFailureAndControls()
 
 void testMaterials(const visualization::VisualChartPtr& chart)
 {
+    // 不同音高/轨道必须拥有独立材质键，普通与鲜明模式保持预期主体色。
     visualization::VisualNote a;
     a.trackIndex = 0;
     a.pitch = 60;
     auto b = a;
-    b.pitch = 64; // These shared the old pitch/6 bucket.
+    b.pitch = 64; // 两者曾共享旧的 pitch/6 分组。
     require(noteMaterialKey(a) != noteMaterialKey(b), "different pitch classes must never alias in the style cache");
     const auto& normal = noteAppearanceFor(ThemeMode::Dark, NoteColorMode::Normal);
     const auto& vivid = noteAppearanceFor(ThemeMode::Dark, NoteColorMode::Vivid);
@@ -242,6 +248,7 @@ void testMaterials(const visualization::VisualChartPtr& chart)
 QImage render(const visualization::VisualChartPtr& chart, FallingNotesRenderer& renderer,
               ThemeMode theme, NoteColorMode colors, bool notation, qreal dpr)
 {
+    // 在固定 DPR 和场景尺寸下绘制一帧，供像素和缓存回归比较。
     visualization::PlaybackSceneState state;
     state.chart = chart;
     state.themeMode = theme;
@@ -263,6 +270,7 @@ QImage render(const visualization::VisualChartPtr& chart, FallingNotesRenderer& 
 
 void testCachesAndRaster(const visualization::VisualChartPtr& chart, const QString& snapshots)
 {
+    // 修改主题、配色和修订号后检查缓存重建，防止旧材质泄漏到新帧。
     const auto geometry = SceneLayoutEngine().layout({960, 640}, chart.get(), 5'000'000);
     NoteRenderCache cache;
     cache.prepare(chart, geometry, ThemeMode::Dark, NoteColorMode::Normal);
@@ -312,6 +320,7 @@ void testCachesAndRaster(const visualization::VisualChartPtr& chart, const QStri
 #if MIDI_PLAY_HAS_VULKAN
 void testVulkanRevisions(const visualization::VisualChartPtr& chart)
 {
+    // Vulkan 可用时验证资源修订号变化会安全替换，未启用构建由调用方跳过。
     for (auto theme : {ThemeMode::Dark, ThemeMode::Light}) for (bool notation : {false, true}) {
         visualization::PlaybackSceneState state;
         state.chart = chart;
@@ -367,6 +376,7 @@ template<class Predicate> bool waitUntil(Predicate predicate, int timeoutMs = 50
 
 void benchmarkStyles(const visualization::VisualChartPtr& chart, const char* description)
 {
+    // 基准只输出耗时与帧数，不参与正式通过/失败判定。
     const auto geometry = SceneLayoutEngine().layout({1920, 1080}, chart.get(), 5'000'000);
     NoteRenderCache cache;
     QElapsedTimer timer;
@@ -387,6 +397,7 @@ void benchmarkStyles(const visualization::VisualChartPtr& chart, const char* des
 
 void testPlayback(const QString& musicPath, const QString& soundFont, bool useVulkan)
 {
+    // 真实播放器集成场景：载入图表、切换配色并确认播放位置连续。
     QTemporaryDir directory;
     SettingsService settings(std::make_unique<QSettingsStore>(directory.filePath(QStringLiteral("settings.ini"))));
     app::PlayerApplicationService player;
@@ -464,6 +475,7 @@ void testPlayback(const QString& musicPath, const QString& soundFont, bool useVu
 
 } // namespace
 
+// 主测试入口可按参数追加快照、基准和真实播放场景。
 int main(int argc, char** argv)
 {
     QApplication application(argc, argv);

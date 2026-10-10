@@ -1,6 +1,8 @@
+# 项目总构建入口：声明 Qt/C++ 依赖、可选 Vulkan、核心库、可执行文件、测试与安装规则。
 cmake_minimum_required(VERSION 3.24)
 project(midi_play VERSION 0.4.7 LANGUAGES CXX)
 
+# 所有目标共享 C++20 标准，并启用 Qt 的自动元对象、UI 和资源处理。
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -9,10 +11,12 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
+# 运行时依赖由 vcpkg/Qt 提供；Vulkan 和着色器编译器按能力探测，不强制所有构建环境具备。
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
 find_package(Threads REQUIRED)
 find_package(WebP CONFIG REQUIRED)
 find_package(mp3lame CONFIG REQUIRED)
+# ENABLE 控制是否尝试启用，REQUIRE 控制缺失依赖时是否把警告升级为配置失败。
 option(MIDI_PLAY_ENABLE_VULKAN "Build the experimental Vulkan renderer" ON)
 option(MIDI_PLAY_REQUIRE_VULKAN "Fail configuration if the Vulkan renderer is unavailable" OFF)
 set(MIDI_PLAY_HAS_VULKAN OFF)
@@ -45,6 +49,7 @@ if (MIDI_PLAY_REQUIRE_VULKAN AND NOT MIDI_PLAY_HAS_VULKAN)
 endif()
 message(STATUS "MIDI Play Vulkan: ${MIDI_PLAY_VULKAN_STATUS} (requested: ${MIDI_PLAY_ENABLE_VULKAN})")
 
+# Vulkan 构建阶段生成 SPIR-V，并将二进制作为 Qt 资源嵌入核心库。
 if (MIDI_PLAY_HAS_VULKAN)
     set(VULKAN_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/presentation/visualization/shaders")
     set(VULKAN_SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-vulkan-shaders")
@@ -62,6 +67,7 @@ if (MIDI_PLAY_HAS_VULKAN)
     add_custom_target(midi_play_vulkan_shaders DEPENDS ${VULKAN_SHADER_BINARIES})
 endif()
 
+# 核心静态库集中领域、应用、基础设施和展示实现，GUI 与 CLI 共享同一业务组件。
 set(MIDI_PLAY_COMMON_SOURCES
     src/app/audioexportservice.h
     src/app/audioexportservice.cpp
@@ -235,6 +241,7 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/visualization/backgroundimageplacement.h
     src/presentation/visualization/backgroundimageplacement.cpp
 )
+# 只有确认 Qt、SDK 和 glslang 均可用时才把 Vulkan 宿主加入核心库。
 if (MIDI_PLAY_HAS_VULKAN)
     list(APPEND MIDI_PLAY_COMMON_SOURCES
         src/presentation/visualization/fallingnotesvulkanwindow.h
@@ -247,6 +254,7 @@ if (MIDI_PLAY_HAS_VULKAN)
         src/presentation/visualization/offscreen/vulkanoffscreenrenderer.cpp)
 endif()
 
+# 资源和公共编译宏在核心库层统一设置，确保 AUTOMOC 和下游消费者看到相同能力值。
 add_library(midi_play_core STATIC ${MIDI_PLAY_COMMON_SOURCES})
 qt_add_resources(midi_play_core midi_play_metronome_resources
     PREFIX "/midi_play/audio"
@@ -267,10 +275,10 @@ if (MIDI_PLAY_HAS_VULKAN)
     target_link_libraries(midi_play_core PUBLIC Vulkan::Vulkan)
     target_include_directories(midi_play_core PUBLIC "${Vulkan_INCLUDE_DIRS}")
 endif()
-# This definition affects the public FallingNotesView layout and must reach
-# consumers and AUTOMOC with the same value as the library itself.
+# 该宏影响公开 FallingNotesView 布局，必须以 PUBLIC 方式传递给消费者和 AUTOMOC。
 target_compile_definitions(midi_play_core PUBLIC MIDI_PLAY_HAS_VULKAN=$<BOOL:${MIDI_PLAY_HAS_VULKAN}>)
 
+# GUI 与 CLI 只提供入口，实际功能全部链接共享核心库。
 qt_add_executable(midi_play src/main.cpp)
 target_link_libraries(midi_play PRIVATE midi_play_core)
 qt_add_resources(midi_play midi_play_branding_resources
@@ -291,6 +299,7 @@ qt_add_executable(midi_play_cli src/cli/main.cpp)
 target_link_libraries(midi_play_cli PRIVATE midi_play_core)
 set_target_properties(midi_play PROPERTIES WIN32_EXECUTABLE TRUE)
 
+# Windows 下可指定 FluidSynth 运行库；构建后复制其完整非系统依赖到目标目录。
 set(FLUIDSYNTH_DLL "" CACHE FILEPATH "FluidSynth runtime DLL to copy beside the executable")
 set(VCPKG_INSTALLED_DIR "" CACHE PATH
     "Optional vcpkg installed directory containing the x64-windows FluidSynth runtime")
@@ -335,7 +344,7 @@ if (WIN32 AND EXISTS "${FLUIDSYNTH_DLL}")
 endif()
 
 if (WIN32)
-    # The WebP target links sharpyuv; deploy both imported runtimes.
+    # WebP 还依赖 sharpyuv；安装和构建后处理都复制两个导入运行库。
     add_custom_command(TARGET midi_play_core POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:WebP::webp>" "$<TARGET_FILE:WebP::sharpyuv>"
@@ -359,12 +368,13 @@ if (WIN32)
     endif()
 endif()
 
+# 测试目标复用核心库；Qt offscreen 插件同时部署到测试目录，支持直接运行和 CTest。
 include(CTest)
 if (BUILD_TESTING)
-    # Keep the offscreen platform available beside test executables as well as
-    # through CTest's environment. This makes direct test invocations with
-    # `-platform offscreen` behave the same as CTest runs.
+    # 将 offscreen 平台同时复制到测试程序目录并注入 CTest 环境，保证直接运行
+    # `-platform offscreen` 与 CTest 执行路径一致。
     if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        # 为需要窗口系统的测试目标部署 Qt offscreen 插件目录。
         function(midi_play_deploy_offscreen_plugin target)
             add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -392,7 +402,7 @@ if (BUILD_TESTING)
         set_tests_properties(soundfont_setup PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
     endif()
-    # External test data is opt-in and is never installed or bundled.
+    # 外部音源只作为显式测试参数传入，既不安装也不打包进发布产物。
     set(MIDI_PLAY_TEST_SOUNDFONT "" CACHE FILEPATH "External SF2/SF3 for SoundFont setup integration tests")
     if (EXISTS "${MIDI_PLAY_TEST_SOUNDFONT}")
         add_test(NAME soundfont_setup_audio COMMAND midi_play_soundfont_setup_tests -platform offscreen

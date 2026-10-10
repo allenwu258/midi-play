@@ -1,3 +1,4 @@
+// 可视化数据测试：覆盖投影、可见索引、元数据时间线、叠加层、缓存和背景放置。
 #include "domain/music/musicanalysis.h"
 #include "domain/visualization/activenotelookup.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
@@ -43,6 +44,7 @@ using midi_play::visualization::VisibleNoteWindowCache;
 
 void require(bool condition, const char* message)
 {
+    // 数据结构回归失败立即退出，保持输出与首个断言对应。
     if (!condition) {
         std::fprintf(stderr, "FAILED: %s\n", message);
         std::exit(EXIT_FAILURE);
@@ -51,6 +53,7 @@ void require(bool condition, const char* message)
 
 MusicDocument repeatedDocument()
 {
+    // 构造反复文档，用于验证展开后音乐元素的绝对时间和实例身份。
     MusicDocument document;
     document.setTitle(QStringLiteral("Projection test"));
     document.tempos().push_back({0, 120.0, 0});
@@ -85,6 +88,7 @@ MusicDocument repeatedDocument()
     return document;
 }
 
+// 反复段投影展开为独立时间实例，音符、标记和歌词均保持顺序。
 void testRepeatProjection()
 {
     auto document = repeatedDocument();
@@ -105,6 +109,7 @@ void testRepeatProjection()
             "C in C major should be projected as degree 1");
 }
 
+// 区间索引查询返回与线性扫描一致的可见音符集合。
 void testVisibleIndex()
 {
     auto document = repeatedDocument();
@@ -123,6 +128,7 @@ void testVisibleIndex()
     require(result.isEmpty(), "window after chart end must be empty");
 }
 
+// 可见窗口缓存按图表代次、时间窗口和 look-ahead 参数失效。
 void testVisibleNoteWindowCache()
 {
     QVector<midi_play::visualization::VisualNote> notes;
@@ -178,6 +184,7 @@ void testVisibleNoteWindowCache()
             "notes starting exactly at the inclusive window end must be retained");
 }
 
+// 活动音符查找支持重叠、踏板尾音和重复实例的快速定位。
 void testActiveNoteLookup()
 {
     ActiveNoteLookup lookup;
@@ -229,6 +236,7 @@ void testActiveNoteLookup()
             "frame reset must clear all active-note lookup state");
 }
 
+// 渲染缓存按可见音符、动态状态和主题修订生成稳定键。
 void testNoteRenderCache()
 {
     auto document = repeatedDocument();
@@ -258,6 +266,7 @@ void testNoteRenderCache()
             "resize must rebuild only horizontal geometry, not immutable styles");
 }
 
+// 静态音符标志变化应触发缓存更新，纯播放位置变化可复用材质。
 void testNoteRenderCacheStaticFlags()
 {
     MusicDocument document;
@@ -297,6 +306,7 @@ void testNoteRenderCacheStaticFlags()
             "ghosts must preserve the attack, hold and pedal material hierarchy");
 }
 
+// 解析后的相同力度颜色在缓存中合并，避免无意义材质重复。
 void testNoteRenderCacheDeduplicatesResolvedVelocityColor()
 {
     MusicDocument document;
@@ -329,6 +339,7 @@ void testNoteRenderCacheDeduplicatesResolvedVelocityColor()
             "velocities resolving to the same color must share one render style");
 }
 
+// 栅格策略按可见音符数量选择缓存/直绘路径，保证输出尺寸和状态合法。
 void testRasterRenderPolicy()
 {
     QImage image(8, 8, QImage::Format_ARGB32_Premultiplied);
@@ -361,6 +372,7 @@ void testRasterRenderPolicy()
     }
 }
 
+// Painter 状态作用域不会泄漏到调用方，策略切换后混合模式保持原值。
 void testRasterRenderPolicyIsScopedByPainterState()
 {
     QImage image(8, 8, QImage::Format_ARGB32_Premultiplied);
@@ -378,6 +390,7 @@ void testRasterRenderPolicyIsScopedByPainterState()
             "restoring painter state must recover the caller's text hint");
 }
 
+// 场景布局在不同尺寸、DPR 和键盘范围下保持可逆坐标关系。
 void testSceneGeometry()
 {
     auto document = repeatedDocument();
@@ -423,6 +436,7 @@ void testSceneGeometry()
             "left keyboard extension must contain only whole white keys");
 }
 
+// 背景图片适配覆盖对齐、裁剪、完整显示和透明度边界。
 void testBackgroundImagePlacement()
 {
     using midi_play::settings::BackgroundImageAlignment;
@@ -446,6 +460,7 @@ void testBackgroundImagePlacement()
             "contain placement must preserve the full image with centered letterboxing");
 }
 
+// 元数据展示统一调号、拍号和 BPM 的占位/夹取格式。
 void testPlaybackMetadataPresentation()
 {
     MusicDocument document;
@@ -506,6 +521,7 @@ void testPlaybackMetadataPresentation()
             "empty metadata timeline must not republish stable placeholders");
 }
 
+// 元数据时间线合并显示文本相同的相邻区间，并只在跨区间时发布。
 void testMetadataTimelineMergesEquivalentDisplaySegments()
 {
     MusicDocument document;
@@ -531,6 +547,7 @@ void testMetadataTimelineMergesEquivalentDisplaySegments()
 
 void testPlaybackOverlayTimeline()
 {
+    // 标记和歌词变化点合并为紧凑区间，重复查询复用已定位区间。
     MusicDocument document;
     document.tempos().push_back({0, 120.0, 0});
     document.setDuration(960);
@@ -582,6 +599,7 @@ void testPlaybackOverlayTimeline()
             "reverse seek must resolve the earlier overlay segment");
 }
 
+// 文本布局缓存按字体、角色和文本修订复用 QStaticText 结果。
 void testTextLayoutCache()
 {
     TextLayoutCache cache(2);
@@ -607,6 +625,7 @@ void testTextLayoutCache()
             "requesting an evicted layout must rebuild it exactly once");
 }
 
+// 简谱音名随调号变化，升降号和八度标签遵守当前调性规则。
 void testSimplifiedPitchSpelling()
 {
     MusicDocument document;
@@ -642,7 +661,7 @@ void testSimplifiedPitchSpelling()
     tonic.noteId = 1;
     tonic.start = 0;
     tonic.duration = 240;
-    tonic.pitch = 61; // C# is scale degree 1 in C# major, not #1.
+    tonic.pitch = 61; // C♯ 大调中的 C♯ 是第 1 级，而不是 #1。
     sharpTrack.notes.push_back(tonic);
     sharpKeyDocument.tracks().push_back(sharpTrack);
     sharpKeyDocument.rebuildMeasureGrid();
@@ -652,6 +671,7 @@ void testSimplifiedPitchSpelling()
             "accidentals must be relative to the active key");
 }
 
+// 规模化随机窗口对比区间索引与全扫描，验证边界不漏音符。
 void testLargeVisibleIndexAgainstFullScan()
 {
     QVector<midi_play::visualization::VisualNote> notes;
@@ -684,6 +704,7 @@ void testLargeVisibleIndexAgainstFullScan()
 
 } // namespace
 
+// 主入口使用 QGuiApplication 支持字体/图像缓存，不依赖 GPU。
 int main(int argc, char* argv[])
 {
     QGuiApplication app(argc, argv);

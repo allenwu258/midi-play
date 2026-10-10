@@ -1,3 +1,4 @@
+# 将 FluidSynth 及其非系统运行时依赖复制到应用目录，供 GUI 和 CLI 在干净环境运行。
 if (NOT DEFINED SOURCE_LIBRARY OR NOT EXISTS "${SOURCE_LIBRARY}")
     message(FATAL_ERROR "SOURCE_LIBRARY must identify an existing FluidSynth runtime")
 endif()
@@ -11,6 +12,7 @@ file(MAKE_DIRECTORY "${DESTINATION_DIR}")
 file(COPY_FILE "${SOURCE_LIBRARY}"
      "${DESTINATION_DIR}/${runtime_name}" ONLY_IF_DIFFERENT)
 
+# CMake 计算完整传递闭包；系统 API 集合排除，第三方编解码依赖必须随包部署。
 file(GET_RUNTIME_DEPENDENCIES
     LIBRARIES "${SOURCE_LIBRARY}"
     DIRECTORIES "${runtime_dir}"
@@ -27,15 +29,14 @@ foreach (dependency IN LISTS resolved_dependencies)
     cmake_path(NORMAL_PATH dependency_dir OUTPUT_VARIABLE normalized_dependency_dir)
     string(TOLOWER "${normalized_dependency_dir}" normalized_dependency_dir_lower)
     get_filename_component(dependency_name "${dependency}" NAME)
-    # GET_RUNTIME_DEPENDENCIES already returns the complete transitive closure.
-    # Copy every non-system dependency, not only files beside FluidSynth: a
-    # custom build may keep libsndfile/codecs in a separate directory.
+    # 复制所有非系统依赖，而非只复制 FluidSynth 同目录文件；定制安装可能分目录存放编解码器。
     if (NOT normalized_dependency_dir_lower MATCHES "^[a-z]:[/\\\\]windows[/\\\\](system32|syswow64)([/\\\\]|$)")
         file(COPY_FILE "${dependency}"
              "${DESTINATION_DIR}/${dependency_name}" ONLY_IF_DIFFERENT)
     endif()
 endforeach()
 
+# 未解析的 SF3 编解码依赖表示发布包不完整，应在部署阶段立即失败。
 set(unresolved_codec_dependencies)
 foreach (dependency IN LISTS unresolved_dependencies)
     string(TOLOWER "${dependency}" dependency_lower)
