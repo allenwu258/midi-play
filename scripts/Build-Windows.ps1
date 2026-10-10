@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # Windows 发布入口：校验 SDK、隔离工具环境，依次配置、构建、测试和暂存打包。
 [CmdletBinding()]
 param(

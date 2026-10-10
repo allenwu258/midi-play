@@ -1,4 +1,4 @@
-# Windows 发布脚本的本地 SDK 配置模板；复制为 build.env.psd1 后替换示例路径。
+﻿# Windows 发布脚本的本地 SDK 配置模板；复制为 build.env.psd1 后替换示例路径。
 # 所有路径按字面字符串读取，不在本文件执行工具探测。
 @{
     # Visual Studio 2022 需安装使用 C++ 的桌面开发、Windows SDK 和 v143 工具。
