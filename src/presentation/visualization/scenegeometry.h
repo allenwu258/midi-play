@@ -37,10 +37,11 @@ struct PlaybackSceneGeometry {
     qreal strikeLineY = 0.0; // 音符起点抵达当前播放时刻时的纵坐标。
     qreal pixelsPerMicrosecond = 0.0; // 音乐时间差到纵向距离的比例，不包含播放倍率。
     QVector<PitchSlotGeometry> pitches; // 以 MIDI 音高作下标，valid 标识当前音域内的槽位。
+    // 仅供显示的完整白键与内部黑键；左边界外的黑键省略，不参与 MIDI 映射。
     QVector<PitchSlotGeometry> leftKeyboardExtensionPitches;
     QVector<DrumSlotGeometry> drumSlots;
 
-    // 装饰击键线也覆盖不参与 MIDI 映射的左侧白键延伸区。
+    // 装饰击键线也覆盖不参与 MIDI 映射的左侧琴键延伸区。
     qreal strikeLineLeft() const
     {
         return leftKeyboardExtensionRect.isEmpty()

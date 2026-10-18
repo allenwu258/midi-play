@@ -308,6 +308,32 @@ QImage renderRaster(const visualization::VisualChartPtr& chart, qint64 time, QSi
     return image;
 }
 
+void testLeftKeyboardExtensionRendering(const visualization::VisualChartPtr& chart)
+{
+    // 直接检查绘制结果，覆盖分数 DPR、主题和边栏尺寸切换。
+    FallingNotesRenderer renderer;
+    for (QSize size : {QSize(719, 480), QSize(720, 480), QSize(1280, 720)}) {
+        const auto geometry = SceneLayoutEngine().layout(size, chart.get(), 5'000'000);
+        for (qreal dpr : {1.0, 1.5, 2.0}) for (auto mode : {ThemeMode::Dark, ThemeMode::Light}) {
+            const auto image = renderRaster(chart, 500'000, size, dpr, &renderer, false, mode);
+            const auto& palette = presentation::theme::themeFor(mode).visualization;
+            int blackKeys = 0;
+            for (const auto& slot : geometry.leftKeyboardExtensionPitches) {
+                const QPointF sample(slot.centerX, slot.keyRect.top()
+                    + slot.keyRect.height() * (slot.blackKey ? 0.5 : 0.85));
+                const QColor expected = slot.blackKey ? palette.blackKey : palette.whiteKey;
+                require(image.pixelColor(qFloor(sample.x() * dpr), qFloor(sample.y() * dpr)) == expected,
+                        "extension keys must retain their fill above active white-key highlights");
+                if (slot.blackKey) ++blackKeys;
+            }
+            require(blackKeys > 0, "rendering fixture must exercise visible extension black keys");
+            const qreal sampleY = geometry.keyboardRect.top() + 20;
+            require(image.pixelColor(qFloor(2 * dpr), qFloor(sampleY * dpr)) == palette.whiteKey,
+                    "left edge must show a whole white key without an outer half black key");
+        }
+    }
+}
+
 void testNotationStripGeometry(const visualization::VisualChartPtr& chart)
 {
     // 按给定时间、DPR 和后端状态绘制一帧，可选复用已有栅格渲染器。
@@ -427,6 +453,25 @@ void testVulkanStaticKeyboard(const visualization::VisualChartPtr& chart)
     scene.prepare(state, {1280, 720}, 1, QFont());
     const auto revision = scene.staticUiRevision();
     const auto keyboard = scene.staticUi().quads;
+    int extensionBlackKeys = 0;
+    for (const auto& slot : scene.geometry().leftKeyboardExtensionPitches) {
+        const auto layer = slot.blackKey ? VulkanUiLayer::BlackKeys : VulkanUiLayer::WhiteKeys;
+        const auto range = scene.staticUi().range(layer);
+        const auto expected = slot.keyRect.adjusted(slot.blackKey ? .5 : 0, 0, -.5,
+                                                   slot.blackKey ? -1 : -.5);
+        bool found = false;
+        for (uint32_t i = range.first; i < range.first + range.count; ++i) {
+            const auto& rect = keyboard[i].rect;
+            if (qAbs(rect[0] - expected.x()) < .001 && qAbs(rect[1] - expected.y()) < .001
+                && qAbs(rect[2] - expected.width()) < .001 && qAbs(rect[3] - expected.height()) < .001) {
+                found = true;
+                break;
+            }
+        }
+        require(found, "each virtual key must be present in its matching Vulkan keyboard layer");
+        if (slot.blackKey) ++extensionBlackKeys;
+    }
+    require(extensionBlackKeys > 0, "Vulkan fixture must contain extension black keys");
     for (qint64 time : {10'000, 500'000, 2'000'000, 500'000}) {
         state.transportPositionUs = time;
         scene.prepare(state, {1280, 720}, 1, QFont());
@@ -725,7 +770,9 @@ void captureVulkan(const visualization::VisualChartPtr& chart, const QString& di
     const auto geometry = SceneLayoutEngine().layout(window.size(), chart.get(), 5'000'000);
     double keyboardDifference = 0;
     int keyboardPixels = 0;
-    for (const auto& slot : geometry.pitches) {
+    auto comparedKeys = geometry.pitches;
+    comparedKeys.append(geometry.leftKeyboardExtensionPitches);
+    for (const auto& slot : comparedKeys) {
         if (!slot.valid) continue;
         // QPainter 将画笔居中，Vulkan 使用内缩的解析边框；比较填充内部以排除已知的
         // 光栅化和字体差异，同时保留黑键采样来验证对白键的遮挡。
@@ -807,6 +854,7 @@ int main(int argc, char** argv)
     testGeometryAndMaterials();
     testVisualClock();
     const auto chart = denseChart();
+    testLeftKeyboardExtensionRendering(chart);
     testNotationStripGeometry(chart);
     testThemeMaterialsAndRaster(chart);
     testFrameEffects(chart);

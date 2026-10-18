@@ -248,10 +248,11 @@ void VulkanScene::rebuildStaticUi()
     rect(output, g.keyboardRect, m_theme.keyboardBackground);
     for (bool black : {false, true}) {
         if (black) m_staticUi.beginLayer(VulkanUiLayer::BlackKeys);
-        if (!black) for (const auto& slot : g.leftKeyboardExtensionPitches) {
-            if (!slot.valid) continue;
-            rect(output, slot.keyRect.adjusted(0, 0, -.5, -.5),
-                 m_theme.whiteKey, m_theme.whiteKeyBorder, 1);
+        for (const auto& slot : g.leftKeyboardExtensionPitches) {
+            if (!slot.valid || slot.blackKey != black) continue;
+            rect(output, slot.keyRect.adjusted(black ? .5 : 0, 0, -.5, black ? -1 : -.5),
+                 black ? m_theme.blackKey : m_theme.whiteKey,
+                 black ? m_theme.blackKeyBorder : m_theme.whiteKeyBorder, 1);
         }
         for (const auto& slot : g.pitches) {
             if (!slot.valid || slot.blackKey != black) continue;

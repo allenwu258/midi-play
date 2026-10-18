@@ -430,10 +430,114 @@ void testSceneGeometry()
     int extensionWhites = 0;
     for (const auto& slot : geometry.leftKeyboardExtensionPitches) {
         if (!slot.blackKey) ++extensionWhites;
+        else {
+            require(slot.keyRect.left() >= geometry.leftKeyboardExtensionRect.left() - 0.001
+                        && slot.keyRect.right() <= geometry.leftKeyboardExtensionRect.right() + 0.001,
+                    "left extension black keys must be fully contained");
+        }
     }
-    require(extensionWhites == static_cast<int>(geometry.leftKeyboardExtensionPitches.size())
+    require(extensionWhites > 0
                 && geometry.leftKeyboardExtensionRect.width() >= 50.0,
-            "left keyboard extension must contain only whole white keys");
+            "left keyboard extension must cover the gutter with whole white keys");
+}
+
+// 固定音域下验证边栏初始补键数，以及边界黑键的一次性完整修补。
+void testLeftKeyboardExtensionBoundaries()
+{
+    struct Case { int width; int firstPitch; int whiteCount; };
+    // 默认音域 C3..B4：1280 下原本仅需 B2，补 A2 后保留 A#2，省略 G#2。
+    // 200 下原边界是 F2，左侧 E2 无黑键，不应继续增加白键。
+    for (const auto test : {Case {1280, 45, 2}, Case {719, 45, 2},
+                            Case {720, 43, 3}, Case {480, 43, 3},
+                            Case {220, 41, 4}, Case {200, 41, 4}}) {
+        const auto geometry = SceneLayoutEngine().layout({qreal(test.width), 720}, nullptr, 5'000'000);
+        const auto& keys = geometry.leftKeyboardExtensionPitches;
+        require(!keys.isEmpty() && keys.front().pitch == test.firstPitch && !keys.front().blackKey,
+                "left boundary repair must add exactly one white key only when needed");
+        int whites = 0;
+        qreal nextWhiteLeft = 0;
+        const qreal whiteWidth = keys.front().keyRect.width();
+        for (int i = 0; i < keys.size(); ++i) {
+            const auto& slot = keys[i];
+            require(slot.valid && slot.pitch == test.firstPitch + i,
+                    "virtual keys must retain a continuous chromatic sequence");
+            require(geometry.pitchSlot(slot.pitch) == nullptr,
+                    "virtual keys must stay outside playable MIDI slots");
+            require(slot.keyRect.left() >= -0.001
+                        && slot.keyRect.right() <= geometry.pianoRect.left() + 0.001,
+                    "every virtual key must be complete inside the extension");
+            if (!slot.blackKey) {
+                require(std::abs(slot.keyRect.left() - nextWhiteLeft) < 0.001
+                            && std::abs(slot.keyRect.width() - whiteWidth) < 0.001,
+                        "extension white keys must tile continuously with equal widths");
+                nextWhiteLeft = slot.keyRect.right();
+                ++whites;
+            }
+        }
+        require(whites == test.whiteCount
+                    && std::abs(nextWhiteLeft - geometry.pianoRect.left()) < 0.001
+                    && std::abs(whiteWidth - geometry.pitchSlot(48)->keyRect.width()) < 0.001,
+                "virtual and real white keys must share one continuous scale");
+        require(std::abs(geometry.pianoRect.right() - test.width) < 0.001
+                    && geometry.leftKeyboardExtensionRect.width() >= (test.width < 720 ? 36 : 50),
+                "boundary repair must preserve the right edge and cover the measure gutter");
+    }
+}
+
+// 低端虚拟音高、最高 MIDI 音高、混合鼓轨及纯鼓轨共用同一布局约束。
+void testLeftKeyboardExtensionAcrossCharts()
+{
+    for (int lowestNote : {0, 60, 127}) {
+        auto document = repeatedDocument();
+        document.tracks()[0].notes.resize(1);
+        document.tracks()[0].notes[0].pitch = lowestNote;
+        for (bool mixed : {false, true}) {
+            if (mixed) {
+                Track drums;
+                drums.id = QStringLiteral("drums");
+                drums.percussion = true;
+                NoteEvent kick;
+                kick.pitch = 36;
+                kick.duration = 240;
+                drums.notes.push_back(kick);
+                document.tracks().push_back(drums);
+            }
+            const auto chart = PlaybackVisualizationProjector().project(document, 1);
+            require(chart != nullptr, "extension fixture must project");
+            for (QSize size : {QSize(320, 240), QSize(719, 480), QSize(720, 480),
+                                QSize(1280, 720), QSize(3840, 2160)}) {
+                const auto geometry = SceneLayoutEngine().layout(size, chart.get(), 5'000'000);
+                const auto& keys = geometry.leftKeyboardExtensionPitches;
+                require(!keys.isEmpty() && !keys.front().blackKey && keys.front().keyRect.left() == 0,
+                        "all chart ranges must start with a complete virtual white key");
+                if (lowestNote == 0)
+                    require(keys.front().pitch < 0, "lowest MIDI notes need negative virtual pitches");
+                for (const auto& slot : keys) {
+                    require(slot.valid && geometry.pitchSlot(slot.pitch) == nullptr,
+                            "virtual pitches must never become playable notes");
+                    require(slot.keyRect.left() >= -0.001
+                                && slot.keyRect.right() <= geometry.pianoRect.right() + 0.001,
+                            "virtual black keys must not be clipped at the viewport boundary");
+                }
+                const auto withNotation = SceneLayoutEngine().layout(size, chart.get(), 5'000'000, true);
+                require(withNotation.pianoRect == geometry.pianoRect
+                            && withNotation.leftKeyboardExtensionRect == geometry.leftKeyboardExtensionRect,
+                        "notation must not alter extension width or keyboard positions");
+                if (mixed)
+                    require(!geometry.drumSlots.isEmpty()
+                                && std::abs(geometry.drumRect.left() - geometry.pianoRect.right() - 8) < 0.001
+                                && std::abs(geometry.drumRect.right() - size.width()) < 0.001,
+                            "virtual keyboard repair must preserve the drum region and gap");
+            }
+        }
+        // 保留真实鼓轨，删除旋律轨；纯鼓曲不应生成虚拟键盘。
+        document.tracks().removeFirst();
+        const auto drumsOnly = PlaybackVisualizationProjector().project(document, 2);
+        const auto geometry = SceneLayoutEngine().layout({1280, 720}, drumsOnly.get(), 5'000'000);
+        require(geometry.leftKeyboardExtensionPitches.isEmpty()
+                    && geometry.leftKeyboardExtensionRect.isEmpty() && !geometry.drumSlots.isEmpty(),
+                "percussion-only charts must not gain a virtual piano extension");
+    }
 }
 
 // 背景适配校验居中填满、上下锚定裁切和居中完整显示的矩形/UV 边界。
@@ -718,6 +822,8 @@ int main(int argc, char* argv[])
     testRasterRenderPolicy();
     testRasterRenderPolicyIsScopedByPainterState();
     testSceneGeometry();
+    testLeftKeyboardExtensionBoundaries();
+    testLeftKeyboardExtensionAcrossCharts();
     testBackgroundImagePlacement();
     testPlaybackMetadataPresentation();
     testMetadataTimelineMergesEquivalentDisplaySegments();

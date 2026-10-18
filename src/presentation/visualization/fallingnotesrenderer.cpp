@@ -152,7 +152,14 @@ void FallingNotesRenderer::prepareScene(const PlaybackSceneGeometry& geometry,
         m_pitchBandRects.clear();
         m_blackKeyForegroundRects.clear();
         m_pitchBandRects.reserve(geometry.pitches.size());
-        m_blackKeyForegroundRects.reserve(geometry.pitches.size());
+        m_blackKeyForegroundRects.reserve(geometry.pitches.size()
+                                          + geometry.leftKeyboardExtensionPitches.size());
+        for (const auto& slot : geometry.leftKeyboardExtensionPitches) {
+            if (slot.valid && slot.blackKey) {
+                m_blackKeyForegroundRects.push_back(
+                    slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
+            }
+        }
         for (const auto& slot : geometry.pitches) {
             if (slot.valid && slot.blackKey) {
                 m_pitchBandRects.push_back(QRectF(
@@ -351,6 +358,10 @@ void FallingNotesRenderer::drawKeyboardBase(QPainter& painter, const PlaybackSce
     }
     painter.setPen(QPen(m_theme.blackKeyBorder, 1));
     painter.setBrush(m_theme.blackKey);
+    for (const auto& slot : geometry.leftKeyboardExtensionPitches) {
+        if (slot.valid && slot.blackKey)
+            painter.drawRect(slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0));
+    }
     for (const auto& slot : geometry.pitches) {
         if (!slot.valid || !slot.blackKey) continue;
         painter.drawRect(slot.keyRect.adjusted(0.5, 0.0, -0.5, -1.0));

@@ -1,4 +1,4 @@
-// 实现钢琴/鼓区分配、虚拟白键延伸和音乐时间到垂直像素的比例。
+// 实现钢琴/鼓区分配、虚拟琴键延伸和音乐时间到垂直像素的比例。
 #include "scenelayoutengine.h"
 
 #include <algorithm>
@@ -21,6 +21,13 @@ bool isWhitePitchClass(int pitchClass)
     default:
         return false;
     }
+}
+
+// 找到左侧最近的完整白键；虚拟键允许负音高，沿用循环音级规则。
+int previousWhitePitch(int pitch)
+{
+    do { --pitch; } while (!isWhitePitchClass(pitch % 12));
+    return pitch;
 }
 
 } // namespace
@@ -87,8 +94,8 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
     }
     whiteCount = std::max(1, whiteCount);
 
-    // 用最少完整白键覆盖小节标签边栏；真实键盘从延伸区之后开始，
-    // 保持键盘右边界和击键线的时间坐标不变。
+    // 先用完整白键覆盖小节标签边栏，再单次修补左边界的半黑键。
+    // 真实键盘右边界和击键线时间坐标不变，虚拟键不参与 MIDI 映射。
     int extraWhiteKeys = 0;
     qreal whiteWidth = showPiano ? melodicWidth / whiteCount : 0.0;
     if (showPiano) {
@@ -97,6 +104,16 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
             if (extraWhiteKeys * whiteWidth + 0.001 >= measureGutter) break;
             ++extraWhiteKeys;
         }
+    }
+    int firstExtensionPitch = minimumPitch;
+    for (int i = 0; i < extraWhiteKeys; ++i)
+        firstExtensionPitch = previousWhitePitch(firstExtensionPitch);
+    if (extraWhiteKeys > 0 && isBlackKey(firstExtensionPitch - 1)) {
+        // 原左边界上的黑键需要左侧白键承托，只修补一次；
+        // 新白键外侧若仍有黑键则省略，不能继续递归扩展。
+        firstExtensionPitch = previousWhitePitch(firstExtensionPitch);
+        ++extraWhiteKeys;
+        whiteWidth = melodicWidth / qreal(whiteCount + extraWhiteKeys);
     }
     const qreal extensionWidth = extraWhiteKeys * whiteWidth;
     const qreal pitchWidth = showPiano ? std::max<qreal>(1.0, melodicWidth - extensionWidth) : 0.0;
@@ -135,36 +152,29 @@ PlaybackSceneGeometry SceneLayoutEngine::layout(const QSizeF& viewport,
         }
     }
 
-    // 左侧延伸区只填充白键，不进入 MIDI 音高数组，不能接收音符或高亮。
-    // 不补黑键，避免标签边栏出现与真实音域脱离的局部八度。
+    // 从完整白键开始生成连续虚拟键；白键之间的黑键允许显示，
+    // 最外侧白键左侧的黑键整体省略，避免产生半个黑键。
+    // 黑键只覆盖区内相邻白键，不进入 MIDI 音高数组，也不接受高亮。
     if (extraWhiteKeys > 0 && !geometry.leftKeyboardExtensionRect.isEmpty()) {
-        QVector<int> preceding;
-        int pitch = minimumPitch - 1;
-        int whites = 0;
-        bool reachedWhiteBoundary = false;
-        while (pitch > -256) {
-            if (reachedWhiteBoundary && !isBlackKey(pitch)) break;
-            preceding.push_back(pitch);
-            if (!isBlackKey(pitch)) {
-                ++whites;
-                reachedWhiteBoundary = whites >= extraWhiteKeys;
-            }
-            --pitch;
-        }
-        std::reverse(preceding.begin(), preceding.end());
-        for (const int virtualPitch : preceding) {
-            if (isBlackKey(virtualPitch)) continue;
+        int whiteOrdinal = 0;
+        for (int virtualPitch = firstExtensionPitch; virtualPitch < minimumPitch; ++virtualPitch) {
             PitchSlotGeometry slot;
             slot.pitch = virtualPitch;
-            slot.blackKey = false;
+            slot.blackKey = isBlackKey(virtualPitch);
             slot.valid = true;
-            int whiteOffset = 0;
-            for (int probe = virtualPitch; probe < minimumPitch; ++probe)
-                if (!isBlackKey(probe)) ++whiteOffset;
-            const qreal boundary = geometry.pianoRect.left() - whiteOffset * whiteWidth;
-            slot.keyRect = QRectF(boundary, geometry.keyboardRect.top(), whiteWidth, keyboardHeight);
-            slot.centerX = boundary + whiteWidth * 0.5;
-            slot.noteWidth = std::max<qreal>(1.0, whiteWidth * 0.46);
+            const qreal boundary = whiteOrdinal * whiteWidth;
+            if (slot.blackKey) {
+                const qreal blackWidth = std::max<qreal>(2.0, whiteWidth * 0.62);
+                slot.keyRect = QRectF(boundary - blackWidth * 0.5, geometry.keyboardRect.top(),
+                                      blackWidth, keyboardHeight * 0.62);
+                slot.centerX = boundary;
+                slot.noteWidth = std::max<qreal>(1.0, whiteWidth * 0.42);
+            } else {
+                slot.keyRect = QRectF(boundary, geometry.keyboardRect.top(), whiteWidth, keyboardHeight);
+                slot.centerX = boundary + whiteWidth * 0.5;
+                slot.noteWidth = std::max<qreal>(1.0, whiteWidth * 0.46);
+                ++whiteOrdinal;
+            }
             geometry.leftKeyboardExtensionPitches.push_back(slot);
         }
     }
