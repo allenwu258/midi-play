@@ -253,6 +253,8 @@ cmake --build --preset windows-msvc-debug
 
 ### 视频导出性能
 
+视频页默认勾选“保留小节标记栏”，将完整 1280×720 逻辑画布映射到输出。取消后，程序预计算并锁定左侧扩展区，扩宽逻辑场景，裁切后的内容仍精确为 1280×720。预览与导出使用相同画幅计划；720p、1080p、4K 分别按 1、1.5、3 倍几何比例直接渲染到目标分辨率，不放大低分辨率成片。第一阶段仅支持 16:9。实现约束和验收命令见 [导出画幅修复](docs/video-export-framing.md)。
+
 视频导出将固定时间线拆为渲染、GPU readback 和编码三个阶段：三槽 Vulkan frame-in-flight 允许 GPU 与 CPU 编码并行，固定 `QImage` 帧池避免逐帧分配，有界队列通过背压限制内存增长。NVIDIA 环境会自动探测 `h264_nvenc`，不可用时回退 `libx264`，输出格式和音视频时间线保持一致。FFmpeg 不随发行包提供，需要在系统 `PATH` 中提供，或在设置中选择其目录。
 
 需要定位导出瓶颈时，可设置 `MIDI_PLAY_VIDEO_DIAGNOSTICS=1` 启用诊断，并用 `MIDI_PLAY_VIDEO_DIAGNOSTICS_PATH` 指定 JSONL 输出文件。实现与基准数据见 [视频导出性能优化复盘](docs/video-export-performance-review.md)。

@@ -51,6 +51,13 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     m_size->addItem(QStringLiteral("3840 × 2160"), QSize(3840, 2160));
     form->addRow(QStringLiteral("分辨率"), m_size);
 
+    m_retainMeasureGutter = new QCheckBox(QStringLiteral("保留小节标记栏"), m_controls);
+    m_retainMeasureGutter->setObjectName(QStringLiteral("retainMeasureGutter"));
+    m_retainMeasureGutter->setChecked(defaults.scene.retainMeasureGutter);
+    m_retainMeasureGutter->setToolTip(QStringLiteral(
+        "保留左侧小节编号及补齐琴键；取消后扩展布局并裁去标记栏。两种模式均填满 16:9 画幅。"));
+    form->addRow(QStringLiteral("画幅"), m_retainMeasureGutter);
+
     m_fps = new QComboBox(m_controls);
     m_fps->addItem(QStringLiteral("60 FPS"), 60);
     m_fps->addItem(QStringLiteral("30 FPS"), 30);
@@ -104,6 +111,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
         if (!path.isEmpty()) m_path->setText(path);
     });
     connect(m_size, &QComboBox::currentIndexChanged, this, [this] { updatePreview(); });
+    connect(m_retainMeasureGutter, &QCheckBox::toggled, this, [this] { updatePreview(); });
     updatePreview();
 }
 
@@ -117,6 +125,7 @@ app::VideoExportOptions VideoExportPage::options() const
     // 保留场景图表、主题等默认值，仅替换页面实际开放的参数。
     auto result = m_defaults;
     result.scene.outputSize = m_size->currentData().toSize();
+    result.scene.retainMeasureGutter = m_retainMeasureGutter->isChecked();
     result.fps = m_fps->currentData().toInt();
     result.crf = m_quality->currentData().toInt();
     result.ratePercent = m_rate->value();

@@ -2,6 +2,7 @@
 #include "videoexportservice.h"
 #include "exporttimeline.h"
 #include "offlineaudiorenderer.h"
+#include "presentation/visualization/exportframing.h"
 #include "domain/playback/playbackmodel.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/encoding/ffmpegprobe.h"
@@ -45,6 +46,13 @@ void appendVideoDiagnostics(const VideoExportOptions& options, qint64 frameCount
     json.insert(QStringLiteral("fps"), options.fps);
     json.insert(QStringLiteral("width"), options.scene.outputSize.width());
     json.insert(QStringLiteral("height"), options.scene.outputSize.height());
+    json.insert(QStringLiteral("retainMeasureGutter"), options.scene.retainMeasureGutter);
+    json.insert(QStringLiteral("logicalSceneWidth"), renderer.logicalSceneSize.width());
+    json.insert(QStringLiteral("logicalSceneHeight"), renderer.logicalSceneSize.height());
+    json.insert(QStringLiteral("cropLeft"), renderer.logicalCropRect.left());
+    json.insert(QStringLiteral("cropWidth"), renderer.logicalCropRect.width());
+    json.insert(QStringLiteral("cropHeight"), renderer.logicalCropRect.height());
+    json.insert(QStringLiteral("geometryScale"), renderer.geometryScale);
     json.insert(QStringLiteral("includeAudio"), options.includeAudio);
     json.insert(QStringLiteral("vulkanDeviceName"), renderer.deviceName);
     json.insert(QStringLiteral("vulkanDeviceType"), renderer.deviceType);
@@ -111,6 +119,9 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         || options.scene.logicalSize.height() < 240 || options.scene.logicalSize.width() > 7680
         || options.scene.logicalSize.height() > 4320 || options.crf < 17 || options.crf > 23)
         return failure(QStringLiteral("视频尺寸、构图或质量参数无效"));
+    if (!presentation::visualization::isWideExportFrame(size)
+        || !presentation::visualization::isWideExportFrame(options.scene.logicalSize))
+        return failure(QStringLiteral("视频导出目前仅支持 16:9 画幅，请选择 720p、1080p 或 4K 分辨率"));
     const QFileInfo output(options.outputPath);
     if (options.outputPath.trimmed().isEmpty() || output.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive)
         || !output.dir().exists() || output.isDir()) return failure(QStringLiteral("请选择有效的 MP4 输出路径"));

@@ -214,6 +214,8 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/visualization/scenegeometry.h
     src/presentation/visualization/scenelayoutengine.h
     src/presentation/visualization/scenelayoutengine.cpp
+    src/presentation/visualization/exportframing.h
+    src/presentation/visualization/exportframing.cpp
     src/presentation/visualization/fallingnotesrenderer.h
     src/presentation/visualization/fallingnotesrenderer.cpp
     src/presentation/visualization/noterendercache.h

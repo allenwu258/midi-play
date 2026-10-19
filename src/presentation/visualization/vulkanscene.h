@@ -80,7 +80,8 @@ public:
     // logicalSize 为布局逻辑像素，dpr 用于文字栅格化；实例仍保存逻辑像素坐标。
     void prepare(const midi_play::visualization::PlaybackSceneState& state,
                  QSize logicalSize, qreal dpr, const QFont& font,
-                 bool hasBackground = false, QSize backgroundSize = {}, quint64 backgroundRevision = 0);
+                 bool hasBackground = false, QSize backgroundSize = {}, quint64 backgroundRevision = 0,
+                 const SceneLayoutConstraints& constraints = {});
     // 返回内部批次的借用引用；下一次 prepare 可能重建内容。
     const QVector<VulkanQuad>& notes() const { return m_notes; }
     const VulkanUiBatch& staticUi() const { return m_staticUi; }
@@ -128,6 +129,7 @@ private:
     theme::VisualizationColors m_theme = theme::themeFor(midi_play::settings::kDefaultThemeMode).visualization;
     midi_play::settings::ThemeMode m_themeMode = midi_play::settings::kDefaultThemeMode;
     QSize m_size;
+    SceneLayoutConstraints m_layoutConstraints;
     qint64 m_lookAheadUs = 0;
     bool m_showNotationStrip = false;
     bool m_visualEffectsEnabled = true;

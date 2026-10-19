@@ -1,6 +1,7 @@
 // 离屏导出实现：独立图形队列提交、三槽流水处理及同步 RGBA 回读。
 #include <vulkan/vulkan.h>
 #include "vulkanoffscreenrenderer.h"
+#include "presentation/visualization/exportframing.h"
 #include "presentation/visualization/vulkanscene.h"
 #include "presentation/visualization/vulkanpipeline.h"
 #include <QElapsedTimer>
@@ -98,6 +99,7 @@ private:
     // 等待设备后按依赖顺序释放，兼容只完成部分初始化的状态。
     void cleanup();
     ExportSceneConfig m_config;
+    ExportFramingPlan m_framing;
     VulkanScene m_scene;
     VkInstance m_instance = VK_NULL_HANDLE;
     uint32_t m_instanceApiVersion = VK_API_VERSION_1_0;
@@ -252,6 +254,18 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     m_diagnostics = {};
     m_diagnostics.enabled = qEnvironmentVariableIntValue("MIDI_PLAY_VIDEO_DIAGNOSTICS") > 0;
     m_config = config;
+    // 在创建 GPU 资源前验证画幅，后续场景准备始终复用相同约束。
+    m_framing = calculateExportFramingPlan(config.logicalSize, config.outputSize,
+        config.state.chart.get(), config.state.lookAheadUs, config.state.showNotationStrip,
+        config.retainMeasureGutter);
+    m_scale = float(m_framing.scale);
+    m_offsetX = float(m_framing.offset.x());
+    m_offsetY = float(m_framing.offset.y());
+    const QRect scissor = m_framing.scissorRect;
+    m_scissor = {{scissor.x(), scissor.y()}, {uint32_t(scissor.width()), uint32_t(scissor.height())}};
+    m_diagnostics.logicalSceneSize = m_framing.logicalSceneSize;
+    m_diagnostics.logicalCropRect = m_framing.logicalCropRect;
+    m_diagnostics.geometryScale = m_framing.scale;
     // 导出自行建立可见索引，不借用实时视图的候选 span；按播放态生成完整视觉效果。
     m_config.state.candidateNoteIndices = {};
     m_config.state.loading = false; m_config.state.errorMessage.clear();
@@ -433,21 +447,6 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
                 VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
         m_diagnostics.readbackHostCached = slot.readback.cached;
     }
-    const auto geometry = SceneLayoutEngine().layout(config.logicalSize, config.state.chart.get(),
-        config.state.lookAheadUs, config.state.showNotationStrip);
-    const qreal left = geometry.pianoRect.isEmpty() ? geometry.drumRect.left() : geometry.pianoRect.left();
-    const qreal right = geometry.drumRect.isEmpty() ? geometry.pianoRect.right() : geometry.drumRect.right();
-    // 只导出有效钢琴/打击乐区域，去掉左侧标记余量，保留落音区及完整键盘。
-    const QRectF crop(left, 0, right - left, geometry.keyboardRect.bottom());
-    if (crop.isEmpty()) throw std::runtime_error("Empty export scene");
-    // 等比适配并居中；scissor 限制在输出边界内，保留宽高比带来的背景边距。
-    m_scale = float(std::min(config.outputSize.width() / crop.width(), config.outputSize.height() / crop.height()));
-    const qreal marginX = (config.outputSize.width() - crop.width() * m_scale) / 2;
-    const qreal marginY = (config.outputSize.height() - crop.height() * m_scale) / 2;
-    m_offsetX = float(marginX - crop.left() * m_scale); m_offsetY = float(marginY);
-    const QRect scissor = QRectF(marginX, marginY, crop.width() * m_scale, crop.height() * m_scale)
-        .toAlignedRect().intersected(QRect(QPoint(), config.outputSize));
-    m_scissor = {{scissor.x(), scissor.y()}, {uint32_t(scissor.width()), uint32_t(scissor.height())}};
 }
 
 // 每个实例生成六个顶点；range.first/count 选择同一层的连续实例范围。
@@ -490,8 +489,8 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     state.transportPositionUs = position; state.updateVisibleWindow();
     QElapsedTimer timer;
     if (m_diagnostics.enabled) timer.start();
-    m_scene.prepare(state, m_config.logicalSize, m_scale, m_config.font, !m_config.background.isNull(),
-                    m_config.background.size(), 1);
+    m_scene.prepare(state, m_framing.logicalSceneSize, m_scale, m_config.font, !m_config.background.isNull(),
+                    m_config.background.size(), 1, m_framing.layoutConstraints);
     if (m_diagnostics.enabled) m_diagnostics.scenePrepareNs += quint64(timer.nsecsElapsed());
     // 本帧只写入所选槽的缓冲，因此其他在途槽可继续读取自己的实例副本。
     const auto upload = [this](Buffer& buffer, const QVector<VulkanQuad>& quads) {

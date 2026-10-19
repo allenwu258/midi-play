@@ -8,11 +8,19 @@
 #include "domain/playback/playbackmodel.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/encoding/ffmpegprobe.h"
+#include "infrastructure/encoding/ffmpegvideoencoder.h"
+#include "infrastructure/musicxml/musicxmlreader.h"
 #include "infrastructure/settings/qsettingsstore.h"
 #include "presentation/exportdialog.h"
 #include "presentation/mainwindow.h"
+#include "presentation/visualization/exportframing.h"
+#if MIDI_PLAY_HAS_VULKAN
+#include "presentation/visualization/vulkanscene.h"
+#endif
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QProcess>
@@ -26,6 +34,7 @@
 #include <cstring>
 #include <deque>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include <cstdio>
@@ -150,6 +159,13 @@ void testUnifiedExportDialogTabs()
     tabs->setCurrentIndex(1);
     require(dialog.exportType() == midi_play::presentation::ExportDialog::ExportType::Video,
             "unified export dialog switches to the video tab");
+    auto* gutter = dialog.findChild<QCheckBox*>(QStringLiteral("retainMeasureGutter"));
+    require(gutter && gutter->isChecked() && dialog.videoOptions().scene.retainMeasureGutter,
+            "export retains the measure gutter by default");
+    gutter->setChecked(false);
+    require(!dialog.videoOptions().scene.retainMeasureGutter, "unchecked gutter reaches export options");
+    gutter->setChecked(true);
+    require(dialog.videoOptions().scene.retainMeasureGutter, "gutter option can be restored");
 }
 
 // 可复用集成夹具：五个可辨识击声跨速度变化分布，可选反复验证展开后顺序。
@@ -192,6 +208,180 @@ std::shared_ptr<midi_play::music::MusicDocument> integrationDocument(bool repeat
     return document;
 }
 
+// 用真实投影覆盖不同音域与旋律/混合/纯鼓分布，不修改只读图表内部状态。
+midi_play::visualization::VisualChartPtr framingChart(int minimum, int maximum, int kind)
+{
+    auto document = integrationDocument(false);
+    auto& melodic = document->tracks().first();
+    for (int i = 0; i < melodic.notes.size(); ++i)
+        melodic.notes[i].pitch = i % 2 == 0 ? minimum : maximum;
+    if (kind > 0) {
+        auto drums = melodic;
+        drums.id = QStringLiteral("drums");
+        drums.channel = 9;
+        drums.percussion = true;
+        for (int i = 0; i < drums.notes.size(); ++i) drums.notes[i].pitch = 36 + i * 2;
+        if (kind == 2) document->tracks().clear();
+        document->tracks().push_back(drums);
+    }
+    auto chart = midi_play::visualization::PlaybackVisualizationProjector().project(*document, 1, {});
+    require(bool(chart), "framing fixture projects successfully");
+    return chart;
+}
+
+void testExportFraming()
+{
+    using namespace midi_play::presentation::visualization;
+    const QSize content(1280, 720);
+    const auto verify = [&](const midi_play::visualization::VisualChart* chart) {
+        for (bool notation : {false, true}) {
+            const auto baseline = SceneLayoutEngine().layout(content, chart, 3'000'000, notation);
+            for (bool retain : {false, true}) {
+                for (QSize output : {QSize(1024, 576), content, QSize(1920, 1080), QSize(3840, 2160)}) {
+                    const auto plan = calculateExportFramingPlan(content, output, chart, 3'000'000, notation, retain);
+                    require(plan.logicalCropRect.size() == QSizeF(content), "crop is exactly 1280 by 720");
+                    require(plan.logicalSceneSize.height() == 720, "framing never adds vertical padding");
+                    require(plan.scissorRect == QRect(QPoint(), output), "scissor covers the entire output");
+                    const auto crop = plan.logicalCropRect;
+                    require(std::abs(crop.left() * plan.scale + plan.offset.x()) < 1e-6
+                        && std::abs(crop.right() * plan.scale + plan.offset.x() - output.width()) < 1e-6
+                        && std::abs(crop.bottom() * plan.scale - output.height()) < 1e-6
+                        && plan.offset.y() == 0, "crop corners map exactly to framebuffer corners");
+                    const auto geometry = SceneLayoutEngine().layout(plan.logicalSceneSize, chart,
+                        3'000'000, notation, plan.layoutConstraints);
+                    if (retain) {
+                        require(plan.logicalSceneSize == content && crop.left() == 0
+                            && !plan.layoutConstraints.leftExtension, "retain mode uses the unchanged viewport");
+                        require(geometry.pianoRect == baseline.pianoRect && geometry.drumRect == baseline.drumRect,
+                            "retain mode preserves current keyboard and drum layout");
+                    } else {
+                        const qreal left = geometry.pianoRect.isEmpty() ? geometry.drumRect.left() : geometry.pianoRect.left();
+                        const qreal right = geometry.drumRect.isEmpty() ? geometry.pianoRect.right() : geometry.drumRect.right();
+                        require(left == crop.left() && std::abs(right - left - 1280) < 1e-6,
+                            "constrained content fills the crop for all pitch ranges");
+                        require(geometry.leftKeyboardExtensionPitches.size() == baseline.leftKeyboardExtensionPitches.size(),
+                            "expanded viewport does not trigger another discrete extension step");
+                        require(plan.logicalSceneSize.width() == 1280 + int(left),
+                            "scene width consists only of content and the removed gutter");
+                    }
+                    require(geometry.keyboardRect.bottom() == 720, "the complete keyboard remains in frame");
+                }
+            }
+        }
+    };
+    verify(nullptr);
+    for (int kind : {0, 1, 2}) {
+        for (int minimum : {0, 1, 24, 36, 48, 60, 72, 96, 120, 127}) {
+            for (int span : {0, 36, 84}) {
+                const auto chart = framingChart(minimum, std::min(127, minimum + span), kind);
+                verify(chart.get());
+            }
+        }
+    }
+    for (QSize invalid : {QSize(), QSize(0, 720), QSize(320, 240), QSize(1280, 721)}) {
+        bool rejected = false;
+        try { calculateExportFramingPlan(content, invalid, nullptr, 3'000'000, false, true); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected, "invalid or non-16:9 output is explicitly rejected");
+    }
+#if MIDI_PLAY_HAS_VULKAN
+    midi_play::visualization::PlaybackSceneState state;
+    state.chart = framingChart(48, 84, 0);
+    state.updateVisibleWindow();
+    VulkanScene scene;
+    const QFont font = QApplication::font();
+    scene.prepare(state, content, 1, font);
+    require(!scene.notes().isEmpty(), "cache fixture contains visible notes");
+    const auto oldNotes = scene.notes();
+    const auto oldGeometry = scene.geometry().pianoRect;
+    const SceneLayoutConstraints locked {LeftExtensionConstraint {100.0, 3}};
+    scene.prepare(state, content, 1, font, false, {}, 0, locked);
+    require(scene.geometry().pianoRect.left() == 100 && scene.notes() != oldNotes,
+        "same-size constraint changes invalidate note coordinates");
+    scene.prepare(state, content, 1, font);
+    require(scene.geometry().pianoRect == oldGeometry && scene.notes() == oldNotes,
+        "removing constraints restores the original real-time layout and note cache");
+
+    midi_play::app::VideoExportOptions invalidOptions;
+    invalidOptions.scene.outputSize = QSize(640, 480);
+    const auto rejected = midi_play::app::VideoExportService::exportDocument(integrationDocument(false), invalidOptions);
+    require(rejected.status == midi_play::app::VideoExportStatus::Failed && rejected.error.contains(QStringLiteral("16:9")),
+        "service reports unsupported aspect ratio before file or encoder operations");
+#endif
+}
+
+// 可选真实 GPU 验收：亮色底图与键盘覆盖两侧，避免仅检查矩阵却漏掉清屏边条。
+void testFramingPixels()
+{
+#if MIDI_PLAY_HAS_VULKAN
+    using namespace midi_play::presentation::visualization;
+    const QString captureDirectory = qEnvironmentVariable("MIDI_PLAY_FRAMING_CAPTURE_DIR");
+    if (!captureDirectory.isEmpty()) require(QDir().mkpath(captureDirectory), "capture directory is available");
+    const QString referencePath = qEnvironmentVariable("MIDI_PLAY_FRAMING_REFERENCE_XML");
+    midi_play::visualization::VisualChartPtr referenceChart;
+    if (!referencePath.isEmpty()) {
+        const auto loaded = midi_play::musicxml::MusicXmlReader().read(referencePath);
+        require(bool(loaded.document), "reference MusicXML loads");
+        referenceChart = midi_play::visualization::PlaybackVisualizationProjector().project(*loaded.document, 1, {});
+        require(bool(referenceChart), "reference score projects");
+    }
+    for (int kind = 0; kind < (referenceChart ? 4 : 3); ++kind) {
+        for (QSize output : {QSize(1024, 576), QSize(1280, 720), QSize(1920, 1080), QSize(3840, 2160)}) {
+            for (bool retain : {false, true}) {
+                for (bool notation : {false, true}) {
+                    ExportSceneConfig config;
+                    config.outputSize = output;
+                    config.retainMeasureGutter = retain;
+                    config.state.chart = kind == 3 ? referenceChart : framingChart(36, 96, kind);
+                    config.state.showNotationStrip = notation;
+                    config.state.themeMode = midi_play::settings::ThemeMode::Light;
+                    config.state.visualEffectsEnabled = false;
+                    config.state.backgroundImageOpacity = 100;
+                    config.font = QApplication::font();
+                    if (notation) {
+                        config.background = QImage(32, 32, QImage::Format_RGBA8888);
+                        config.background.fill(QColor(220, 100, 180));
+                    }
+                    VulkanOffscreenRenderer renderer;
+                    QImage frame;
+                    QString error;
+                    const bool initialized = renderer.initialize(config, &error);
+                    if (!initialized) std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                    require(initialized, "framing GPU renderer initializes");
+                    require(renderer.render(200'000, frame, nullptr, &error), "framing GPU frame renders");
+                    require(frame.size() == output, "native readback size matches requested output");
+                    const auto diagnostic = renderer.diagnostics();
+                    const auto plan = calculateExportFramingPlan(config.logicalSize, output, config.state.chart.get(),
+                        config.state.lookAheadUs, notation, retain);
+                    require(diagnostic.logicalSceneSize == plan.logicalSceneSize
+                        && diagnostic.logicalCropRect == plan.logicalCropRect
+                        && diagnostic.geometryScale == plan.scale, "renderer uses the validated framing plan");
+                    const QColor clear = midi_play::presentation::theme::themeFor(config.state.themeMode).visualization.background;
+                    const auto differsFromClear = [&](int x, int y) {
+                        const QColor pixel = frame.pixelColor(x, y);
+                        return pixel.alpha() == 255 && (std::abs(pixel.red() - clear.red())
+                            + std::abs(pixel.green() - clear.green()) + std::abs(pixel.blue() - clear.blue()) > 20);
+                    };
+                    for (int x : {0, 1, output.width() - 2, output.width() - 1}) {
+                        require(differsFromClear(x, output.height() - 1)
+                            && differsFromClear(x, qRound(output.height() * 0.97)),
+                            "keyboard reaches both framebuffer edges without clear-color pillarboxes");
+                        if (notation) for (int y : {0, 1, output.height() / 3})
+                            require(differsFromClear(x, y), "background covers both upper frame corners and side edges");
+                    }
+                    if (!captureDirectory.isEmpty() && output.height() == 720)
+                        require(frame.save(QDir(captureDirectory).filePath(QStringLiteral("kind%1-retain%2-notation%3.png")
+                            .arg(kind).arg(retain).arg(notation))), "save native framing inspection image");
+                    std::fprintf(stdout, "PASS framing %dx%d kind=%d retain=%d notation/background=%d scene=%dx%d cropLeft=%.0f scale=%.2f\n",
+                        output.width(), output.height(), kind, retain, notation, diagnostic.logicalSceneSize.width(),
+                        diagnostic.logicalSceneSize.height(), diagnostic.logicalCropRect.left(), diagnostic.geometryScale);
+                }
+            }
+        }
+    }
+#endif
+}
+
 QByteArray decode(const QString& ffmpeg, const QStringList& arguments)
 {
     // 在无交互模式运行 FFmpeg，并把标准输出作为结构化测试数据返回。
@@ -202,6 +392,72 @@ QByteArray decode(const QString& ffmpeg, const QStringList& arguments)
     require(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0,
             "integration decoder succeeds");
     return process.readAllStandardOutput();
+}
+
+void testEncodedFraming()
+{
+#if MIDI_PLAY_HAS_VULKAN
+    using namespace midi_play::presentation::visualization;
+    using midi_play::encoding::FfmpegVideoEncoder;
+    const auto ffmpeg = midi_play::encoding::probeFfmpeg(
+        QStandardPaths::findExecutable(QStringLiteral("ffmpeg")), false);
+    require(ffmpeg.valid, "encoded framing requires FFmpeg");
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "encoded framing temporary directory is available");
+    const QString captureDirectory = qEnvironmentVariable("MIDI_PLAY_FRAMING_CAPTURE_DIR");
+    // 编码器拒绝覆盖已有文件；每次在新临时目录编码，通过后才复制验收样例。
+    const QDir directory(temporary.path());
+    for (QSize size : {QSize(1280, 720), QSize(1920, 1080), QSize(3840, 2160)}) {
+        for (bool retain : {false, true}) {
+            ExportSceneConfig config;
+            config.outputSize = size;
+            config.retainMeasureGutter = retain;
+            config.state.chart = framingChart(36, 96, 1);
+            // 亮色键盘底色与清屏色明确区分；深色主题的正常琴键边线接近清屏色。
+            config.state.themeMode = midi_play::settings::ThemeMode::Light;
+            config.font = QApplication::font();
+            config.background = QImage(32, 32, QImage::Format_RGBA8888);
+            config.background.fill(QColor(220, 100, 180));
+            config.state.backgroundImageOpacity = 100;
+            config.state.visualEffectsEnabled = false;
+            QString error;
+            VulkanOffscreenRenderer renderer;
+            require(renderer.initialize(config, &error), "encoded framing renderer initializes");
+            const QString path = directory.filePath(QStringLiteral("framing-%1p-retain%2.mp4").arg(size.height()).arg(retain));
+            FfmpegVideoEncoder encoder;
+            require(encoder.open(ffmpeg.executablePath, path, {}, size, 30, 17, 3, 44100, nullptr, &error),
+                "native-resolution framing encoder opens");
+            for (int i = 0; i < 3; ++i) {
+                QImage frame;
+                require(renderer.render(200'000 + i * 33'333, frame, nullptr, &error), "native frame renders for encoding");
+                const bool written = encoder.writeFrame(frame, &error);
+                if (!written) std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                require(written, "native frame encodes without resizing");
+            }
+            require(encoder.finish(&error), "framing MP4 finalizes");
+            require(FfmpegVideoEncoder::validate(ffmpeg.executablePath, path, nullptr, &error, size, 30, 3, false, 100'000),
+                "framing MP4 dimensions frame count and duration validate");
+            const auto bytes = decode(ffmpeg.executablePath, {"-i", path, "-frames:v", "1", "-f", "rawvideo",
+                "-pix_fmt", "rgb24", "pipe:1"});
+            require(bytes.size() == qsizetype(size.width()) * size.height() * 3, "encoded frame retains exact dimensions");
+            const auto* pixels = reinterpret_cast<const unsigned char*>(bytes.constData());
+            const QColor clear = midi_play::presentation::theme::themeFor(config.state.themeMode).visualization.background;
+            for (int x : {0, size.width() - 1}) {
+                for (int y : {0, size.height() / 3, size.height() - 1}) {
+                    const auto* p = pixels + (qsizetype(y) * size.width() + x) * 3;
+                    require(std::abs(int(p[0]) - clear.red()) + std::abs(int(p[1]) - clear.green())
+                        + std::abs(int(p[2]) - clear.blue()) > 12, "encoded MP4 has no fixed clear-color sidebars");
+                }
+            }
+            std::fprintf(stdout, "PASS encoded framing %dx%d retain=%d\n", size.width(), size.height(), retain);
+            if (!captureDirectory.isEmpty()) {
+                const QString capture = QDir(captureDirectory).filePath(QFileInfo(path).fileName());
+                if (QFile::exists(capture)) require(QFile::remove(capture), "replace previous test capture");
+                require(QFile::copy(path, capture), "save validated framing MP4");
+            }
+        }
+    }
+#endif
 }
 
 std::vector<float> decodeAudio(const QString& ffmpeg, const QString& path)
@@ -235,13 +491,13 @@ void compareWithAudioExport(const QString& ffmpeg, const QString& mp4, const QSt
             "MP4 audio matches unchanged WAV export without shifts or overlapping copies");
 }
 
-void verifyMovingScene(const QString& ffmpeg, const QString& mp4, qint64 frames)
+void verifyMovingScene(const QString& ffmpeg, const QString& mp4, qint64 frames, QSize size)
 {
     // 抽取首帧和中间帧，确认 Vulkan 视频既非空白又随时间推进。
     const QByteArray pixels = decode(ffmpeg, {"-i", mp4, "-map", "0:v:0", "-vf",
         QStringLiteral("select=eq(n\\,0)+eq(n\\,%1)").arg(frames / 2),
         "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"});
-    constexpr int frameBytes = 320 * 240 * 3;
+    const int frameBytes = size.width() * size.height() * 3;
     require(pixels.size() == frameBytes * 2, "two integrated video frames decode");
     int changed = 0;
     for (int i = 0; i < frameBytes; ++i) {
@@ -274,7 +530,7 @@ void testVideoIntegration()
     options.sourcePath = directory.filePath(QStringLiteral("input.mid"));
     options.soundFontPath = QStringLiteral(MIDI_PLAY_TEST_CLICK_SF2);
     options.scene.logicalSize = QSize(1280, 720);
-    options.scene.outputSize = QSize(320, 240);
+    options.scene.outputSize = QSize(640, 360);
     options.tailMilliseconds = 123;
 
     for (const int fps : {30, 60}) {
@@ -284,6 +540,7 @@ void testVideoIntegration()
             options.fps = fps;
             options.ratePercent = rate;
             options.includeMetronome = repeat;
+            options.scene.retainMeasureGutter = rate == 50 || rate == 150;
             const auto result = midi_play::app::VideoExportService::exportDocument(document, options);
             if (result.status != midi_play::app::VideoExportStatus::Success) {
                 std::fprintf(stderr, "video export error: %s\n", result.error.toUtf8().constData());
@@ -313,7 +570,7 @@ void testVideoIntegration()
             require(exported.status == midi_play::app::AudioExportStatus::Success,
                     "unchanged standalone audio export produces reference");
             compareWithAudioExport(ffmpeg.executablePath, options.outputPath, audio.outputPath);
-            verifyMovingScene(ffmpeg.executablePath, options.outputPath, result.frames);
+            verifyMovingScene(ffmpeg.executablePath, options.outputPath, result.frames, options.scene.outputSize);
             std::fprintf(stdout, "PASS: Vulkan %d FPS, %d%%, repeat/metronome=%d\n", fps, rate, repeat);
         }
     }
@@ -412,6 +669,11 @@ int main(int argc, char** argv)
     testFfmpegProbe();
     testFfmpegSettings();
     testUnifiedExportDialogTabs();
+    testExportFraming();
+    if (app.arguments().contains(QStringLiteral("--framing"))) {
+        testFramingPixels();
+        testEncodedFraming();
+    }
     if (app.arguments().contains(QStringLiteral("--integration"))) testVideoIntegration();
     if (app.arguments().contains(QStringLiteral("--benchmark"))) benchmarkVideoExport();
     return 0;

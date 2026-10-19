@@ -37,7 +37,8 @@ VulkanEffectsProfile effectsProfileFor(midi_play::settings::ThemeMode mode, bool
 // 先更新静态依赖和候选实例，再计算当前帧的活动音符、装饰及文字。
 void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& state,
                           QSize size, qreal dpr, const QFont& font,
-                          bool hasBackground, QSize backgroundSize, quint64 backgroundRevision)
+                          bool hasBackground, QSize backgroundSize, quint64 backgroundRevision,
+                          const SceneLayoutConstraints& constraints)
 {
     const bool chartChanged = m_chart != state.chart;
     const auto mode = midi_play::settings::normalizeThemeMode(state.themeMode);
@@ -51,7 +52,8 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
     m_visualEffectsLevel = effectLevel;
     m_effectsProfile = effectsProfileFor(mode, state.visualEffectsEnabled, effectLevel);
     // 分别识别几何、背景、材质和效果变化，避免设置变化导致全部缓存重建。
-    const bool layoutChanged = chartChanged || m_size != size || m_lookAheadUs != state.lookAheadUs
+    const bool constraintsChanged = m_layoutConstraints != constraints;
+    const bool layoutChanged = chartChanged || constraintsChanged || m_size != size || m_lookAheadUs != state.lookAheadUs
         || m_showNotationStrip != state.showNotationStrip;
     const bool backgroundChanged = m_hasBackground != hasBackground
         || (hasBackground && m_backgroundSize != backgroundSize)
@@ -75,11 +77,14 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         m_timeOriginUs = 0;
     }
     if (layoutChanged) {
+        // 音符缓存原先只比较视口大小；同尺寸约束切换也必须刷新横向坐标。
+        if (constraintsChanged) m_cache.clear();
+        m_layoutConstraints = constraints;
         m_size = size;
         m_lookAheadUs = state.lookAheadUs;
         m_showNotationStrip = state.showNotationStrip;
         m_geometry = SceneLayoutEngine().layout(size, m_chart.get(),
-                                                state.lookAheadUs, state.showNotationStrip);
+                                                state.lookAheadUs, state.showNotationStrip, constraints);
     }
     if (layoutChanged || themeChanged || backgroundChanged) rebuildStaticUi();
     // DPR/谱面变化或图集接近耗尽时整体回收；主题变化不影响文字 alpha。

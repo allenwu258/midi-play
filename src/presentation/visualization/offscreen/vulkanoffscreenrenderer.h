@@ -3,6 +3,7 @@
 #include "domain/visualization/playbackscenestate.h"
 #include <QFont>
 #include <QImage>
+#include <QRectF>
 #include <memory>
 #include <atomic>
 
@@ -11,10 +12,11 @@ namespace midi_play::presentation::visualization {
 struct ExportSceneConfig {
     // 导出保存设置和图表；VulkanScene 会自行查询候选，不使用 state 中借用的候选 span。
     midi_play::visualization::PlaybackSceneState state;
-    QSize logicalSize {1280, 720}; // 键盘/落音布局的逻辑像素尺寸。
+    QSize logicalSize {1280, 720}; // 导出内容逻辑尺寸；裁栏模式另行计算实际场景宽度。
     QSize outputSize {1920, 1080}; // 编码帧的物理像素尺寸。
     QFont font;
     QImage background; // 按值保存源图像，离屏初始化时独立上传到设备纹理。
+    bool retainMeasureGutter = true; // 默认保留左侧小节标记栏及虚拟琴键。
 };
 
 // MIDI_PLAY_VIDEO_DIAGNOSTICS 开启时累计当前渲染器的阶段耗时及帧计数。
@@ -31,6 +33,9 @@ struct VulkanRenderDiagnostics {
     quint64 deviceLocalHeapBytes = 0;
     quint64 hostVisibleHeapBytes = 0;
     bool readbackHostCached = false;
+    QSize logicalSceneSize;
+    QRectF logicalCropRect;
+    qreal geometryScale = 1.0;
     // CPU 阶段累计纳秒；readbackNs 记录映射缓存失效处理，不包含 QImage 复制。
     quint64 scenePrepareNs = 0;
     quint64 bufferUploadNs = 0;

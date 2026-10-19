@@ -44,6 +44,7 @@ private:
     // 参数快照独立于外部表单，后台任务按值捕获所需场景。
     app::VideoExportOptions m_defaults;
     QComboBox* m_size = nullptr;
+    QCheckBox* m_retainMeasureGutter = nullptr;
     QComboBox* m_fps = nullptr;
     QComboBox* m_quality = nullptr;
     QSpinBox* m_rate = nullptr;
