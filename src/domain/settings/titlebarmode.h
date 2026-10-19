@@ -14,8 +14,8 @@ enum class TitleBarMode : int {
 
 #if defined(Q_OS_WIN)
 inline constexpr bool kCustomTitleBarAvailable = true;
-// Windows 默认采用系统管理的原生边框，自定义实现需显式选择。
-inline constexpr TitleBarMode kDefaultTitleBarMode = TitleBarMode::Native;
+// Windows 默认使用经过稳定性验证的自定义标题栏；用户仍可显式选择原生标题栏。
+inline constexpr TitleBarMode kDefaultTitleBarMode = TitleBarMode::Custom;
 #else
 inline constexpr bool kCustomTitleBarAvailable = false;
 inline constexpr TitleBarMode kDefaultTitleBarMode = TitleBarMode::Native;

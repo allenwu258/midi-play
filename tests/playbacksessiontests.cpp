@@ -298,8 +298,8 @@ void testTitleBarModePlatformPolicy()
             "native title bar mode must always be valid");
 #if defined(Q_OS_WIN)
     require(midi_play::settings::kDefaultTitleBarMode
-                == midi_play::settings::TitleBarMode::Native,
-            "Windows must default to the native title bar");
+                == midi_play::settings::TitleBarMode::Custom,
+            "Windows must default to the custom title bar");
     require(midi_play::settings::normalizeTitleBarMode(
                 midi_play::settings::TitleBarMode::Custom)
                 == midi_play::settings::TitleBarMode::Custom,
@@ -527,6 +527,13 @@ void testQSettingsStorePersistsUserRefreshRate()
     PlayerSettings loaded = store.load(&warning);
     require(loaded.visualizationRefreshRate == 60,
             "missing settings file must load the default refresh rate");
+#if defined(Q_OS_WIN)
+    require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Custom,
+            "missing Windows title bar preference must use the custom default");
+#else
+    require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Native,
+            "missing non-Windows title bar preference must use the native default");
+#endif
 
     PlayerSettings saved;
     saved.visualizationRefreshRate = 120;

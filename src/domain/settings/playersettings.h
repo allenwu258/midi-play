@@ -26,7 +26,7 @@ inline constexpr bool kDefaultShowNotationStrip = false;
 inline constexpr int kDefaultBackgroundImageMaximumDimension = 2048;
 inline constexpr int kMinimumBackgroundImageMaximumDimension = 256;
 inline constexpr int kMaximumBackgroundImageMaximumDimension = 4096;
-inline constexpr int kSettingsSchemaVersion = 13;
+inline constexpr int kSettingsSchemaVersion = 14;
 
 // 存储层提供原始快照，应用服务负责再次规范化并向消费者发布变更。
 struct PlayerSettings {

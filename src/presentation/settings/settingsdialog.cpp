@@ -132,7 +132,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                                  midi_play::settings::titleBarModePersistentValue(
                                      midi_play::settings::TitleBarMode::Native));
     if (midi_play::settings::isCustomTitleBarAvailable()) {
-        m_titleBarModeCombo->addItem(QStringLiteral("自定义标题栏（实验）"),
+        m_titleBarModeCombo->addItem(QStringLiteral("自定义标题栏"),
                                      midi_play::settings::titleBarModePersistentValue(
                                          midi_play::settings::TitleBarMode::Custom));
     } else {
@@ -203,7 +203,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     m_backgroundModeCombo = new QComboBox(this);
     m_backgroundModeCombo->setObjectName(QStringLiteral("backgroundModeCombo"));
     m_backgroundModeCombo->addItem(QStringLiteral("无背景"), false);
-    m_backgroundModeCombo->addItem(QStringLiteral("图片背景（实验）"), true);
+    m_backgroundModeCombo->addItem(QStringLiteral("图片背景"), true);
     form->addRow(QStringLiteral("下落背景"), m_backgroundModeCombo);
 
     auto* backgroundEditor = new QWidget(this);

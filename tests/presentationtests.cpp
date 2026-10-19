@@ -284,7 +284,7 @@ void testBackgroundModePreference()
                 QStringLiteral("clearBackgroundImageButton")),
             "background settings must expose mode, image, alignment, opacity and dimension controls");
     require(mode->count() == 2 && mode->itemText(0) == QStringLiteral("无背景")
-                && mode->itemText(1) == QStringLiteral("图片背景（实验）")
+                && mode->itemText(1) == QStringLiteral("图片背景")
                 && !mode->currentData().toBool() && imagePath->parentWidget()->isHidden(),
             "new users must see no background with the image row hidden");
 
