@@ -195,6 +195,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                     });
         }
         m_visualization->setGraphicsMode(m_settingsService->graphicsMode());
+        m_visualization->setBackgroundImageMaximumDimension(
+            m_settingsService->backgroundImageMaximumDimension());
         m_visualization->setBackgroundImagePath(m_settingsService->activeBackgroundImagePath());
         m_visualization->setBackgroundImageAlignment(m_settingsService->backgroundImageAlignment());
         m_visualization->setBackgroundImageOpacity(m_settingsService->backgroundImageOpacity());
@@ -220,6 +222,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_visualization, updateBackground);
         connect(m_settingsService, &app::SettingsService::backgroundImageEnabledChanged,
                 m_visualization, updateBackground);
+        connect(m_settingsService, &app::SettingsService::backgroundImageMaximumDimensionChanged,
+                m_visualization, &visualization::FallingNotesView::setBackgroundImageMaximumDimension);
         connect(m_settingsService, &app::SettingsService::backgroundImageAlignmentChanged,
                 m_visualization, &visualization::FallingNotesView::setBackgroundImageAlignment);
         connect(m_settingsService, &app::SettingsService::backgroundImageOpacityChanged,

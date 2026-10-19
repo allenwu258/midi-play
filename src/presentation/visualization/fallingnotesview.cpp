@@ -30,6 +30,11 @@ FallingNotesView::FallingNotesView(QWidget* parent)
     setAttribute(Qt::WA_OpaquePaintEvent);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_frameTimer.setTimerType(Qt::PreciseTimer);
+    m_backgroundLoadDebounceTimer.setSingleShot(true);
+    m_backgroundLoadDebounceTimer.setInterval(200);
+    connect(&m_backgroundLoadDebounceTimer, &QTimer::timeout, this, [this] {
+        startBackgroundImageLoad(false);
+    });
     setRefreshRate(60);
     connect(&m_frameTimer, &QChronoTimer::timeout, this, [this] {
         if (!isVisible()) return;
@@ -232,33 +237,71 @@ void FallingNotesView::setGraphicsMode(midi_play::settings::GraphicsMode mode)
 #endif
 }
 
-// 异步解码背景；请求号只屏蔽过期结果，不取消已启动的解码任务。
-void FallingNotesView::setBackgroundImagePath(const QString& path)
+// 启动一次异步背景解码；请求号只屏蔽过期结果，不取消已启动的解码任务。
+void FallingNotesView::startBackgroundImageLoad(bool clearCurrent)
 {
-    m_backgroundImagePath = path.trimmed();
-    // 清空路径同样递增请求号，使仍在运行的旧解码任务失去写回资格。
     const quint64 requestId = ++m_backgroundRequestId;
-    m_backgroundImage = {};
+    const QString path = m_backgroundImagePath;
+    const int maximumDimension = m_backgroundImageMaximumDimension;
+    if (clearCurrent) m_backgroundImage = {};
 #if MIDI_PLAY_HAS_VULKAN
-    if (m_vulkanWindow) m_vulkanWindow->setBackgroundImage({});
+    if (clearCurrent && m_vulkanWindow) m_vulkanWindow->setBackgroundImage({});
 #endif
-    update();
-    if (m_backgroundImagePath.isEmpty()) return;
+    if (clearCurrent) update();
+    if (path.isEmpty()) {
+        m_backgroundLoadQueued = false;
+        return;
+    }
+
+    // 只有一个解码任务在运行；完成后重新读取最新路径和尺寸。
+    if (m_backgroundWatcher) {
+        m_backgroundLoadQueued = true;
+        return;
+    }
 
     // watcher 随宿主销毁；工作任务持有路径副本，不借用界面成员。
     auto* watcher = new QFutureWatcher<QImage>(this);
+    m_backgroundWatcher = watcher;
     connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher, requestId] {
         const QImage image = watcher->result();
+        m_backgroundWatcher = nullptr;
         watcher->deleteLater();
         // finished 回调在宿主线程执行；过期结果只释放 watcher，不覆盖新背景。
-        if (requestId != m_backgroundRequestId) return;
-        m_backgroundImage = image;
+        if (requestId == m_backgroundRequestId && !image.isNull()) {
+            m_backgroundImage = image;
 #if MIDI_PLAY_HAS_VULKAN
-        if (m_vulkanWindow) m_vulkanWindow->setBackgroundImage(m_backgroundImage);
+            if (m_vulkanWindow) m_vulkanWindow->setBackgroundImage(m_backgroundImage);
 #endif
-        update();
+            update();
+        }
+        if (m_backgroundLoadQueued) {
+            m_backgroundLoadQueued = false;
+            startBackgroundImageLoad(false);
+        }
     });
-    watcher->setFuture(QtConcurrent::run(&loadBackgroundImage, m_backgroundImagePath));
+    watcher->setFuture(QtConcurrent::run([path, maximumDimension] {
+        return loadBackgroundImage(path, maximumDimension);
+    }));
+}
+
+// 异步解码背景；请求号只屏蔽过期结果，不取消已启动的解码任务。
+void FallingNotesView::setBackgroundImagePath(const QString& path)
+{
+    m_backgroundLoadDebounceTimer.stop();
+    m_backgroundImagePath = path.trimmed();
+    startBackgroundImageLoad(true);
+}
+
+void FallingNotesView::setBackgroundImageMaximumDimension(int dimension)
+{
+    const int normalized = midi_play::settings::normalizeBackgroundImageMaximumDimension(dimension);
+    if (m_backgroundImageMaximumDimension == normalized) return;
+    m_backgroundImageMaximumDimension = normalized;
+    // 立即使当前任务失效，防止旧尺寸结果在防抖窗口内写回；只加载最终尺寸。
+    ++m_backgroundRequestId;
+    if (m_backgroundImagePath.isEmpty()) return;
+    // 保留当前可用背景，避免设置调整期间短暂闪烁；新结果成功后原子替换。
+    m_backgroundLoadDebounceTimer.start();
 }
 
 void FallingNotesView::setBackgroundImageAlignment(midi_play::settings::BackgroundImageAlignment alignment)

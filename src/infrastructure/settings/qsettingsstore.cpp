@@ -116,6 +116,25 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     result.backgroundImageOpacity = backgroundOpacityConversionOk
         ? std::clamp(configuredBackgroundOpacity, 0, 100)
         : midi_play::settings::kDefaultBackgroundImageOpacity;
+    const bool hasBackgroundMaximumDimension =
+        file.contains(QStringLiteral("Visualization/backgroundImageMaximumDimension"));
+    bool backgroundMaximumDimensionConversionOk = false;
+    const int configuredBackgroundMaximumDimension = file.value(
+        QStringLiteral("Visualization/backgroundImageMaximumDimension"),
+        midi_play::settings::kDefaultBackgroundImageMaximumDimension)
+        .toInt(&backgroundMaximumDimensionConversionOk);
+    result.backgroundImageMaximumDimension = backgroundMaximumDimensionConversionOk
+        ? midi_play::settings::normalizeBackgroundImageMaximumDimension(
+            configuredBackgroundMaximumDimension)
+        : midi_play::settings::kDefaultBackgroundImageMaximumDimension;
+    if (hasBackgroundMaximumDimension
+        && (!backgroundMaximumDimensionConversionOk
+            || configuredBackgroundMaximumDimension < midi_play::settings::kMinimumBackgroundImageMaximumDimension
+            || configuredBackgroundMaximumDimension > midi_play::settings::kMaximumBackgroundImageMaximumDimension)
+        && warning) {
+        const auto message = QStringLiteral("设置文件中的背景图最大边长无效，已回退到 2048 px");
+        *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
+    }
     result.visualEffectsEnabled = file.value(
         QStringLiteral("Visualization/visualEffectsEnabled"), true).toBool();
     const bool hasVisualEffectsLevel = file.contains(QStringLiteral("Visualization/visualEffectsLevel"));
@@ -240,6 +259,9 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
                   midi_play::settings::backgroundImageAlignmentPersistentValue(settings.backgroundImageAlignment));
     file.setValue(QStringLiteral("Visualization/backgroundImageOpacity"),
                   std::clamp(settings.backgroundImageOpacity, 0, 100));
+    file.setValue(QStringLiteral("Visualization/backgroundImageMaximumDimension"),
+                  midi_play::settings::normalizeBackgroundImageMaximumDimension(
+                      settings.backgroundImageMaximumDimension));
     file.setValue(QStringLiteral("Visualization/visualEffectsEnabled"), settings.visualEffectsEnabled);
     file.setValue(QStringLiteral("Visualization/visualEffectsLevel"),
                   midi_play::settings::visualEffectLevelPersistentValue(settings.visualEffectsLevel));

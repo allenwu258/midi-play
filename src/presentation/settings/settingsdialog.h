@@ -18,6 +18,7 @@ class QLineEdit;
 class QPushButton;
 class QSpinBox;
 class QSlider;
+class QTimer;
 
 namespace midi_play::app { class SettingsService; }
 namespace midi_play::app { class PlayerApplicationService; }
@@ -60,6 +61,8 @@ private slots:
     void applyBackgroundModeFromUi();
     void applyBackgroundAlignmentFromUi();
     void applyBackgroundOpacityFromUi(int value);
+    void scheduleBackgroundMaximumDimensionFromUi(int value);
+    void applyBackgroundMaximumDimensionFromUi();
     // 将非预设值映射到自定义项，阻断下拉框信号以避免重复保存。
     void updateRefreshRateSelection(int refreshRate);
     // 模型回填按枚举值查找选项，阻断控件信号以避免双向绑定循环。
@@ -78,6 +81,7 @@ private slots:
     // 阻断输入信号，回填背景适配与规范化的不透明度显示。
     void updateBackgroundAlignmentSelection(midi_play::settings::BackgroundImageAlignment alignment);
     void updateBackgroundOpacitySelection(int opacity);
+    void updateBackgroundMaximumDimensionSelection(int dimension);
     // 加载期间禁用重复加载并显示临时状态，结束后等待具体结果信号。
     void setSoundFontLoading(bool loading);
     // 在统一错误区域展示保存、载入或资源验证失败信息。
@@ -117,6 +121,8 @@ private:
     QSlider* m_backgroundOpacitySlider = nullptr;
     QLabel* m_backgroundOpacityLabel = nullptr;
     QWidget* m_backgroundOpacityEditor = nullptr;
+    QSpinBox* m_backgroundMaximumDimensionSpinBox = nullptr;
+    QTimer* m_backgroundMaximumDimensionCommitTimer = nullptr;
     QFormLayout* m_formLayout = nullptr;
     QWidget* m_backgroundImageEditor = nullptr;
     QLabel* m_errorLabel = nullptr;

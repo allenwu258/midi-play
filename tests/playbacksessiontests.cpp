@@ -220,6 +220,20 @@ void testVisualizationRefreshRateSettingsNormalizeInts()
             "custom FPS must use a nanosecond period without millisecond truncation");
 }
 
+void testBackgroundImageMaximumDimensionSettingsNormalizeInts()
+{
+    using namespace midi_play::settings;
+    require(normalizeBackgroundImageMaximumDimension(256) == 256,
+            "minimum background dimension must be accepted");
+    require(normalizeBackgroundImageMaximumDimension(2048) == 2048,
+            "default background dimension must be accepted");
+    require(normalizeBackgroundImageMaximumDimension(4096) == 4096,
+            "maximum background dimension must be accepted");
+    require(normalizeBackgroundImageMaximumDimension(255) == kDefaultBackgroundImageMaximumDimension
+                && normalizeBackgroundImageMaximumDimension(4097) == kDefaultBackgroundImageMaximumDimension,
+            "out-of-range background dimensions must fall back to 2048");
+}
+
 // 图形模式首次确认需持久化，传统后端同时关闭 Vulkan 特效。
 void testGraphicsModeSettings()
 {
@@ -429,6 +443,37 @@ void testSettingsServicePersistsBackgroundImage()
             "clearing the background image must persist an empty path");
 }
 
+void testSettingsServicePersistsBackgroundImageMaximumDimension()
+{
+    auto store = std::make_unique<MemorySettingsStore>();
+    auto* rawStore = store.get();
+    midi_play::app::SettingsService service(std::move(store));
+    service.load();
+    require(service.backgroundImageMaximumDimension() == midi_play::settings::kDefaultBackgroundImageMaximumDimension,
+            "background dimension must default to 2048");
+
+    int changes = 0;
+    QObject::connect(&service, &midi_play::app::SettingsService::backgroundImageMaximumDimensionChanged,
+                     [&changes](int) { ++changes; });
+    service.setBackgroundImageMaximumDimension(4096);
+    require(service.backgroundImageMaximumDimension() == 4096
+                && rawStore->savedSettings.backgroundImageMaximumDimension == 4096
+                && changes == 1,
+            "background dimension changes must be normalized, published and persisted");
+    service.setBackgroundImageMaximumDimension(4097);
+    require(service.backgroundImageMaximumDimension() == midi_play::settings::kDefaultBackgroundImageMaximumDimension
+                && rawStore->savedSettings.backgroundImageMaximumDimension
+                    == midi_play::settings::kDefaultBackgroundImageMaximumDimension
+                && changes == 2,
+            "invalid background dimensions must fall back to 2048");
+    service.setBackgroundImageMaximumDimension(2048);
+    require(rawStore->saveCount == 2 && changes == 2,
+            "setting the already effective background dimension must not save again");
+    service.setBackgroundImageMaximumDimension(2048);
+    require(rawStore->saveCount == 2 && changes == 2,
+            "unchanged background dimension must not save again");
+}
+
 // 重复设置相同值不应产生额外信号或写入，保存失败需独立报告。
 void testSettingsServicePersistsOnlyEffectiveChanges()
 {
@@ -491,6 +536,7 @@ void testQSettingsStorePersistsUserRefreshRate()
     saved.backgroundImageEnabled = true;
     saved.backgroundImageAlignment = midi_play::settings::BackgroundImageAlignment::Right;
     saved.backgroundImageOpacity = 60;
+    saved.backgroundImageMaximumDimension = 4096;
     QString error;
     require(store.save(saved, &error), "settings store must save a valid refresh rate");
     require(error.isEmpty(), "successful settings save must not report an error");
@@ -505,8 +551,9 @@ void testQSettingsStorePersistsUserRefreshRate()
     require(loaded.backgroundImageEnabled,
             "settings store must reload image background mode");
     require(loaded.backgroundImageAlignment == midi_play::settings::BackgroundImageAlignment::Right
-                && loaded.backgroundImageOpacity == 60,
-            "settings store must reload background placement and opacity");
+                && loaded.backgroundImageOpacity == 60
+                && loaded.backgroundImageMaximumDimension == 4096,
+            "settings store must reload background placement, opacity and dimension");
     {
         QSettings legacy(settingsPath, QSettings::IniFormat);
         legacy.remove(QStringLiteral("Visualization/backgroundImageEnabled"));
@@ -533,6 +580,7 @@ void testQSettingsStorePersistsUserRefreshRate()
 
     file.setValue(QStringLiteral("General/visualizationRefreshRate"), 1001);
     file.setValue(QStringLiteral("General/titleBarMode"), 99);
+    file.setValue(QStringLiteral("Visualization/backgroundImageMaximumDimension"), 4097);
     file.sync();
     loaded = store.load(&warning);
     require(loaded.visualizationRefreshRate == 60,
@@ -540,6 +588,9 @@ void testQSettingsStorePersistsUserRefreshRate()
     require(!warning.isEmpty(), "invalid persisted refresh rate should report a warning");
     require(loaded.titleBarMode == midi_play::settings::TitleBarMode::Native,
             "invalid persisted title bar mode must fall back to native");
+    require(loaded.backgroundImageMaximumDimension
+                == midi_play::settings::kDefaultBackgroundImageMaximumDimension,
+            "invalid persisted background dimension must fall back to 2048");
 
     loaded.soundFontPath.clear();
     loaded.backgroundImagePath.clear();
@@ -1267,11 +1318,13 @@ int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
     testVisualizationRefreshRateSettingsNormalizeInts();
+    testBackgroundImageMaximumDimensionSettingsNormalizeInts();
     testGraphicsModeSettings();
     testTitleBarModePlatformPolicy();
     testSettingsServicePersistsTitleBarMode();
     testSettingsServicePersistsSoundFont();
     testSettingsServicePersistsBackgroundImage();
+    testSettingsServicePersistsBackgroundImageMaximumDimension();
     testSettingsServicePersistsOnlyEffectiveChanges();
     testQSettingsStorePersistsUserRefreshRate();
     testPlaybackTimelineCachesRepeatExpansion();

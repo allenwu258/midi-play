@@ -23,7 +23,10 @@ inline constexpr int kMaximumPlaybackRatePercent = 200;
 inline constexpr int kMinimumVisualizationRefreshRate = 1;
 inline constexpr int kMaximumVisualizationRefreshRate = 1000;
 inline constexpr bool kDefaultShowNotationStrip = false;
-inline constexpr int kSettingsSchemaVersion = 12;
+inline constexpr int kDefaultBackgroundImageMaximumDimension = 2048;
+inline constexpr int kMinimumBackgroundImageMaximumDimension = 256;
+inline constexpr int kMaximumBackgroundImageMaximumDimension = 4096;
+inline constexpr int kSettingsSchemaVersion = 13;
 
 // 存储层提供原始快照，应用服务负责再次规范化并向消费者发布变更。
 struct PlayerSettings {
@@ -46,6 +49,7 @@ struct PlayerSettings {
     QString backgroundImagePath;
     BackgroundImageAlignment backgroundImageAlignment = kDefaultBackgroundImageAlignment;
     int backgroundImageOpacity = kDefaultBackgroundImageOpacity;
+    int backgroundImageMaximumDimension = kDefaultBackgroundImageMaximumDimension;
     // 增强流光效果由 Vulkan 提供，应用服务按构建能力及后端限制开关。
     bool visualEffectsEnabled = true;
     VisualEffectLevel visualEffectsLevel = kDefaultVisualEffectLevel;
@@ -61,5 +65,7 @@ bool isValidPlaybackRatePercent(int percent) noexcept;
 int normalizePlaybackRatePercent(int percent) noexcept;
 // 将规范化刷新率转换为整数纳秒周期，供精确 GUI 计时器使用。
 std::chrono::nanoseconds visualizationRefreshPeriod(int refreshRate) noexcept;
+// 背景图最大边长限制在 256..4096，非法值回退到默认 2048。
+int normalizeBackgroundImageMaximumDimension(int dimension) noexcept;
 
 } // namespace midi_play::settings

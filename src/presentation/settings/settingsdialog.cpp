@@ -23,6 +23,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -32,6 +33,7 @@ namespace {
 
 // 仅用于界面选项，区别于领域特效档位的持久化值。
 constexpr int kVisualEffectsDisabledUiValue = -1;
+constexpr int kBackgroundMaximumDimensionDebounceMs = 200;
 
 } // namespace
 
@@ -227,6 +229,22 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     form->addRow(QStringLiteral("背景图片"), backgroundEditor);
     form->setRowVisible(backgroundEditor, false);
 
+    m_backgroundMaximumDimensionSpinBox = new QSpinBox(this);
+    m_backgroundMaximumDimensionSpinBox->setObjectName(QStringLiteral("backgroundImageMaximumDimensionSpinBox"));
+    m_backgroundMaximumDimensionSpinBox->setRange(
+        midi_play::settings::kMinimumBackgroundImageMaximumDimension,
+        midi_play::settings::kMaximumBackgroundImageMaximumDimension);
+    m_backgroundMaximumDimensionSpinBox->setSingleStep(256);
+    m_backgroundMaximumDimensionSpinBox->setSuffix(QStringLiteral(" px"));
+    m_backgroundMaximumDimensionSpinBox->setAccessibleName(QStringLiteral("背景图最大边长"));
+    m_backgroundMaximumDimensionSpinBox->setToolTip(QStringLiteral(
+        "限制背景图解码后的最长边，不会放大较小图片；数值越大，内存占用越高。"));
+    form->addRow(QStringLiteral("背景图最大边长"), m_backgroundMaximumDimensionSpinBox);
+    form->setRowVisible(m_backgroundMaximumDimensionSpinBox, false);
+    m_backgroundMaximumDimensionCommitTimer = new QTimer(this);
+    m_backgroundMaximumDimensionCommitTimer->setSingleShot(true);
+    m_backgroundMaximumDimensionCommitTimer->setInterval(kBackgroundMaximumDimensionDebounceMs);
+
     m_backgroundAlignmentCombo = new QComboBox(this);
     m_backgroundAlignmentCombo->setObjectName(QStringLiteral("backgroundAlignmentCombo"));
     m_backgroundAlignmentCombo->setAccessibleName(QStringLiteral("背景适配"));
@@ -340,6 +358,8 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         updateBackgroundModeSelection(m_settingsService->backgroundImageEnabled());
         updateBackgroundAlignmentSelection(m_settingsService->backgroundImageAlignment());
         updateBackgroundOpacitySelection(m_settingsService->backgroundImageOpacity());
+        updateBackgroundMaximumDimensionSelection(
+            m_settingsService->backgroundImageMaximumDimension());
         connect(m_titleBarModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &SettingsDialog::applyTitleBarModeFromUi);
         connect(m_graphicsModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -354,6 +374,15 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::applyBackgroundAlignmentFromUi);
         connect(m_backgroundOpacitySlider, &QSlider::valueChanged,
                 this, &SettingsDialog::applyBackgroundOpacityFromUi);
+        connect(m_backgroundMaximumDimensionSpinBox, qOverload<int>(&QSpinBox::valueChanged),
+                this, &SettingsDialog::scheduleBackgroundMaximumDimensionFromUi);
+        connect(m_backgroundMaximumDimensionSpinBox, &QSpinBox::editingFinished, this, [this] {
+            if (m_backgroundMaximumDimensionCommitTimer)
+                m_backgroundMaximumDimensionCommitTimer->stop();
+            applyBackgroundMaximumDimensionFromUi();
+        });
+        connect(m_backgroundMaximumDimensionCommitTimer, &QTimer::timeout,
+                this, &SettingsDialog::applyBackgroundMaximumDimensionFromUi);
         connect(m_settingsService, &app::SettingsService::visualizationRefreshRateChanged,
                 this, &SettingsDialog::updateRefreshRateSelection);
         connect(m_settingsService, &app::SettingsService::titleBarModeChanged,
@@ -373,6 +402,8 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::updateBackgroundAlignmentSelection);
         connect(m_settingsService, &app::SettingsService::backgroundImageOpacityChanged,
                 this, &SettingsDialog::updateBackgroundOpacitySelection);
+        connect(m_settingsService, &app::SettingsService::backgroundImageMaximumDimensionChanged,
+                this, &SettingsDialog::updateBackgroundMaximumDimensionSelection);
         connect(m_settingsService, &app::SettingsService::settingsSaveFailed,
                 this, &SettingsDialog::showSaveError);
         connect(m_settingsService, &app::SettingsService::settingsLoadWarning,
@@ -554,6 +585,22 @@ void SettingsDialog::applyBackgroundOpacityFromUi(int value)
     m_settingsService->setBackgroundImageOpacity(value);
 }
 
+void SettingsDialog::scheduleBackgroundMaximumDimensionFromUi(int value)
+{
+    Q_UNUSED(value);
+    if (!m_backgroundMaximumDimensionCommitTimer) return;
+    m_errorLabel->hide();
+    m_backgroundMaximumDimensionCommitTimer->start();
+}
+
+void SettingsDialog::applyBackgroundMaximumDimensionFromUi()
+{
+    if (!m_settingsService || !m_backgroundMaximumDimensionSpinBox) return;
+    m_errorLabel->hide();
+    m_settingsService->setBackgroundImageMaximumDimension(
+        m_backgroundMaximumDimensionSpinBox->value());
+}
+
 // 非预设刷新率映射到自定义项，模型值仍完整回填到数值编辑器。
 void SettingsDialog::updateRefreshRateSelection(int refreshRate)
 {
@@ -711,6 +758,7 @@ void SettingsDialog::updateBackgroundModeSelection(bool enabled)
     const QSignalBlocker blocker(m_backgroundModeCombo);
     m_backgroundModeCombo->setCurrentIndex(m_backgroundModeCombo->findData(enabled));
     m_formLayout->setRowVisible(m_backgroundImageEditor, enabled);
+    m_formLayout->setRowVisible(m_backgroundMaximumDimensionSpinBox, enabled);
     m_formLayout->setRowVisible(m_backgroundAlignmentCombo, enabled);
     m_formLayout->setRowVisible(m_backgroundOpacityEditor, enabled);
     if (isVisible()) resize(width(), sizeHint().height());
@@ -733,6 +781,18 @@ void SettingsDialog::updateBackgroundOpacitySelection(int opacity)
     m_backgroundOpacitySlider->setValue(normalized);
     m_backgroundOpacityLabel->setText(QStringLiteral("%1%").arg(normalized));
     m_backgroundOpacitySlider->setToolTip(QStringLiteral("100% 为完全显示，修改立即生效并自动保存。"));
+}
+
+void SettingsDialog::updateBackgroundMaximumDimensionSelection(int dimension)
+{
+    if (!m_backgroundMaximumDimensionSpinBox) return;
+    const int normalized = midi_play::settings::normalizeBackgroundImageMaximumDimension(dimension);
+    if (m_backgroundMaximumDimensionCommitTimer)
+        m_backgroundMaximumDimensionCommitTimer->stop();
+    const QSignalBlocker blocker(m_backgroundMaximumDimensionSpinBox);
+    m_backgroundMaximumDimensionSpinBox->setValue(normalized);
+    m_backgroundMaximumDimensionSpinBox->setToolTip(QStringLiteral(
+        "限制背景图解码后的最长边，不会放大较小图片；数值越大，内存占用越高。"));
 }
 
 // 加载期间关闭重复选择入口；成功/失败信息由后续专用结果信号回填。

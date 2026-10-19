@@ -1,5 +1,7 @@
 #include "backgroundimageloader.h"
 
+#include "domain/settings/playersettings.h"
+
 // 实现通用 Qt 图片读取与有界 WebP 静态解码。
 #include <QFile>
 #include <QFileInfo>
@@ -10,7 +12,6 @@
 namespace midi_play::presentation::visualization {
 namespace {
 
-constexpr int maximumDimension = 2048;
 constexpr qint64 maximumWebPBytes = 64 * 1024 * 1024;
 
 // 优先识别扩展名，再通过 RIFF/WEBP 文件头识别无标准后缀输入。
@@ -61,7 +62,7 @@ bool inspectWebP(const QByteArray& bytes, WebPBitstreamFeatures* features, QStri
 }
 
 // 保持宽高比，仅在任一边超过上限时缩小。
-QSize scaledSize(QSize source)
+QSize scaledSize(QSize source, int maximumDimension)
 {
     if (source.width() > maximumDimension || source.height() > maximumDimension)
         source.scale(maximumDimension, maximumDimension, Qt::KeepAspectRatio);
@@ -86,15 +87,16 @@ bool canReadBackgroundImage(const QString& path, QString* error)
 }
 
 // WebP 在解码阶段缩放，其他格式交由 QImageReader 处理方向和缩放。
-QImage loadBackgroundImage(const QString& path)
+QImage loadBackgroundImage(const QString& path, int maximumDimension)
 {
+    maximumDimension = midi_play::settings::normalizeBackgroundImageMaximumDimension(maximumDimension);
     if (isWebP(path)) {
         const QByteArray bytes = readWebP(path, nullptr);
         WebPDecoderConfig config {};
         if (bytes.isEmpty() || !WebPInitDecoderConfig(&config)
             || !inspectWebP(bytes, &config.input, nullptr)) return {};
 
-        const QSize target = scaledSize({config.input.width, config.input.height});
+        const QSize target = scaledSize({config.input.width, config.input.height}, maximumDimension);
         QImage image(target, QImage::Format_RGBA8888);
         if (image.isNull()) return {};
         config.options.use_scaling = 1;
@@ -116,7 +118,7 @@ QImage loadBackgroundImage(const QString& path)
     reader.setAutoTransform(true);
     const QSize sourceSize = reader.size();
     if (!sourceSize.isValid()) return {};
-    reader.setScaledSize(scaledSize(sourceSize));
+    reader.setScaledSize(scaledSize(sourceSize, maximumDimension));
     const QImage image = reader.read();
     return image.isNull() ? QImage() : image.convertToFormat(QImage::Format_RGBA8888);
 }

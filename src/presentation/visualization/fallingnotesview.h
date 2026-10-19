@@ -4,6 +4,7 @@
 
 #include "domain/playback/playbacktypes.h"
 #include "domain/settings/graphicsmode.h"
+#include "domain/settings/playersettings.h"
 #include "domain/settings/visualeffectlevel.h"
 #include "domain/settings/backgroundimagealignment.h"
 #include "domain/visualization/playbackscenestate.h"
@@ -18,6 +19,7 @@
 #include <QWidget>
 #include <QChronoTimer>
 #include <QFutureWatcher>
+#include <QTimer>
 #if MIDI_PLAY_HAS_VULKAN
 #include <QVulkanInstance>
 #endif
@@ -76,6 +78,8 @@ public slots:
     void setGraphicsMode(midi_play::settings::GraphicsMode mode);
     // 异步解码背景；仅最新请求的结果可以写回当前视图。
     void setBackgroundImagePath(const QString& path);
+    // 更新背景图解码上限；当前背景保留到新尺寸的异步解码完成。
+    void setBackgroundImageMaximumDimension(int dimension);
     // 更新背景放置模式及 0..100 透明度，不重新解码图片。
     void setBackgroundImageAlignment(midi_play::settings::BackgroundImageAlignment alignment);
     void setBackgroundImageOpacity(int opacity);
@@ -104,6 +108,8 @@ protected:
 private:
     // 从可见窗口缓存取得借用的候选索引，仅在帧状态失效时更新。
     void rebuildFrameState();
+    // 启动一次带当前解码上限的背景加载；请求号使过期任务无法写回。
+    void startBackgroundImageLoad(bool clearCurrent);
     // 按 DPR 生成预乘 alpha 键盘底图，内存超过上限时退回直接绘制。
     void rebuildStaticKeyboard(qreal devicePixelRatio, const QRect& logicalRect);
 #if MIDI_PLAY_HAS_VULKAN
@@ -133,7 +139,11 @@ private:
     bool m_graphicsModeResolutionPending = false;
     QString m_backgroundImagePath;
     QImage m_backgroundImage;
+    int m_backgroundImageMaximumDimension = midi_play::settings::kDefaultBackgroundImageMaximumDimension;
     quint64 m_backgroundRequestId = 0; // 递增请求号用于丢弃过期异步解码结果。
+    QTimer m_backgroundLoadDebounceTimer;
+    QFutureWatcher<QImage>* m_backgroundWatcher = nullptr;
+    bool m_backgroundLoadQueued = false;
 #if MIDI_PLAY_HAS_VULKAN
     std::unique_ptr<QVulkanInstance> m_vulkanInstance;
     FallingNotesVulkanWindow* m_vulkanWindow = nullptr;

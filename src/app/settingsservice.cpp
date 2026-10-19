@@ -54,6 +54,8 @@ void SettingsService::load()
         loadedSettings.backgroundImageAlignment);
     loadedSettings.backgroundImageOpacity = std::clamp(
         loadedSettings.backgroundImageOpacity, 0, 100);
+    loadedSettings.backgroundImageMaximumDimension = settings::normalizeBackgroundImageMaximumDimension(
+        loadedSettings.backgroundImageMaximumDimension);
     m_settings = loadedSettings;
     m_lastLoadWarning = warning;
     if (!warning.isEmpty()) {
@@ -204,6 +206,15 @@ void SettingsService::setBackgroundImageOpacity(int opacity)
     if (m_settings.backgroundImageOpacity == normalized) return;
     m_settings.backgroundImageOpacity = normalized;
     emit backgroundImageOpacityChanged(normalized);
+    persistSettings();
+}
+
+void SettingsService::setBackgroundImageMaximumDimension(int dimension)
+{
+    const int normalized = settings::normalizeBackgroundImageMaximumDimension(dimension);
+    if (m_settings.backgroundImageMaximumDimension == normalized) return;
+    m_settings.backgroundImageMaximumDimension = normalized;
+    emit backgroundImageMaximumDimensionChanged(normalized);
     persistSettings();
 }
 

@@ -105,6 +105,23 @@ void testWebPBackgroundImage()
             "invalid WebP files must be rejected");
 }
 
+void testBackgroundImageMaximumDimension()
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "background dimension test directory must be available");
+    QImage original(512, 256, QImage::Format_RGBA8888);
+    original.fill(QColor(80, 140, 220, 255));
+    const QString path = directory.filePath(QStringLiteral("scaled.png"));
+    require(original.save(path), "background dimension test image must be written");
+
+    require(loadBackgroundImage(path, 256).size() == QSize(256, 128),
+            "background loader must scale the longest edge to the configured limit");
+    require(loadBackgroundImage(path, 4096).size() == original.size(),
+            "background loader must not upscale images below the configured limit");
+    require(loadBackgroundImage(path, 128).size() == QSize(512, 256),
+            "background loader must normalize invalid runtime limits to the default");
+}
+
 midi::MidiRawEvent event(midi::MidiMessageKind kind, music::Tick tick, int data1, int data2 = 0)
 {
     // 构造带绝对 tick 和消息数据的原始 MIDI 事件。
@@ -848,6 +865,7 @@ int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
     testWebPBackgroundImage();
+    testBackgroundImageMaximumDimension();
     testPedalTimingSurvivesImport();
     testSostenutoCapturesOnlyHeldInstances();
     testContinuousBarsAndPolyphonicTies();

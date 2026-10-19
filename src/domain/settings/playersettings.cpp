@@ -34,4 +34,11 @@ std::chrono::nanoseconds visualizationRefreshPeriod(int refreshRate) noexcept
     return std::chrono::nanoseconds(1'000'000'000) / normalizedRefreshRate;
 }
 
+int normalizeBackgroundImageMaximumDimension(int dimension) noexcept
+{
+    return dimension >= kMinimumBackgroundImageMaximumDimension
+        && dimension <= kMaximumBackgroundImageMaximumDimension
+        ? dimension : kDefaultBackgroundImageMaximumDimension;
+}
+
 } // namespace midi_play::settings

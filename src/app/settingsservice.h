@@ -36,6 +36,8 @@ public:
     settings::BackgroundImageAlignment backgroundImageAlignment() const noexcept
     { return m_settings.backgroundImageAlignment; }
     int backgroundImageOpacity() const noexcept { return m_settings.backgroundImageOpacity; }
+    int backgroundImageMaximumDimension() const noexcept
+    { return m_settings.backgroundImageMaximumDimension; }
     bool visualEffectsEnabled() const noexcept { return m_settings.visualEffectsEnabled; }
     settings::VisualEffectLevel visualEffectsLevel() const noexcept { return m_settings.visualEffectsLevel; }
     // 仅背景启用时返回路径，关闭时保留持久化路径但向渲染器返回空串。
@@ -68,6 +70,7 @@ public slots:
     void setBackgroundImageEnabled(bool enabled);
     void setBackgroundImageAlignment(settings::BackgroundImageAlignment alignment);
     void setBackgroundImageOpacity(int opacity);
+    void setBackgroundImageMaximumDimension(int dimension);
     // 仅当前构建支持 Vulkan 且选择 Vulkan 模式时允许开启增强效果。
     void setVisualEffectsEnabled(bool enabled);
     // 非法特效等级回退中档。
@@ -88,6 +91,7 @@ signals:
     void backgroundImageEnabledChanged(bool enabled);
     void backgroundImageAlignmentChanged(midi_play::settings::BackgroundImageAlignment alignment);
     void backgroundImageOpacityChanged(int opacity);
+    void backgroundImageMaximumDimensionChanged(int dimension);
     void visualEffectsEnabledChanged(bool enabled);
     void visualEffectsLevelChanged(midi_play::settings::VisualEffectLevel level);
     // 读取警告与保存失败分开发送，不与各字段的正常变化混用。

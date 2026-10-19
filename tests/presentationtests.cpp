@@ -55,6 +55,8 @@ void require(bool condition, const char* message)
     }
 }
 
+void processEventsFor(int milliseconds);
+
 midi_play::visualization::VisualChartPtr makeChart()
 {
     // 构造稳定的钢琴样例图表，供传统和 Vulkan 视图复用。
@@ -275,9 +277,12 @@ void testBackgroundModePreference()
     auto* choose = dialog.findChild<QPushButton*>(QStringLiteral("loadBackgroundImageButton"));
     auto* alignment = dialog.findChild<QComboBox*>(QStringLiteral("backgroundAlignmentCombo"));
     auto* opacity = dialog.findChild<QSlider*>(QStringLiteral("backgroundOpacitySlider"));
-    require(mode && imagePath && choose && alignment && opacity && !dialog.findChild<QPushButton*>(
+    auto* maximumDimension = dialog.findChild<QSpinBox*>(
+        QStringLiteral("backgroundImageMaximumDimensionSpinBox"));
+    require(mode && imagePath && choose && alignment && opacity && maximumDimension
+                && !dialog.findChild<QPushButton*>(
                 QStringLiteral("clearBackgroundImageButton")),
-            "background settings must expose mode, image, alignment and opacity controls");
+            "background settings must expose mode, image, alignment, opacity and dimension controls");
     require(mode->count() == 2 && mode->itemText(0) == QStringLiteral("无背景")
                 && mode->itemText(1) == QStringLiteral("图片背景（实验）")
                 && !mode->currentData().toBool() && imagePath->parentWidget()->isHidden(),
@@ -287,13 +292,16 @@ void testBackgroundModePreference()
     require(service.backgroundImageEnabled() && !imagePath->parentWidget()->isHidden(),
             "selecting image mode must reveal the image row and persist the mode");
     require(alignment->count() == 6 && alignment->currentText() == QStringLiteral("裁剪铺满")
-                && opacity->value() == 100,
-            "background controls must use cover and full opacity by default");
+                && opacity->value() == 100 && maximumDimension->value() == 2048,
+            "background controls must use cover, full opacity and 2048 px by default");
     alignment->setCurrentIndex(alignment->findText(QStringLiteral("完整显示")));
     opacity->setValue(60);
+    maximumDimension->setValue(4096);
+    processEventsFor(260);
     require(service.backgroundImageAlignment() == midi_play::settings::BackgroundImageAlignment::Contain
-                && service.backgroundImageOpacity() == 60,
-            "background alignment and opacity changes must update the settings service");
+                && service.backgroundImageOpacity() == 60
+                && service.backgroundImageMaximumDimension() == 4096,
+            "background alignment, opacity and dimension changes must update the settings service");
     const QString selectedPath = temporary.filePath(QStringLiteral("background.png"));
     service.setBackgroundImagePath(selectedPath);
     require(imagePath->text() == selectedPath,
@@ -309,8 +317,9 @@ void testBackgroundModePreference()
     require(!restarted.backgroundImageEnabled() && restarted.backgroundImagePath() == selectedPath,
             "background mode and image selection must survive restart independently");
     require(restarted.backgroundImageAlignment() == midi_play::settings::BackgroundImageAlignment::Contain
-                && restarted.backgroundImageOpacity() == 60,
-            "background alignment and opacity must survive restart");
+                && restarted.backgroundImageOpacity() == 60
+                && restarted.backgroundImageMaximumDimension() == 4096,
+            "background alignment, opacity and dimension must survive restart");
     restarted.setBackgroundImageEnabled(true);
     require(restarted.activeBackgroundImagePath() == selectedPath,
             "re-enabling image mode must restore the previous selection");
