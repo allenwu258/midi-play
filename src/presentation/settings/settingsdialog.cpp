@@ -204,7 +204,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     m_backgroundModeCombo->setObjectName(QStringLiteral("backgroundModeCombo"));
     m_backgroundModeCombo->addItem(QStringLiteral("无背景"), 0);
     m_backgroundModeCombo->addItem(QStringLiteral("图片背景"), 1);
-    m_backgroundModeCombo->addItem(QStringLiteral("视频背景"), 2);
+    m_backgroundModeCombo->addItem(QStringLiteral("视频背景（实验）"), 2);
     form->addRow(QStringLiteral("下落背景"), m_backgroundModeCombo);
 
     auto* backgroundEditor = new QWidget(this);
