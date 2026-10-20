@@ -102,6 +102,20 @@ void testVideoTrackDuration()
     const auto loopPosition = midi_play::visualization::backgroundVideoPosition(duration + 500'000, 8'000'000, duration);
     require(reader.frameAt(loopPosition, &error).image == firstCycle, "MKV loops on the video track endpoint");
 }
+void testCoarseTimeBaseSeeking()
+{
+    using namespace midi_play;
+    const QDir fixtures = QFileInfo(QString::fromUtf8(MIDI_PLAY_TEST_VIDEO)).dir();
+    media::VideoFrameReader reader;
+    QString error;
+    require(reader.open(fixtures.filePath("background-coarse-timebase.mp4"), 256, &error), qPrintable(error));
+    for (const qint64 target : {1'300'000, 1'499'999, 1'500'000, 2'999'999, 1'300'000, 0}) {
+        const auto frame = reader.frameAt(target, &error);
+        require(!frame.image.isNull(), qPrintable(error));
+        require(frame.positionUs == (target / 500'000) * 500'000,
+            "coarse time base selects the containing frame, including reverse seeks");
+    }
+}
 void testDecoderAndAsync()
 {
     using namespace midi_play;
@@ -355,7 +369,7 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
     try {
-        testTimeline(); testSettings(); testVideoTrackDuration(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testSeekAcknowledgment();
+        testTimeline(); testSettings(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testSeekAcknowledgment();
 #if MIDI_PLAY_HAS_VULKAN
         if (application.arguments().contains("--vulkan")) testOffscreen();
         if (application.arguments().contains("--integration")) testVideoExport();

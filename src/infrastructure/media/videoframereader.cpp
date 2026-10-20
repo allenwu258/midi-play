@@ -125,9 +125,11 @@ public:
     }
     void seek(qint64 target)
     {
+        // Nearest rounding can seek past the requested frame on coarse time
+        // bases. Both the target and maximum seek timestamp must round down.
+        const qint64 timestamp = start + av_rescale_q_rnd(target, microseconds, stream->time_base, AV_ROUND_DOWN);
         check(avformat_seek_file(format, streamIndex, std::numeric_limits<int64_t>::min(),
-            start + av_rescale_q(target, microseconds, stream->time_base),
-            start + av_rescale_q(target, microseconds, stream->time_base), AVSEEK_FLAG_BACKWARD), "Seek background video");
+            timestamp, timestamp, AVSEEK_FLAG_BACKWARD), "Seek background video");
         avcodec_flush_buffers(codec);
         av_packet_unref(packet); av_frame_unref(current); av_frame_unref(next);
         packetPending = false; draining = false; eof = false;
@@ -189,6 +191,13 @@ public:
         if ((currentUs < 0 && target > 1'000'000)
             || (currentUs >= 0 && (target < currentUs || target - currentUs > 1'000'000))) seek(target);
         if (currentUs < 0 && !decode(current, currentUs)) throw std::runtime_error("Video contains no decoded frames");
+        if (currentUs > target) {
+            // Some demuxers have sparse indexes. Fall back to decoding from the
+            // beginning rather than silently presenting a future frame.
+            seek(0);
+            if (!decode(current, currentUs) || currentUs > target)
+                throw std::runtime_error("Cannot locate a video frame at or before the requested time");
+        }
         while (true) {
             if (nextUs < 0 && !decode(next, nextUs)) break;
             if (nextUs > target) break;
