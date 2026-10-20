@@ -88,6 +88,20 @@ void testSettings()
     require(restored.activeBackgroundVideoPath().isEmpty() && !restored.backgroundVideoPath().isEmpty(), "disabling preserves video selection");
     require(mute->isHidden(), "video audio control hides outside video mode");
 }
+void testVideoTrackDuration()
+{
+    using namespace midi_play;
+    const QDir fixtures = QFileInfo(QString::fromUtf8(MIDI_PLAY_TEST_VIDEO)).dir();
+    media::VideoFrameReader reader;
+    QString error;
+    require(reader.open(fixtures.filePath("background-long-audio.mkv"), 256, &error), qPrintable(error));
+    const qint64 duration = reader.metadata().durationUs;
+    // Millisecond time bases round the last packet duration by at most 1 ms.
+    require(std::abs(duration - 2'000'000) <= 1000, "video duration excludes longer audio track");
+    const auto firstCycle = reader.frameAt(500'000, &error).image;
+    const auto loopPosition = midi_play::visualization::backgroundVideoPosition(duration + 500'000, 8'000'000, duration);
+    require(reader.frameAt(loopPosition, &error).image == firstCycle, "MKV loops on the video track endpoint");
+}
 void testDecoderAndAsync()
 {
     using namespace midi_play;
@@ -341,7 +355,7 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
     try {
-        testTimeline(); testSettings(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testSeekAcknowledgment();
+        testTimeline(); testSettings(); testVideoTrackDuration(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testSeekAcknowledgment();
 #if MIDI_PLAY_HAS_VULKAN
         if (application.arguments().contains("--vulkan")) testOffscreen();
         if (application.arguments().contains("--integration")) testVideoExport();

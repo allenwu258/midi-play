@@ -61,9 +61,7 @@ public:
         stream = format->streams[streamIndex];
         start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
         info.durationUs = stream->duration > 0
-            ? av_rescale_q(stream->duration, stream->time_base, microseconds) : format->duration;
-        if (info.durationUs <= 0 || info.durationUs == AV_NOPTS_VALUE)
-            throw std::runtime_error("Background video requires a finite duration");
+            ? av_rescale_q(stream->duration, stream->time_base, microseconds) : 0;
         info.sourceSize = {stream->codecpar->width, stream->codecpar->height};
         if (info.sourceSize.isEmpty() || info.sourceSize.width() > 8192 || info.sourceSize.height() > 8192
             || qint64(info.sourceSize.width()) * info.sourceSize.height() > 40'000'000)
@@ -79,12 +77,51 @@ public:
         check(avcodec_open2(codec, decoder, nullptr), "Open video decoder");
         packet = av_packet_alloc(); current = av_frame_alloc(); next = av_frame_alloc();
         if (!packet || !current || !next) throw std::bad_alloc();
+        if (info.durationUs <= 0) {
+            // Matroska commonly omits stream duration. Container duration may
+            // instead describe a longer audio track, so inspect video packets.
+            // This is a cancellable, bounded-memory demux pass, not full decode.
+            info.durationUs = inspectVideoDuration();
+            seek(0);
+        }
+        if (info.durationUs <= 0)
+            throw std::runtime_error("Background video requires a finite duration");
         const auto* matrix = av_packet_side_data_get(stream->codecpar->coded_side_data,
             stream->codecpar->nb_coded_side_data, AV_PKT_DATA_DISPLAYMATRIX);
         if (matrix && matrix->size >= 9 * sizeof(int32_t)) {
             const double angle = -av_display_rotation_get(reinterpret_cast<const int32_t*>(matrix->data));
             if (std::isfinite(angle)) rotation = angle;
         }
+    }
+    qint64 inspectVideoDuration()
+    {
+        check(av_seek_frame(format, streamIndex, start, AVSEEK_FLAG_BACKWARD), "Inspect video timeline");
+        qint64 lastPts = AV_NOPTS_VALUE, previousPts = AV_NOPTS_VALUE, lastDuration = 0;
+        while (true) {
+            if (canceled && canceled->load()) throw std::runtime_error("Video decoding canceled");
+            av_packet_unref(packet);
+            const int read = av_read_frame(format, packet);
+            if (read == AVERROR_EOF) break;
+            check(read, "Inspect video duration");
+            if (packet->stream_index != streamIndex || packet->pts == AV_NOPTS_VALUE) continue;
+            if (lastPts == AV_NOPTS_VALUE || packet->pts > lastPts) {
+                previousPts = lastPts;
+                lastPts = packet->pts;
+                lastDuration = packet->duration;
+            } else if (packet->pts < lastPts && (previousPts == AV_NOPTS_VALUE || packet->pts > previousPts)) {
+                previousPts = packet->pts;
+            }
+        }
+        av_packet_unref(packet);
+        if (lastPts == AV_NOPTS_VALUE) throw std::runtime_error("Video has no presentation timestamps");
+        if (lastDuration <= 0 && previousPts != AV_NOPTS_VALUE) lastDuration = lastPts - previousPts;
+        if (lastDuration <= 0) {
+            const auto rate = av_guess_frame_rate(format, stream, nullptr);
+            if (rate.num > 0 && rate.den > 0)
+                lastDuration = av_rescale_q(1, av_inv_q(rate), stream->time_base);
+        }
+        if (lastDuration <= 0) throw std::runtime_error("Cannot determine the final video frame duration");
+        return av_rescale_q(lastPts - start + lastDuration, stream->time_base, microseconds);
     }
     void seek(qint64 target)
     {

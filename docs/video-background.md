@@ -13,6 +13,7 @@
 - BackgroundMode 与 schema 15：读取旧 enabled/path 配置为 Image/None；新模式优先，旧字段保留兼容。禁用不会删除文件路径。
 - backgroundVideoPosition：纯整数微秒映射，内部循环按取余定位；终点取左极限，避免音乐恰好在循环边界结束时闪回首帧。导出尾音阶段保持同一终帧。
 - VideoFrameReader：独立 FFmpeg 库解码器，单线程使用，顺序播放复用上下文，随机 seek 向关键帧定位后按 PTS 解码。保留当前帧和下一帧，不缓存完整视频；处理 B 帧、VFR 时间戳、非方形像素、旋转、解码尾部和取消。
+- 视频轨缺少 duration 时进行可取消、恒定内存的 packet PTS 扫描，以末帧 PTS 加持续时间计算周期；不使用可能被音轨延长的容器总时长。此类素材首次打开需要额外读取文件。
 - VideoBackgroundController：最多一个解码任务、一个可覆盖的最新请求；源代次与 seek 代次隔离过期结果，工作线程持有自身资源，不访问 GUI。快速拖动取消长 GOP 追赶。GUI 只接收已完成的 QImage。
 - Qt 与 Vulkan 共用 placement、遮罩和 RGBA 图像。Vulkan 同尺寸帧复用按交换链图像隔离的纹理与 staging，内容变化不重建静态几何。
 - 离屏导出拥有独立解码器，以输出帧换算后的音乐时间读取背景。共享 GPU 纹理更新前等待在途槽，保证正确性；视频背景可能降低原有三槽流水的并发收益。
@@ -46,3 +47,9 @@ ffmpeg -f lavfi -i "testsrc2=size=320x180:rate=24:duration=2" -f lavfi -i "sine=
 ~~~
 
 发布使用 scripts/Build-Windows.ps1。新增 --video-background-test CLI 检查在清理开发 SDK PATH 后加载已部署的解码库，读取首尾帧并反向 seek；该检查包含在 SOP 打包流程中。原声设备输出、4K 高码率视频和长 GOP 连续拖动需要在目标设备上人工验收。
+
+回归素材 background-long-audio.mkv 为 2 秒画面与 5 秒音轨，用于验证缺少视频流 duration 时不按音轨长度循环：
+
+~~~powershell
+ffmpeg -f lavfi -i "testsrc2=size=96x64:rate=24:duration=2" -f lavfi -i "sine=frequency=660:sample_rate=44100:duration=5" -c:v libx264 -g 24 -bf 2 -pix_fmt yuv420p -c:a aac tests/fixtures/background-long-audio.mkv
+~~~
