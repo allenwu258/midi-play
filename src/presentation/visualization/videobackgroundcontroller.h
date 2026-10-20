@@ -30,6 +30,7 @@ private:
     };
     void requestFrame();
     void synchronizeAudio(bool discontinuity);
+    void clearAudioSource();
     std::shared_ptr<Worker> m_worker;
     QFutureWatcher<Result>* m_watcher = nullptr;
     QAudioOutput* m_audioOutput = nullptr;
@@ -38,7 +39,6 @@ private:
     QString m_path;
     int m_dimension = 2048, m_rate = 100;
     qint64 m_musicUs = 0, m_durationUs = 0, m_audioLoop = -1;
-    qint64 m_audioEndedLoop = -1;
     quint64 m_epoch = 0;
     bool m_playing = false, m_muted = true, m_pending = false, m_failed = false;
     bool m_audioSynchronizing = false, m_audioFailed = false;

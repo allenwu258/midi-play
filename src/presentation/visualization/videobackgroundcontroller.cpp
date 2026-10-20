@@ -28,8 +28,8 @@ void VideoBackgroundController::setSource(const QString& path, int dimension)
     ++m_epoch;
     m_path = path; m_dimension = dimension; m_metadata = {};
     m_failed = false; m_pending = false; m_audioLoop = -1;
-    m_audioEndedLoop = -1; m_audioFailed = false;
-    if (m_audioPlayer) { m_audioPlayer->stop(); m_audioPlayer->setSource({}); }
+    m_audioFailed = false;
+    clearAudioSource();
     m_worker = path.isEmpty() ? nullptr : std::make_shared<Worker>();
     if (m_worker) requestFrame();
 }
@@ -38,7 +38,7 @@ void VideoBackgroundController::setMuted(bool muted)
 {
     if (m_muted == muted) return;
     m_muted = muted;
-    m_audioEndedLoop = -1; m_audioFailed = false;
+    m_audioFailed = false;
     if (muted && m_audioPlayer) { m_audioPlayer->stop(); m_audioPlayer->setSource({}); }
     synchronizeAudio(true);
 }
@@ -103,6 +103,19 @@ void VideoBackgroundController::requestFrame()
     }));
 }
 
+void VideoBackgroundController::clearAudioSource()
+{
+    // A new media source gets a new player identity. Pending backend callbacks
+    // from the previous file can no longer mutate the current source's state.
+    if (m_audioPlayer) {
+        m_audioPlayer->disconnect(this);
+        m_audioPlayer->stop();
+        m_audioPlayer->deleteLater();
+        m_audioPlayer = nullptr;
+    }
+    if (m_audioOutput) { m_audioOutput->deleteLater(); m_audioOutput = nullptr; }
+}
+
 void VideoBackgroundController::synchronizeAudio(bool discontinuity)
 {
     if (m_audioSynchronizing || m_muted || m_failed || m_audioFailed || !m_metadata.hasAudio || m_path.isEmpty()) return;
@@ -112,7 +125,6 @@ void VideoBackgroundController::synchronizeAudio(bool discontinuity)
         m_audioPlayer = new QMediaPlayer(this);
         m_audioPlayer->setAudioOutput(m_audioOutput);
         connect(m_audioPlayer, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
-            if (status == QMediaPlayer::EndOfMedia) m_audioEndedLoop = m_audioLoop;
             if (status == QMediaPlayer::LoadedMedia)
                 synchronizeAudio(true);
         });
@@ -133,16 +145,18 @@ void VideoBackgroundController::synchronizeAudio(bool discontinuity)
     const qint64 mediaPositionMs = std::max<qint64>(0,
         m_metadata.startTimeUs - m_metadata.mediaStartTimeUs + videoUs) / 1000;
     const qint64 loop = m_musicUs / m_metadata.durationUs;
-    if (discontinuity || loop != m_audioLoop) m_audioEndedLoop = -1;
-    // An audio track may finish before the video stream. Keep the rest of this
-    // cycle silent; play() at EndOfMedia would otherwise restart it immediately.
-    if (m_audioEndedLoop == loop) return;
-    if (!m_playing || m_musicUs >= m_durationUs) m_audioPlayer->pause();
+    // Eligibility comes from the music clock and the selected audio interval,
+    // never from an asynchronous EndOfMedia event attributed to a loop counter.
+    const bool audible = videoUs >= m_metadata.audioStartUs && videoUs < m_metadata.audioEndUs;
+    const bool play = m_playing && m_musicUs < m_durationUs && audible;
+    if (!play) m_audioPlayer->pause();
     // The music transport remains authoritative; resync on loop/seek and bound
     // independent device-clock drift. Scrubbing and paused previews stay silent.
-    if (discontinuity || loop != m_audioLoop || std::abs(m_audioPlayer->position() - mediaPositionMs) > 120)
+    if (discontinuity || loop != m_audioLoop
+        || (play && m_audioPlayer->mediaStatus() == QMediaPlayer::EndOfMedia)
+        || std::abs(m_audioPlayer->position() - mediaPositionMs) > 120)
         m_audioPlayer->setPosition(mediaPositionMs);
     m_audioLoop = loop;
-    if (m_playing && m_musicUs < m_durationUs) m_audioPlayer->play();
+    if (play) m_audioPlayer->play();
 }
 }

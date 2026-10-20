@@ -272,6 +272,45 @@ void testAudioTimeOrigin()
     };
     require(energy(880) > 100 * energy(440), "export drops the audio preceding the first video frame");
 }
+void testAudioLoopEvents()
+{
+    if (!QCoreApplication::arguments().contains("--audio")) return;
+    using namespace midi_play;
+    const auto path = QFileInfo(QString::fromUtf8(MIDI_PLAY_TEST_VIDEO)).dir().filePath("background-short-audio.mp4");
+    presentation::visualization::VideoBackgroundController controller;
+    QImage frame;
+    QObject::connect(&controller, &presentation::visualization::VideoBackgroundController::frameReady,
+        &controller, [&](const QImage& image) { frame = image; });
+    controller.setSource(path, 256);
+    controller.synchronize(0, 8'000'000, false, 100, true);
+    require(waitUntil([&] { return !frame.isNull(); }), "short audio video loads");
+    controller.setMuted(false);
+    auto* player = controller.findChild<QMediaPlayer*>();
+    controller.findChild<QAudioOutput*>()->setVolume(0);
+    require(waitUntil([&] { return player->hasAudio(); }), "short audio track loads");
+    controller.synchronize(200'000, 8'000'000, true, 100, true);
+    require(waitUntil([&] { return player->playbackState() == QMediaPlayer::PlayingState; }), "first audio cycle plays");
+    controller.synchronize(2'000'000, 8'000'000, true, 100, true);
+    require(player->playbackState() != QMediaPlayer::PlayingState, "short audio tail stays silent");
+    controller.synchronize(4'200'000, 8'000'000, true, 100, true);
+    require(waitUntil([&] { return player->playbackState() == QMediaPlayer::PlayingState; }), "next audio cycle starts");
+    // Deliberately deliver the previous cycle's completion after the loop seek.
+    player->mediaStatusChanged(QMediaPlayer::EndOfMedia);
+    player->pause();
+    controller.synchronize(4'250'000, 8'000'000, true, 100);
+    require(waitUntil([&] { return player->playbackState() == QMediaPlayer::PlayingState; }), "late EOF cannot suppress the new cycle");
+    controller.synchronize(8'000'000, 8'000'000, false, 100, true);
+    require(player->playbackState() != QMediaPlayer::PlayingState, "music endpoint always silences audio");
+    controller.setSource(QString::fromUtf8(MIDI_PLAY_TEST_VIDEO), 256);
+    player->errorOccurred(QMediaPlayer::ResourceError, "late error from previous source");
+    controller.synchronize(0, 8'000'000, true, 100, true);
+    require(waitUntil([&] {
+        for (auto* candidate : controller.findChildren<QMediaPlayer*>())
+            if (candidate != player && candidate->playbackState() == QMediaPlayer::PlayingState) return true;
+        return false;
+    }), "old source errors cannot poison replacement audio");
+    controller.setMuted(true);
+}
 void testContinuousScrubbing()
 {
     using namespace midi_play;
@@ -421,7 +460,7 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
     try {
-        testTimeline(); testSettings(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testAudioTimeOrigin(); testSeekAcknowledgment();
+        testTimeline(); testSettings(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testAudioTimeOrigin(); testAudioLoopEvents(); testSeekAcknowledgment();
 #if MIDI_PLAY_HAS_VULKAN
         if (application.arguments().contains("--vulkan")) testOffscreen();
         if (application.arguments().contains("--integration")) testVideoExport();
