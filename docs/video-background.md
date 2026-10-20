@@ -1,8 +1,8 @@
-# 视频背景
+# 视频背景（实验）
 
 ## 用户行为
 
-设置 → 下落背景提供无背景、图片背景、视频背景三种模式。图片和视频分别保留路径，共用六种适配方式、不透明度、可读性遮罩和 256–4096 px 输出边长上限。只覆盖下落音符区。
+设置 → 下落背景提供“无背景”“图片背景”“视频背景（实验）”三种模式。视频背景为实验功能；本文描述当前源码行为，发行包是否包含该功能以对应 Release 说明和 build-info.json 为准。图片和视频分别保留路径，共用六种适配方式、不透明度、可读性遮罩和 256–4096 px 输出边长上限。只覆盖下落音符区。
 
 音乐传输位置是权威时间。视频短于乐曲时循环，长于乐曲时截断；音乐变速时视频按相同倍率变化。暂停保留当前帧。自然结束保留音乐终点及对应视频帧，再次播放从零开始；显式停止仍归零，自然结束或停态非零位置也可点击停止回到开头。拖动期间音符和视频预览滑块目标，松开后提交一次音乐 seek，预览期间视频原声静音。
 
@@ -19,7 +19,7 @@
 - VideoBackgroundController：最多一个解码任务、一个可覆盖的最新请求；拖动不反复取消和重建解码器，允许已完成的中间预览帧发布，再处理最新目标，停止拖动后收敛到最终目标。切换源才取消旧任务，并以源代次隔离过期结果。工作线程持有自身资源，不访问 GUI，GUI 只接收已完成的 QImage。
 - Qt 与 Vulkan 共用 placement、遮罩和 RGBA 图像。Vulkan 同尺寸帧复用按交换链图像隔离的纹理与 staging，内容变化不重建静态几何。
 - 离屏导出拥有独立解码器，以输出帧换算后的音乐时间读取背景。视频纹理、staging 和 descriptor 按三个帧槽隔离，仅在对应槽完成后复用，避免逐帧上传等待所有在途槽。静态图片继续共享纹理；共享 atlas 变化仍需等待。该优化消除背景上传的跨槽等待，但不保证总导出耗时同比改善。
-- 原声导出先保留输入时间戳、减去视频轨起点并补齐音轨空缺，再生成长度与视频周期一致的临时 PCM，循环、变速、裁到音乐结束，最后补静音至尾音终点。开启乐曲音频时与原声归一化混音；关闭乐曲音频仍可单独导出已启用的视频原声。归一化混音与系统实时混音的响度可能不同。
+- 原声导出先保留输入时间戳、减去视频轨起点并补齐音轨空缺，再生成长度与视频周期一致的临时 PCM，循环、变速、裁到音乐结束，最后补静音至尾音终点。开启乐曲音频时通过 amix normalize=1 与原声归一化混音；关闭乐曲音频仍可单独导出已启用的视频原声，且不要求 SoundFont。这不等于目标响度归一化，与系统实时混音的响度可能不同。独立 MP3/WAV 音频导出不包含视频原声。
 
 ## 支持范围
 
@@ -29,7 +29,11 @@
 
 ## 验证与发布
 
-CTest 注册以下分层测试，可使用 ctest --test-dir build/windows-release -C Release -L video-background --output-on-failure 单独运行：
+CTest 注册以下分层测试，可单独运行：
+
+~~~powershell
+ctest --test-dir build/windows-release -C Release -L video-background --output-on-failure
+~~~
 
 | 测试 | 验证范围 |
 | --- | --- |
@@ -42,7 +46,7 @@ CTest 注册以下分层测试，可使用 ctest --test-dir build/windows-releas
 
 集成测试带 integration 标签，缺少设备或工具时以返回码 77 标记跳过，不能计作验证通过。Vulkan 相关测试只在启用该后端时注册。常规 CTest 允许跳过；发布严格门禁会直接运行全部集成入口，任何非零退出码（包括 77）都会阻止打包。
 
-集成验收入口（需要可用的 Vulkan 设备和 PATH 中的 FFmpeg）：
+集成验收入口（需要 Windows 桌面会话、可用的 Vulkan 设备、音频输出设备，以及 PATH 中的 FFmpeg 和可加载的 Qt/依赖 DLL）：
 
 ~~~powershell
 ./build/windows-release/Release/midi_play_video_background_tests.exe -platform windows --audio --audio-export --vulkan --integration --window
@@ -55,6 +59,14 @@ CTest 注册以下分层测试，可使用 ctest --test-dir build/windows-releas
 ~~~
 
 脚本先执行全量 CTest 和严格集成验证，再暂存部署、清除开发 SDK PATH，运行依赖检查和 CLI 解码/渲染/MP3 冒烟测试，全部成功后替换正式包。--video-background-test 检查已部署解码库能读取首尾帧并反向 seek。build-info.json 的 videoIntegrationPassed 只有在严格门禁通过时为 true；false 表示未执行该门禁，不表示集成测试失败。外部 FFmpeg 测试工具与原始背景文件不复制进 dist。4K 高码率、长 GOP 持续拖动和实际扬声器听感仍需按目标设备验收。
+
+### 本地验收记录（2026-10-20）
+
+- 源码提交 9360470 的 Windows x64 Release 经 SOP 严格门禁打包；全量 CTest 为 21 通过、1 跳过、0 失败，六项视频背景测试全部通过。跳过项为原有 window_chrome_vulkan，原因是桌面测试环境未产生首帧。
+- 严格视频集成、移除开发 SDK PATH 后的依赖闭包、CLI 视频解码、Qt 渲染和 MP3 冒烟通过。包内 videoIntegrationPassed=true、sourceHasLocalChanges=false；未启用可选 FluidSynth 设备冒烟，audioSmokePassed=false。
+- 该包位于 dist/midi-play-windows-x64，源码版本以包内 build-info.json 为准。随后提交 70d1e1b 将设置页文案改为“视频背景（实验）”，该文案不在上述 9360470 包内。后续重新打包应形成新的验证记录，不沿用本次结果。
+
+本次记录未包含 4K/长 GOP 跨设备性能、实际扬声器听感或新增 Vulkan validation layer 压力验收，不据此宣称所有环境已验证。
 
 ## 回归素材
 

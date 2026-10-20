@@ -1,6 +1,6 @@
 # MIDI Play 项目架构说明
 
-本文是 MIDI Play 的详细架构文档，面向需要阅读、调试、扩展或部署项目的开发者。文档以当前源码为准，描述项目在 CMake 版本 0.4.7 下的模块边界、运行时对象、数据流、线程模型和关键操作流程。
+本文是 MIDI Play 的详细架构文档，面向需要阅读、调试、扩展或部署项目的开发者。文档以当前源码为准，描述模块边界、运行时对象、数据流、线程模型和关键操作流程。2026-10-20 已同步视频背景（实验）实现；CMake 项目版本仍为 0.4.7，该版本号不代表已发布的 v0.4.7 包包含本分支新增功能。
 
 本文只记录已经存在于代码中的职责和约束。它不定义新的产品需求，也不替代各模块的接口注释、测试用例和专项设计文档。与具体实现相关的说明会给出源码路径，便于从架构概念继续追踪实现。
 
@@ -27,11 +27,12 @@ MIDI Play 是一个面向 Windows x64 的 MIDI 播放和下落音符可视化应
 | 语言 | C++20 | 领域模型、应用服务、基础设施和 Qt 界面 |
 | UI | Qt 6.8 Widgets/Gui/Core/Concurrent/Xml | 窗口、控件、异步任务、XML 读取和图像 |
 | 音频 | FluidSynth 动态库 | SoundFont 加载、实时合成、离线合成 |
+| 视频原声 | Qt 6 Multimedia | 独立播放第一条原声音轨，跟随音乐传输状态 |
 | 图形 | Qt QPainter、可选 Vulkan | 传统绘制、实时 Vulkan 窗口和离屏渲染 |
-| 编码 | FFmpeg、LAME、WebP | 视频封装、MP3/WAV 输出和背景图片支持 |
+| 媒体与编码 | FFmpeg 库及命令行工具、LAME、WebP | 进程内视频帧解码、原声处理、视频封装、MP3/WAV 输出和背景图片支持 |
 | 构建 | CMake、vcpkg、MSVC/Ninja | 依赖发现、编译、测试和 Windows 发行 |
 
-顶层 CMakeLists.txt 先配置 Qt、Threads、WebP 和 LAME，再根据 Qt Vulkan 能力、Vulkan SDK 和 glslangValidator 是否存在决定是否定义 MIDI_PLAY_HAS_VULKAN。FluidSynth 不作为链接时的必需符号使用，运行时由 QLibrary 动态加载。
+顶层 CMakeLists.txt 先配置 Qt（含 Multimedia）、FFmpeg 库、Threads、WebP 和 LAME，再根据 Qt Vulkan 能力、Vulkan SDK 和 glslangValidator 是否存在决定是否定义 MIDI_PLAY_HAS_VULKAN。FluidSynth 不作为链接时的必需符号使用，运行时由 QLibrary 动态加载；视频解码器则链接 FFmpeg 库，传统 Qt 构建也需要该依赖。
 
 构建目标分为两类：
 
@@ -41,7 +42,7 @@ MIDI Play 是一个面向 Windows x64 的 MIDI 播放和下落音符可视化应
 | midi_play | src/main.cpp | Qt GUI 播放器 |
 | midi_play_cli | src/cli/main.cpp | Console 解析、音频导出、离屏渲染和诊断程序 |
 
-测试目标在启用测试配置时由 CMake 生成，覆盖领域可视化、播放会话、节拍器、呈现后端、窗口边框、SoundFont、音频导出和视频编码等路径。
+测试目标在启用测试配置时由 CMake 生成，覆盖领域可视化、播放会话、节拍器、呈现后端、窗口边框、SoundFont、音频导出、视频背景和视频编码等路径。
 
 ## 3. 总体架构
 
@@ -57,12 +58,14 @@ flowchart TB
     SET[Domain Settings 设置值对象]
     READ[Infrastructure Readers MIDI / MusicXML]
     AUDIO[Infrastructure Audio FluidSynth]
+    MEDIA[Infrastructure Media 视频帧解码]
     ENCODE[Infrastructure Encoding FFmpeg / LAME / WebP]
     STORE[Infrastructure Settings QSettings]
     EXT[(文件系统、动态库、GPU、音频设备)]
 
     UI --> APP
     UI --> VIS
+    UI --> MEDIA
     APP --> MUSIC
     APP --> PLAY
     APP --> VIS
@@ -70,6 +73,7 @@ flowchart TB
     APP --> READ
     APP --> AUDIO
     APP --> ENCODE
+    APP --> MEDIA
     APP --> STORE
     READ --> MUSIC
     PLAY --> MUSIC
@@ -79,6 +83,7 @@ flowchart TB
     ENCODE --> AUDIO
     STORE --> SET
     AUDIO --> EXT
+    MEDIA --> EXT
     ENCODE --> EXT
     UI --> EXT
 ~~~
@@ -200,10 +205,11 @@ MusicDocument 在导入阶段可变；进入 PlaybackModel、VisualChart 等消�
 - NoteColorMode：普通或鲜明配色；
 - VisualEffectLevel：无、低、中、高；
 - TitleBarMode：原生或自定义标题栏；
-- BackgroundImageAlignment：背景图适配方式；
+- BackgroundMode：无背景、图片、视频；设置页将视频标记为实验功能；
+- BackgroundImageAlignment：图片和视频共用的适配方式；
 - 播放速率、可视化刷新率、节拍器和简谱条开关。
 
-枚举值的读取、写入和非法值回退集中在领域设置函数中，避免 UI 和 QSettings 直接解释持久化整数。
+领域设置函数提供枚举规范化和持久化值转换，SettingsService 负责运行时偏好。涉及旧配置键是否存在的迁移在 QSettingsStore 中完成，例如 schema 15 的背景模式迁移；UI 不自行解释旧配置。
 
 ### 4.6 infrastructure/readers、midi、musicxml：输入适配
 
@@ -251,15 +257,16 @@ FluidSynthEngine 使用 QLibrary 获取函数指针，因此核心程序在没�
 
 节拍器使用独立的内置资源和合成器/声部池，避免占用歌曲的 MIDI 通道。切换音源、暂停、停止和 seek 时，播放会话负责停止节拍器并重新定位节拍器调度器。
 
-### 4.8 infrastructure/encoding、settings、resources
+### 4.8 infrastructure/media、encoding、settings、resources
 
 | 目录 | 职责 |
 | --- | --- |
-| infrastructure/encoding | FFmpeg 进程、视频编码器 worker、音频文件编码器、FFmpeg 探测 |
+| infrastructure/media | VideoFrameReader，进程内 FFmpeg 视频解码、轨道时长与音视频起点元数据 |
+| infrastructure/encoding | FFmpeg 进程、视频编码器 worker、原声对齐与混音、音频文件编码器、FFmpeg 探测 |
 | infrastructure/settings | QSettingsStore，使用 Qt 用户级 INI 持久化 |
 | infrastructure/resources | 项目音频设置和轨道音源配置模型 |
 
-FFmpeg 通过 QProcess 或 worker 进程交互，不把 FFmpeg 类型传入领域层。QSettingsStore 只负责存取，设置规范化和迁移由 SettingsService 完成。
+视频导出和原声混音通过 QProcess 调用外部 FFmpeg；VideoFrameReader 在进程内调用 FFmpeg 库，向调用者返回 VideoMetadata 和 QImage，不把 FFmpeg 类型传入领域层。QSettingsStore 负责存取、旧键迁移和读取警告，SettingsService 负责运行时规范化、状态发布和保存编排。
 
 ### 4.9 presentation：界面、渲染和用户操作
 
@@ -271,6 +278,7 @@ FFmpeg 通过 QProcess 或 worker 进程交互，不把 FFmpeg 类型传入领�
 - SettingsDialog、SoundFontSetup：设置编辑和首次音源配置；
 - ExportDialog、AudioExportPage、VideoExportPage：导出参数输入和可用性提示；
 - FallingNotesView：传统 Qt/QPainter 绘制入口，处理背景、钢琴键、网格、音符和播放状态；
+- VideoBackgroundController：接收音乐时间，调度异步视频帧解码，并在启用原声时协调 Qt Multimedia 播放器；
 - FallingNotesVulkanWindow：Vulkan 实时窗口，使用共享的 VisualChart 和场景布局；
 - FallingNotesRenderer、SceneLayoutEngine：抽取可复用的几何和绘制准备逻辑；
 - VulkanOffscreenRenderer：视频导出的离屏 Vulkan 设备、帧槽、readback 和 fence 管理；
@@ -310,7 +318,7 @@ CLI 根据命令选择 QCoreApplication 或 QGuiApplication：
 - 不创建 MainWindow，不读取 GUI 用户设置；
 - 注册与 GUI 相同的 MusicXmlReaderAdapter 和 MidiReaderAdapter。
 
-CLI 的输入文件单参数模式执行 reader smoke test；--midi-test 直接验证 MIDI Reader；--audio-test 验证 FluidSynth 播放与换音源；--export-mp3/--export-wav 执行离线音频导出；--render-test 生成指定位置的可视化 PNG。
+CLI 的输入文件单参数模式执行 reader smoke test；--midi-test 直接验证 MIDI Reader；--audio-test 验证 FluidSynth 播放与换音源；--export-mp3/--export-wav 执行离线音频导出；--render-test 生成指定位置的可视化 PNG；--video-background-test 通过进程内解码器检查视频首尾帧与反向 seek。
 
 ### 5.3 对象所有权
 
@@ -323,9 +331,13 @@ CLI 的输入文件单参数模式执行 reader smoke test；--midi-test 直接�
 | ThreadedPlaybackAudioService | PlaybackSession 的 unique_ptr | 通过内部 Worker 串行访问 |
 | MusicDocument、PlaybackModel、VisualChart | shared_ptr，在加载完成后只读共享 | 构建线程完成后多线程只读 |
 | QFutureWatcher | PlayerApplicationService 的 QObject 子对象 | GUI 线程接收完成信号 |
+| VideoBackgroundController、QMediaPlayer、QAudioOutput | FallingNotesView 持有控制器，控制器拥有原声播放器与输出对象 | GUI 线程协调，Qt Multimedia 管理内部音频后端 |
+| VideoFrameReader | 实时控制器的共享 Worker 或离屏 renderer 独占 | 实时由 QtConcurrent 任务串行访问；导出由导出 worker 访问 |
 | VideoExportService / AudioExportService | 调用方拥有，任务期间保持输入文档和临时资源 | GUI 或导出 worker，取决于调用方 |
 
 析构 PlaybackController 时会先停止位置定时器，再通过 BlockingQueuedConnection 停止会话，退出并等待播放线程，最后释放会话。这样可以保证音频工作线程不再访问即将销毁的对象。
+
+视频解码任务只捕获 Worker 和不可变请求参数，不访问 GUI 对象。控制器析构或换源时设置取消标志；Worker 由任务持有直到结束，源代次与 Worker 身份共同阻止过期结果发布。原声换源会断开并释放旧播放器，避免旧源回调影响新源。
 
 ## 6. 打开音乐文件的端到端流程
 
@@ -473,6 +485,8 @@ PlaybackSession 是播放时间的权威来源。PlaybackController 的位置定
 - seek：停止当前调度，递增 generation，flush 旧事件，调整音频位置、playhead 和 scheduler；若之前在播放，则从新位置恢复；
 - Error：音频启动、音源切换或恢复失败时进入错误状态并发布 errorOccurred。
 
+自然播放结束同样进入 Stopped，但保留音乐终点位置；再次 play 从零开始。显式 stop 才归零，因此 UI 不能仅凭 Stopped 判断“停止”按钮不可用：终点或停态非零 seek 位置仍可点击停止。视频背景据此保留终帧或重置。
+
 ### 8.5 generation 防止旧事件泄漏
 
 每次 seek、stop、暂停恢复边界或音源切换都可能让已经排队的事件失去意义。PlaybackSession 递增 m_eventGeneration，同时通知 scheduler 和 audio service。ThreadedPlaybackAudioService 及其 worker 在提交和执行事件时检查 generation，从而忽略旧 transport 事务残留的事件。
@@ -524,6 +538,8 @@ PlaybackSession
 ~~~
 
 ThreadedPlaybackAudioService 把调用转移到内部 worker，确保 FluidSynth 对象不被多个线程并发操作。PlaybackSession 只看到抽象能力，例如 timed events、playback rate、metronome 和 audio clock。
+
+视频原声使用独立的 QMediaPlayer/QAudioOutput，由系统混音器与 FluidSynth 合并。它不替代 IPlaybackAudioService，也不成为音乐时钟；控制器根据音乐位置校正原声的播放位置、倍率与状态。默认屏蔽原声时不创建播放器。
 
 ### 9.2 音源加载和热切换
 
@@ -584,7 +600,7 @@ SceneLayoutEngine 根据窗口尺寸、chart 音域、钢琴键和简谱条配�
 
 ### 10.4 传统 Qt 绘制
 
-FallingNotesView 使用 QPainter 绘制背景、网格、钢琴键、音符、歌词、标记和播放指示。背景图片通过 BackgroundImageLoader 异步加载，BackgroundImagePlacement 计算裁剪或适配区域。静态钢琴键、黑键分隔、文字布局和部分音符材质使用缓存，降低高密度曲目的 CPU 绘制开销。
+FallingNotesView 使用 QPainter 绘制背景、网格、钢琴键、音符、歌词、标记和播放指示。背景图片通过 BackgroundImageLoader 异步加载，视频帧由 VideoBackgroundController 提供；两者共用 BackgroundImagePlacement、适配方式、不透明度和可读性遮罩。静态钢琴键、黑键分隔、文字布局和部分音符材质使用缓存，降低高密度曲目的 CPU 绘制开销。
 
 ### 10.5 Vulkan 实时窗口
 
@@ -596,9 +612,9 @@ Vulkan 模式与传统模式共享：
 - SceneLayoutEngine；
 - PlaybackSceneState；
 - 音符颜色和材质语义；
-- 主题、背景图和播放位置。
+- 主题、图片或视频背景帧、背景布局和播放位置。
 
-只有绘制后端、GPU 资源和特效实现不同。构建时 Vulkan 能力不完整会生成传统版本；运行时初始化失败时，设置和窗口逻辑会回退到传统模式。
+只有绘制后端、GPU 资源和特效实现不同。直接使用 CMake 且未开启 MIDI_PLAY_REQUIRE_VULKAN 时，构建能力不完整允许回退传统版本；SOP 的 Vulkan 构建要求依赖齐全，否则失败。运行时初始化失败时，设置和窗口逻辑会回退到传统模式。
 
 ### 10.6 Vulkan 离屏渲染
 
@@ -611,15 +627,28 @@ VulkanOffscreenRenderer 用于视频导出，不依赖 QVulkanWindow 的可见�
 
 slot 拥有该帧提交所需的缓冲和同步对象，因此下一帧可以准备另一个 slot；只有对应 fence 完成后才读取和复用该 slot。取消标志会在场景准备、提交等待和 readback 阶段检查。
 
+视频背景使用独立 VideoFrameReader，按输出帧对应的音乐位置读取背景。动态背景纹理、staging 和 descriptor 按三个 slot 隔离，上传当前背景不再等待其他在途槽；静态图片继续共享纹理，共享文字图集变化仍等待在途工作完成。这消除了背景上传的跨槽等待，不代表整个导出吞吐必然同比提高。
+
+### 10.7 视频背景（实验）的时间线与调度
+
+`backgroundVideoPosition` 以整数微秒映射音乐位置到视频周期：播放中按视频时长取余；音乐终点及导出尾音取终点左侧时刻，避免恰好在循环边界时闪回首帧。音乐变速通过相同的音乐位置映射自然传递给背景，视频自身时钟不驱动画面。
+
+VideoFrameReader 仅缓存当前帧和下一帧，顺序播放复用上下文；随机定位先 seek 到关键帧，再按 PTS 解码到包含目标时刻的帧。seek 目标向下取整到流时间基，避免提前显示未来帧。视频轨缺少 duration 时扫描该轨 packet PTS，不能用可能被长音轨延长的容器总时长代替。第一音轨时长缺失也需扫描；两条轨均缺失时长会分别扫描，默认静音仍读取这些元数据，大文件首次打开可能增加 I/O。
+
+VideoBackgroundController 最多保留一个运行任务和一个可覆盖的最新目标。持续拖动只更新待处理目标，让在途帧完成并发布后继续解码最新位置，避免不断取消导致预览饥饿；切换源才取消并隔离旧结果。MainWindow 拖动期间让音符与背景使用同一个预览位置，视频原声静音；松开后提交一次音乐 seek，保留预览直到收到精确位置确认。
+
+原声采用第一音轨，与视频首帧的源时间对齐。有效音频区间外静音，下一循环按相同区间恢复；音乐结束立即停止原声。是否播放由音乐状态与音轨区间决定，不用迟到的 EndOfMedia 标记循环。Qt 原声位置在 seek、循环或偏差超过 120 ms 时重锚，不能宣称采样级同步。详细支持范围与测试素材见 [视频背景说明](video-background.md)。
+
 ## 11. 设置、主题和外部资源
 
 ### 11.1 设置加载
 
-启动时 QSettingsStore 读取用户级 INI。SettingsService 对读取结果执行：
+启动时 QSettingsStore 读取用户级 INI 并处理旧键迁移和读取警告，SettingsService 继续规范化和发布设置：
 
 - 刷新率、播放速率和枚举值规范化；
-- 音源、FFmpeg 和背景图片路径转为绝对路径；
+- 音源、FFmpeg 和背景图片/视频路径转为绝对路径；
 - 背景不透明度限制在 0 到 100；
+- schema 15 的合法 BackgroundMode 优先，包括显式 None；缺失或非法值回退旧图片开关，非法值额外报告 warning；
 - 传统图形模式强制关闭 Vulkan 特效；
 - 传统构建读取 Vulkan 版本遗留设置时保留偏好，但不向当前界面暴露启用状态。
 
@@ -649,7 +678,9 @@ SettingsDialog 只通过 SettingsService 的 setter 修改设置。每个 setter
 
 ### 11.4 主题和背景
 
-ThemeController 根据 ThemeMode 更新 Qt 样式和图标。背景图片路径和适配方式由 SettingsService 保存，由两个渲染后端分别加载和应用。背景图片是外部本地资源，路径失效时不复制或嵌入图片，而是保留设置并显示加载错误。
+ThemeController 根据 ThemeMode 更新 Qt 样式和图标。SettingsService 分别保留图片与视频路径，BackgroundMode 决定当前启用的资源；禁用背景或切换模式不会删除另一路径。FallingNotesView 协调图片异步加载或视频解码，并把同一 QImage 交给传统 Qt 和 Vulkan 后端。两种资源共用六种适配方式、不透明度、可读性遮罩和 256–4096 px 最大边长，默认 2048 px。
+
+设置页显示“无背景”“图片背景”“视频背景（实验）”，视频模式额外显示默认开启的“屏蔽视频原声”。原始图片和视频保持为外部本地资源，路径失效时保留设置并报告错误，不复制或嵌入原文件。
 
 ## 12. 音频导出流程
 
@@ -685,18 +716,18 @@ AudioFileEncoder 根据 WAV 或 MP3 目标写入格式。导出完成前使用�
 
 入口：VideoExportService::exportDocument。
 
-视频导出同时需要 Vulkan 图形设备、有效 SoundFont 和可用 FFmpeg。主要阶段：
+视频导出需要 Vulkan 图形设备和可用的外部 FFmpeg 命令行工具。仅在包含乐曲音频时需要有效 SoundFont；关闭乐曲音频可输出静音视频，或仅包含已启用的视频原声。主要阶段：
 
 1. 校验文档、尺寸、帧率、输出路径和 FFmpeg；
 2. 构造 ExportTimeline，确定视频帧、音乐位置和音频采样帧的映射；
-3. 初始化 VulkanOffscreenRenderer；
-4. 调用 OfflineAudioRenderer 生成固定采样率的临时 PCM；
+3. 初始化 VulkanOffscreenRenderer，视频背景使用导出任务自己的解码器；
+4. 按选项调用 OfflineAudioRenderer 生成乐曲 PCM；若启用视频原声，再对齐其起点、循环和变速，输出原声 PCM 或与乐曲混音；
 5. 创建 FfmpegVideoEncoderWorker，准备有限数量的 QImage 帧槽；
 6. 用 beginRender 预提交若干帧；
 7. 完成最早的 render ticket，获取 QImage 并提交到 FFmpeg；
 8. 继续交替提交和完成帧，形成 GPU、CPU readback 和编码器的流水线；
 9. FFmpeg 关闭输入并完成封装；
-10. 用 FFprobe 校验输出帧数、尺寸、帧率和音频流；
+10. 有 ffprobe 时校验输出帧数、尺寸、帧率和音频流，并使用 FFmpeg 完整解码检查成片；
 11. 通过 QSaveFile 把临时输出提交为最终文件；
 12. 记录 Vulkan、readback、编码器等待和帧数诊断。
 
@@ -704,17 +735,21 @@ AudioFileEncoder 根据 WAV 或 MP3 目标写入格式。导出完成前使用�
 
 ExportTimeline 使用固定 fps 产生视频帧位置，使用固定音频采样率产生 PCM 帧。视频第 n 帧对应的音乐位置由同一条 timeline 计算，避免视频帧数和音频长度因独立取整而漂移。
 
+背景画面复用 backgroundVideoPosition。原声处理先保留源时间戳、减去视频轨起点并填充音轨空缺，生成一个视频周期的 PCM，再循环、变速并截到音乐结束，尾音阶段补静音。与乐曲同时输出时使用 `amix normalize=1` 归一化混音；这不等于目标响度归一化，且实时系统混音的音量可能不同。独立 MP3/WAV 音频导出不包含视频原声。
+
 ### 13.3 背压、取消和临时文件
 
 FfmpegVideoEncoderWorker 使用有界帧队列和条件变量。生产者在队列满时等待，消费者编码完成后归还 frame slot，从而限制内存占用。取消时会终止等待、停止 FFmpeg 进程、清理临时文件，并保留原目标文件。
 
-视频导出使用 QSaveFile 且关闭 direct write fallback。只有所有帧编码并通过 FFprobe 验证后才提交目标文件。
+视频导出使用 QSaveFile 且关闭 direct write fallback。只有所有帧编码并通过完整性检查后才提交目标文件；ffprobe 缺失时仍执行 FFmpeg 完整解码校验，有 ffprobe 但校验失败时不会提交。
 
 ## 14. CLI 操作流程
 
+以下语法中的尖括号表示必填参数，方括号表示可选参数，不应原样输入终端。可直接替换路径运行的 PowerShell 示例见 [README 命令行验证](../README.md#命令行验证)。
+
 ### 14.1 读取验证
 
-~~~powershell
+~~~text
 midi_play_cli <xml|musicxml|mid|midi|kar file>
 midi_play_cli --midi-test <MIDI file>
 ~~~
@@ -723,7 +758,7 @@ midi_play_cli --midi-test <MIDI file>
 
 ### 14.2 音频测试
 
-~~~powershell
+~~~text
 midi_play_cli --audio-test <sf2|sf3 file> [replacement SoundFont]
 ~~~
 
@@ -731,7 +766,7 @@ midi_play_cli --audio-test <sf2|sf3 file> [replacement SoundFont]
 
 ### 14.3 音频导出
 
-~~~powershell
+~~~text
 midi_play_cli --export-wav <music file> <output file> --soundfont <sf2|sf3>
 midi_play_cli --export-mp3 <music file> <output file> --soundfont <sf2|sf3>
 ~~~
@@ -740,11 +775,19 @@ midi_play_cli --export-mp3 <music file> <output file> --soundfont <sf2|sf3>
 
 ### 14.4 离屏截图
 
-~~~powershell
+~~~text
 midi_play_cli --render-test <music file> <output.png> [position_us [width [height]]] [--theme dark|light] [--note-colors normal|vivid]
 ~~~
 
 截图流程直接构建 VisualChart、PlaybackSceneState、VisibleNoteIndex、SceneLayoutEngine 和 FallingNotesRenderer。该命令使用 QPainter，固定使用显式主题和音符颜色参数，不读取桌面应用设置，便于重复比较。
+
+### 14.5 视频背景解码检查
+
+~~~text
+midi_play_cli --video-background-test <video file>
+~~~
+
+通过 VideoFrameReader 读取首帧和终帧，再反向 seek 到零并比较首帧。该检查使用进程内 FFmpeg 库，不需要外部命令行工具；SOP 在清理开发 SDK PATH 后对已部署 CLI 执行此命令。它不验证 Qt 原声音频设备或 GPU 绘制。
 
 ## 15. 构建、部署和运行时依赖
 
@@ -753,25 +796,30 @@ midi_play_cli --render-test <music file> <output.png> [position_us [width [heigh
 CMakePresets.json 提供 Windows MSVC/Ninja 基线。scripts/Build-Windows.ps1 在构建前检查：
 
 - Visual Studio 和 Windows SDK；
-- Qt 目录及组件；
+- Qt 目录及组件，包括 Multimedia；
 - Vulkan SDK、Vulkan loader 和 glslangValidator；
 - vcpkg 依赖；
 - 可选 SoundFont、FFmpeg 和音频设备测试参数。
 
 MIDI_PLAY_ENABLE_VULKAN 控制是否请求 Vulkan，MIDI_PLAY_REQUIRE_VULKAN 控制缺失 Vulkan 时是否把 warning 升级为配置失败。未启用 Vulkan 时仍然生成传统 Qt 播放器和 CLI。
 
+手动构建需通过 CMAKE_MODULE_PATH 指向 vcpkg 安装目录下的 share/ffmpeg，使用其 FindFFMPEG.cmake；Windows 路径传入 CMake 时统一为正斜杠。完整命令见 [README 手动开发构建](../README.md#手动开发构建)。SOP 已提供该路径，并检查 Multimedia 和解码 DLL。
+
 ### 15.2 发行包
 
 部署脚本复制：
 
 - midi_play.exe 和 midi_play_cli.exe；
-- Qt Core、Gui、Widgets、Xml、Concurrent 运行库；
+- Qt Core、Gui、Widgets、Xml、Multimedia 及部署工具解析到的传递依赖；
 - platforms/qwindows.dll；
 - FluidSynth DLL 及其非系统依赖；
 - LAME 和其他编码依赖；
+- 进程内 FFmpeg 解码 DLL，以及 Qt Multimedia 所需的插件和媒体依赖；
 - 必需的 Qt 资源和插件。
 
-发行验证脚本会检查 EXE/DLL 依赖闭包。SoundFont、FFmpeg、Vulkan SDK 和 NVIDIA 驱动不会作为个人运行资源自动打包；FFmpeg 视频导出需要用户机器已有可执行文件。
+发行验证脚本会检查 EXE/DLL 依赖闭包，并在移除开发 SDK PATH 后执行 CLI 解码、渲染和 MP3 导出冒烟。用户 SoundFont、原始背景文件、FFmpeg/ffprobe 命令行程序、Vulkan SDK 和 NVIDIA 驱动不会自动打包；视频帧解码库已部署，视频导出仍需要外部可执行文件。
+
+`-FfmpegTestPath` 为测试 PATH 提供外部 FFmpeg；`-RequireVideoIntegration` 额外要求 Vulkan 构建、桌面及音频设备，直接执行全部视频背景集成模式，非零退出码（包括跳过码 77）均阻止打包。`build-info.json` 记录源码提交、是否有本地改动、工具版本、audioSmokePassed 和 videoIntegrationPassed；两个验证布尔值分别对应各自的可选门禁，为 false 表示未执行。后续源码变化不会自动刷新已有发行包。
 
 ## 16. 错误处理、取消和资源释放
 
@@ -818,6 +866,12 @@ CMake 注册的测试按能力划分：
 | window_chrome_geometry/native/vulkan | 标题栏几何和平台窗口行为 |
 | video_export_configuration | 视频参数、FFmpeg 探测和 Vulkan 门控 |
 | video_encoder_roundtrip | FFmpeg 编码、音视频封装和 MP4 完整性 |
+| video_background_timeline_and_decoder | 背景映射、结束定格、迁移、独立轨道时长、seek、持续拖动和过期结果隔离 |
+| video_background_audio_export | 原声起点、精确导出时长和尾段静音；需要外部 FFmpeg |
+| video_background_audio_device | Qt 真实音频后端、原声循环、短音轨静音区间和迟到事件；音量设为零 |
+| video_background_vulkan | 离屏动态帧、三槽并发、像素对照及无背景跨槽等待 |
+| video_background_full_export | 静音、仅原声、原声与乐曲混音的完整 MP4 导出 |
+| video_background_window | Windows 真实 Vulkan 窗口、动态上传、循环及后端切换 |
 | visualization_domain | 投影、可见窗口、区间索引和场景状态 |
 | playback_session_transport | 播放、暂停、停止、seek、generation 和位置发布 |
 | soundfont_inspector | SoundFont 容器检查 |
@@ -828,7 +882,7 @@ CMake 注册的测试按能力划分：
 ctest --test-dir build/windows-release -C Release --output-on-failure
 ~~~
 
-需要外部 FluidSynth、SoundFont、FFmpeg、Vulkan 或音频设备的测试会按环境配置启用或跳过。自动测试不能替代目标机器上的实际听音、GPU 回退和发行包检查。
+需要外部 FluidSynth、SoundFont、FFmpeg、Vulkan 或音频设备的测试会按环境配置启用或跳过。视频背景项带 video-background 标签，集成项另带 integration 标签，缺少前置条件时返回 77。测试报告必须区分通过和跳过；严格视频门禁不接受跳过。原视频导出完整集成通过 `midi_play_video_export_tests.exe -platform offscreen --integration` 手动运行，不存在同名的 video_export_vulkan_integration CTest。完整参数和环境要求见 [视频背景验收](video-background.md#验证与发布)。自动测试不能替代目标机器上的实际听音、GPU 回退和发行包检查。
 
 ## 18. 关键不变量和扩展点
 
@@ -842,6 +896,8 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 6. Vulkan 后端不可用时，传统 Qt 后端仍必须能显示和播放。
 7. 导出在验证完成前只能写临时文件，取消或失败不能破坏原目标文件。
 8. 外部路径、动态库和 GPU 资源失效时必须通过可读错误返回。
+9. 背景画面由音乐位置映射驱动；自然结束定格，显式停止与重播归零，原声不延伸到音乐终点之后。
+10. 实时解码不因持续拖动而反复取消；只保留一个最新待处理目标，换源结果必须隔离；离屏动态背景资源仅在所属帧槽完成后复用。
 
 ### 18.2 可以扩展的边界
 
@@ -874,6 +930,10 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | FluidSynth | src/infrastructure/audio |
 | 可视化投影 | src/domain/visualization/playbackvisualizationprojector.cpp |
 | 可见音符索引 | src/domain/visualization/visiblenoteindex.cpp |
+| 背景视频时间映射 | src/domain/visualization/backgroundvideotimeline.h |
+| 视频解码与轨道元数据 | src/infrastructure/media/videoframereader.h/.cpp |
+| 实时视频背景与原声 | src/presentation/visualization/videobackgroundcontroller.h/.cpp |
+| 导出视频原声处理 | src/infrastructure/encoding/backgroundaudioexport.h/.cpp |
 | 传统绘制 | src/presentation/visualization/fallingnotesview.cpp、fallingnotesrenderer.cpp |
 | Vulkan 实时绘制 | src/presentation/visualization/fallingnotesvulkanwindow.cpp |
 | Vulkan 离屏导出 | src/presentation/visualization/offscreen/vulkanoffscreenrenderer.cpp |

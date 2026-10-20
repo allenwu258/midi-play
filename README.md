@@ -10,8 +10,6 @@ MIDI Play 是一款开源桌面音乐播放器，提供实时钢琴键盘、深�
 
 [下载 Windows x64 发行版](https://github.com/allenwu258/midi-play/releases/latest) · [快速开始](#快速开始) · [从源码构建](#源码构建) · [反馈问题](https://github.com/allenwu258/midi-play/issues)
 
-当前稳定发布版本：[v0.4.7](https://github.com/allenwu258/midi-play/releases/tag/v0.4.7)，提供完整 Windows x64 便携发行包、Vulkan 并发视频导出、MP3/WAV 音频导出、可配置的 Vulkan 流光玻璃特效和图片背景布局控制。
-
 > 播放前需自行准备本地 SF2 / SF3 音源。程序不附带乐曲音源，也不会自动下载；可以跳过首次配置，先打开并查看乐曲。
 
 ## 目录
@@ -58,7 +56,7 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **双渲染模式**：默认优先使用 Vulkan 绘制，传统 Qt 绘制作为兼容和故障回退模式；两者共享音符布局、主题、色彩、图片和视频背景设置，也可在设置中手动选择。
 - **流光玻璃特效**：Vulkan 模式提供可关闭的音符边缘流光、局部泛光、击键反馈和粒子点缀，并支持低、中、高三档强度；传统 Qt 模式不渲染这些 Vulkan 专属特效。
 - **单图片背景**：可为下落音符区域选择本地 PNG、JPEG、静态 WebP 或 BMP 图片；WebP 由随程序部署的解码库读取，不依赖 Qt WebP 插件。图片异步加载、按区域比例裁剪并带可读性遮罩，背景图最大边长可在设置中调整为 256～4096 px（默认 2048 px），Vulkan 与传统 Qt 绘制共享配置。
-- **视频背景**：本地视频按音乐时间轴定位、循环和变速；暂停时定格，自然结束保留终帧，再次播放从头开始。拖动进度条时音符和背景同步预览，松开后提交音频跳转。默认屏蔽视频原声，可在设置中开启；视频导出支持动态背景和原声混音。实现与验收说明见 docs/video-background.md。
+- **视频背景（实验）**：本地视频按音乐时间轴定位、循环和变速；暂停时定格，自然结束保留终帧，再次播放从头开始，点击停止可回到开头。拖动进度条时音符和背景同步预览，松开后提交音频跳转。默认屏蔽视频原声，可在设置中开启；视频导出支持动态背景和原声混音。实现、边界与验收说明见 [视频背景（实验）](docs/video-background.md)。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：Windows 默认使用自定义标题栏，也可切换为原生标题栏；macOS/Linux 当前仅使用原生标题栏。
 - **深色 / 浅色主题**：设置中切换并自动保存；两套主题同时覆盖控件、下落音符和琴键，兼容传统 Qt 与 Vulkan 绘制。
@@ -103,7 +101,7 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 一键发行构建支持 Windows x64，使用普通的 **64 位 PowerShell 5.1 或 PowerShell 7**，不要求预先打开 Developer PowerShell。请安装：
 
 - **Visual Studio 2022 / Build Tools 2022**：包括“使用 C++ 的桌面开发”、MSVC v143 x64 工具、Windows SDK 和 C++ CMake 工具；
-- **Qt 6.8 或更新的 Qt 6 MSVC x64 套件**：包含 Core、Gui、Widgets、Concurrent、Xml 和 `windeployqt`；MinGW、ARM64 和静态 Qt 套件不适用；
+- **Qt 6.8 或更新的 Qt 6 MSVC x64 套件**：包含 Core、Gui、Widgets、Concurrent、Xml、Multimedia 和 `windeployqt`；MinGW、ARM64 和静态 Qt 套件不适用；
 - **Git**：`git.exe` 可从 PATH 找到；
 - **vcpkg**：准备独立的 vcpkg checkout，例如使用 `git clone https://github.com/microsoft/vcpkg.git <目标目录>`；脚本会在缺少 `vcpkg.exe` 时执行该 checkout 的 bootstrap；
 - **Vulkan SDK**：构建 Vulkan 版本时需要 x64 头文件、导入库和 `glslangValidator`。只构建传统版本可以不安装；
@@ -151,9 +149,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1
 
 1. 检查配置并初始化指定 VS 实例的 x64 编译环境，显式选用配置的 Qt 和 Vulkan，清除调用者残留的 SDK 搜索变量；
 2. 使用清单模式安装 `x64-windows` 依赖到 `build/dependencies/vcpkg_installed`，不修改 vcpkg 的 classic installed 目录。`vcpkg.json` 中的 `builtin-baseline` 固定依赖版本解析基线；
-3. 重新配置 CMake，复用对象文件进行 Release 构建，并运行全部 CTest；启用 Vulkan 时缺少任何必需能力会直接失败，不会静默产出传统版本；
-4. 在独立临时目录安装 GUI、CLI（不复制用户音源），用 `windeployqt` 部署 Qt DLL/插件，部署 FluidSynth 的传递依赖及 VS 提供的 **app-local MSVC CRT DLL**；
-5. 移除 PATH 中的开发 SDK，检查每个 EXE/DLL/插件的依赖闭包，并运行发行包 CLI 和实际 Qt 渲染检查；
+3. 重新配置 CMake，复用对象文件进行 Release 构建，并运行全部已注册的 CTest；集成测试可按环境跳过，启用 `-RequireVideoIntegration` 时还必须通过视频背景严格门禁。启用 Vulkan 构建时缺少任何必需构建能力会直接失败，不会静默产出传统版本；
+4. 在独立临时目录安装 GUI、CLI（不复制用户音源和背景文件），用 `windeployqt` 部署 Qt DLL/插件，部署 FFmpeg 解码 DLL、FluidSynth 的传递依赖及 VS 提供的 **app-local MSVC CRT DLL**；
+5. 移除 PATH 中的开发 SDK，检查每个 EXE/DLL/插件的依赖闭包，并运行发行包 CLI、视频背景解码、Qt 渲染和 MP3 导出冒烟检查；
 6. 校验成功后替换正式发行目录，写入不含本机 SDK 路径的 `build-info.json`，附带项目许可证、vcpkg 依赖版权文件及 SDK 提供的 Qt SBOM。
 
 默认结果如下，整个文件夹即可用于分发，不生成 ZIP：
@@ -163,11 +161,12 @@ dist/midi-play-windows-x64/
   midi_play.exe
   midi_play_cli.exe
   Qt6*.dll
+  avcodec-*.dll、avformat-*.dll、avutil-*.dll、swscale-*.dll、swresample-*.dll
   libfluidsynth-3.dll
   sndfile.dll、ogg.dll、vorbis*.dll 等实际依赖
   msvcp140*.dll、vcruntime140*.dll 等 MSVC CRT
   platforms/qwindows.dll
-  styles/、imageformats/ 等 Qt 插件
+  styles/、imageformats/、multimedia/ 等 Qt 插件
   licenses/
   LICENSE
   build-info.json
@@ -179,6 +178,8 @@ dist/midi-play-windows-x64/
 
 如果新包已经发布，但旧目录中的文件被正在运行的程序占用，脚本会提示旧目录保留的位置；新包仍可使用。
 
+`build-info.json` 记录 `sourceRevision`、`sourceHasLocalChanges`、工具版本和验证开关。`videoIntegrationPassed=true` 表示视频背景严格门禁已通过；为 false 表示本次未执行该门禁，不等于集成测试失败。`audioSmokePassed` 单独记录可选的发行包 FluidSynth 设备冒烟，不能用它替代视频原声测试结果。源码后续提交不会自动更新已有 dist，分发前应核对包内记录。
+
 ### 常用选项
 
 ~~~powershell
@@ -188,11 +189,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -T
 # 同时验证发行包的真实 FluidSynth 音频输出，会播放约 1.5 秒测试音
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -AudioSmoke -SoundFontPath 'C:\SoundFonts\example.sf3'
 
+# 视频背景严格门禁：需可用 Vulkan、桌面会话、音频输出设备和外部 FFmpeg
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -RequireVideoIntegration -FfmpegTestPath 'C:/Tools/ffmpeg/bin/ffmpeg.exe'
+
 # 使用另一份本地配置并限制并行度
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -EnvironmentFile build.env.other.local.psd1 -Jobs 4
 ~~~
 
-`-AudioSmoke` 需要可用音频设备和显式指定的 `-SoundFontPath`，失败也会阻止发行目录替换；默认构建不依赖音频设备。外部测试音源不会进入发行包；指定 `-SoundFontPath` 还会启用启动配置及实际播放集成测试。直接使用 CMake 时可设置 `MIDI_PLAY_TEST_SOUNDFONT`。`-CheckEnvironment` 只检查环境，不下载依赖或编译。`-BuildName` 和 `-PackageName` 只接受字母、数字、下划线和连字符，输出固定限制在本仓库的 `build` 和 `dist` 下。
+`-AudioSmoke` 需要可用音频设备和显式指定的 `-SoundFontPath`，失败也会阻止发行目录替换。外部测试音源不会进入发行包；指定 `-SoundFontPath` 还会启用启动配置及实际播放集成测试。直接使用 CMake 时可设置 `MIDI_PLAY_TEST_SOUNDFONT`。
+
+默认 CTest 在缺少音频输出设备等前置条件时允许相应集成项返回 77 并标记跳过；跳过不计作通过。`-RequireVideoIntegration` 要求 Vulkan 构建和显式的 `-FfmpegTestPath`，直接运行视频原声、原声导出、离屏 Vulkan、完整视频导出和真实窗口检查，任何非零退出码（包括 77）都阻止打包。原声设备测试音量为零；它不替代目标机器上的听音验收。仅提供 `-FfmpegTestPath` 可将其目录加入脚本隔离后的测试 PATH，但不会强制执行全部集成项，也不会把该工具复制进发行包。
+
+`-CheckEnvironment` 只检查环境，不下载依赖或编译。`-BuildName` 和 `-PackageName` 只接受字母、数字、下划线和连字符，输出固定限制在本仓库的 `build` 和 `dist` 下。
 
 常见错误的处理：
 
@@ -214,9 +222,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Windows.ps1 -E
 $buildEnvironment = Import-PowerShellDataFile ./build.env.psd1
 $env:QT_ROOT = $buildEnvironment.QtRoot
 $env:VULKAN_SDK = $buildEnvironment.VulkanSdk
-cmake --preset windows-msvc-debug -DFLUIDSYNTH_DLL="$PWD/build/dependencies/vcpkg_installed/x64-windows/bin/libfluidsynth-3.dll" -DWebP_DIR="$PWD/build/dependencies/vcpkg_installed/x64-windows/share/WebP" -Dmp3lame_DIR="$PWD/build/dependencies/vcpkg_installed/x64-windows/share/mp3lame"
+$repoPath = (Get-Location).Path.Replace([char]92, [char]47)
+$dependencyRoot = "$repoPath/build/dependencies/vcpkg_installed/x64-windows"
+$configureArguments = @(
+    '--preset', 'windows-msvc-debug',
+    "-DFLUIDSYNTH_DLL=$dependencyRoot/bin/libfluidsynth-3.dll",
+    "-DWebP_DIR=$dependencyRoot/share/WebP",
+    "-Dmp3lame_DIR=$dependencyRoot/share/mp3lame",
+    "-DCMAKE_MODULE_PATH=$dependencyRoot/share/ffmpeg"
+)
+cmake @configureArguments
+if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
 cmake --build --preset windows-msvc-debug
 ~~~
+
+`CMAKE_MODULE_PATH` 显式选择 vcpkg 提供的 `FindFFMPEG.cmake`，避免误用 Qt SDK 内的查找模块。CMake 参数中的仓库路径统一为 `/`，避免 Windows 反斜杠在生成的探测项目中被解释为转义。若目录曾按旧命令配置失败，可在配置参数中添加 `--fresh` 后重试。
 
 直接使用 CMake 时，`MIDI_PLAY_ENABLE_VULKAN=ON` 默认允许在依赖缺失时降级；`MIDI_PLAY_REQUIRE_VULKAN=ON` 可要求必须成功启用。明确指定 `FLUIDSYNTH_DLL` 的优先级最高。底层 CMake 安装规则保留开发用途，一键发行脚本会额外完成 Qt/CRT 部署及闭包校验。Debug 插件和 Release 插件不能混用，Debug 输出不作为发行包。
 
@@ -245,18 +265,20 @@ cmake --build --preset windows-msvc-debug
 - **视觉刷新率**：30 FPS、60 FPS、120 FPS 或“自定义”；
 - **图形模式**：Vulkan（推荐）或传统 Qt 绘制（兼容）；新用户首次启动优先尝试 Vulkan，成功后保存 Vulkan，失败后自动保存传统 Qt；未包含 Vulkan 的构建只提供传统模式；
 - **流光特效**：Vulkan 模式显示“无特效”“流光玻璃（低）”“流光玻璃（中）”“流光玻璃（高）”；默认启用“流光玻璃（中）”。传统 Qt 模式只显示“无特效（特效需开启 Vulkan）”，切换回 Vulkan 后可重新选择特效等级；
-- **下落背景**：选择“无背景”“图片背景”或“视频背景”；图片和视频共用最大边长、背景适配（顶部对齐、底部对齐、左侧对齐、右侧对齐、裁剪铺满、完整显示）和不透明度。背景只覆盖下落音符区域。视频模式提供“屏蔽视频原声”开关，默认开启；无法读取的视频会显示错误，音乐仍可继续播放。
+- **下落背景**：选择“无背景”“图片背景”或“视频背景（实验）”；图片和视频共用最大边长、背景适配（顶部对齐、底部对齐、左侧对齐、右侧对齐、裁剪铺满、完整显示）和不透明度。背景只覆盖下落音符区域。视频模式提供“屏蔽视频原声”开关，默认开启；无法读取的视频会显示错误，音乐仍可继续播放。
 - **显示简谱条**：默认关闭。关闭时移除琴键上方的简谱条及黄色判定线，音符在琴键顶部判定；开启后恢复简谱条和黄线。修改立即生效并自动保存，两种图形模式行为一致；
 - **标题栏样式**：Windows 默认使用自定义标题栏，也可选择原生标题栏；macOS/Linux 只显示原生模式；
 - **音源**：选择或更换本地 .sf2/.sf3，成功加载后自动保存选择；加载失败会显示内联错误。
 
-主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。加载乐曲后，点击顶部“导出”打开统一导出页面：音频 Tab 可选择 MP3/WAV、采样率、码率、节拍器、尾音及目标文件；视频 Tab 可选择 MP4 的分辨率、帧率、画质、播放速度、音乐、节拍器、尾音及目标文件，并提供 Vulkan 画面预览。导出在后台进行，可取消；导出期间可以继续查看或播放乐曲，当前导出始终使用开始时的乐曲和音源。音频 MP3 默认为 44.1 kHz、192 kbps、立体声，尾音 500 ms；视频导出使用 Vulkan 三槽并发渲染、固定帧缓冲池和有界 FFmpeg 队列，传统 Qt 图形模式不可用；不会自动归一化或限制动态。
+主页显示的是播放相关的音乐元数据和时间信息，不显示 SoundFont 文件名；音源路径及其状态在设置窗口中管理。加载乐曲后，点击顶部“导出”打开统一导出页面：音频 Tab 可选择 MP3/WAV、采样率、码率、节拍器、尾音及目标文件；视频 Tab 可选择 MP4 的分辨率、帧率、画质、播放速度、音乐、节拍器、尾音及目标文件，并提供 Vulkan 画面预览。导出在后台进行，可取消；导出期间可以继续查看或播放乐曲，当前导出始终使用开始时的乐曲和音源。音频 MP3 默认为 44.1 kHz、192 kbps、立体声，尾音 500 ms；视频导出使用 Vulkan 三槽并发渲染、固定帧缓冲池和有界 FFmpeg 队列，传统 Qt 图形模式不可用。
+
+MP3/WAV 音频导出不包含视频背景原声，也不执行目标响度归一化或动态限制器处理；WAV 量化为 16-bit PCM 时会硬裁剪超出范围的样本。视频导出仅在勾选乐曲音频时需要有效 SoundFont；取消乐曲音频后，仍可导出静音画面或已启用的视频原声。原声与乐曲同时导出时使用 FFmpeg `amix normalize=1` 归一化混音，这不是目标响度归一化，听感音量也可能与实时系统混音不同。原声在音乐结束时停止，导出尾音期间保持背景终帧并补原声静音。
 
 ### 视频导出性能
 
 视频页默认勾选“保留小节标记栏”，将完整 1280×720 逻辑画布映射到输出。取消后，程序预计算并锁定左侧扩展区，扩宽逻辑场景，裁切后的内容仍精确为 1280×720。预览与导出使用相同画幅计划；720p、1080p、4K 分别按 1、1.5、3 倍几何比例直接渲染到目标分辨率，不放大低分辨率成片。第一阶段仅支持 16:9。实现约束和验收命令见 [导出画幅修复](docs/video-export-framing.md)。
 
-视频导出将固定时间线拆为渲染、GPU readback 和编码三个阶段：三槽 Vulkan frame-in-flight 允许 GPU 与 CPU 编码并行，固定 `QImage` 帧池避免逐帧分配，有界队列通过背压限制内存增长。NVIDIA 环境会自动探测 `h264_nvenc`，不可用时回退 `libx264`，输出格式和音视频时间线保持一致。FFmpeg 不随发行包提供，需要在系统 `PATH` 中提供，或在设置中选择其目录。
+视频导出将固定时间线拆为渲染、GPU readback 和编码三个阶段：三槽 Vulkan frame-in-flight 允许 GPU 与 CPU 编码并行，固定 `QImage` 帧池避免逐帧分配，有界队列通过背压限制内存增长。视频背景纹理和上传资源按帧槽隔离，静态图片继续共享纹理。NVIDIA 环境会自动探测 `h264_nvenc`，不可用时回退 `libx264`，输出格式和音视频时间线保持一致。用于导出的 FFmpeg 命令行工具不随发行包提供，需要在系统 `PATH` 中提供，或在设置中选择其目录；背景解码 DLL 已随包部署。
 
 需要定位导出瓶颈时，可设置 `MIDI_PLAY_VIDEO_DIAGNOSTICS=1` 启用诊断，并用 `MIDI_PLAY_VIDEO_DIAGNOSTICS_PATH` 指定 JSONL 输出文件。实现与基准数据见 [视频导出性能优化复盘](docs/video-export-performance-review.md)。
 
@@ -288,8 +310,8 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 | General/visualizationRefreshRate | int | 60 | 有效范围 1..1000，界面提供常用预设和自定义输入 |
 | General/graphicsMode | int | 未配置时优先 Vulkan | 持久化值 0 为传统 Qt 绘制；1 为 Vulkan；首次解析成功后保存实际使用的后端 |
 | Visualization/backgroundImagePath | string | 空 | 单图片背景的绝对路径；空值表示未选择图片，文件只在本地引用，不复制到程序目录 |
-| Visualization/backgroundImageEnabled | bool | false | 是否启用图片背景；关闭时保留已选路径，旧配置有图片路径且缺少本项时默认启用 |
-| Visualization/backgroundMode | int | 0 | 0 无背景；1 图片；2 视频；缺失时从旧图片开关迁移 |
+| Visualization/backgroundImageEnabled | bool | false | 旧图片开关，保留用于兼容；合法 backgroundMode 优先。旧配置有图片路径且缺少开关时默认启用 |
+| Visualization/backgroundMode | int | 0 | 0 无背景；1 图片；2 视频（实验）；合法值优先，包括显式 0。缺失或非法时从旧图片开关迁移，非法值额外报告警告；路径保留 |
 | Visualization/backgroundVideoPath | string | 空 | 本地视频绝对路径，与图片路径独立保留 |
 | Visualization/backgroundVideoMuted | bool | true | 屏蔽视频原声；关闭后播放和视频导出均包含第一条原声音轨 |
 | Visualization/backgroundImageAlignment | int | 4（裁剪铺满） | `0` 顶部对齐，`1` 底部对齐，`2` 左侧对齐，`3` 右侧对齐，`4` 裁剪铺满，`5` 完整显示 |
@@ -348,6 +370,14 @@ $midiPlayCliExe = 'dist/midi-play-windows-x64/midi_play_cli.exe'
 ~~~
 
 命令会输出轨道数量和按 tempo map 换算得到的播放时长。
+
+### 测试视频背景解码
+
+~~~powershell
+& $midiPlayCliExe --video-background-test 'tests/fixtures/background-video.mp4'
+~~~
+
+命令使用随包部署的 FFmpeg 解码库，读取首帧、终帧并反向定位到首帧，不需要外部 FFmpeg 命令行程序。路径也可换成本机其他受支持的视频；仓库中的合成素材只用于测试，不随发行包部署。此命令不验证原声音频设备或 Vulkan 渲染。
 
 ### 导出 MP3 或 WAV
 
@@ -472,7 +502,23 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - audio_export：使用内置测试音源验证 sample 边界、尾音、反复段、节拍器混音、WAV/MP3 输出、重复导出一致性，以及取消或失败时保留原目标文件。
 - video_export_configuration：验证视频导出参数默认值、边界、FFmpeg 路径探测和 Vulkan 能力门控。
 - video_encoder_roundtrip：使用可用 FFmpeg 编码器完成短视频编码、音视频封装和 MP4 完整性校验；缺少外部 FFmpeg 时按环境跳过。
-- video_export_vulkan_integration：验证 Vulkan 离屏渲染、三槽 frame-in-flight、readback、帧序和取消路径。
+- video_background_timeline_and_decoder：视频循环、结束定格、设置迁移、时长、正反 seek、持续拖动及失效结果隔离。
+- video_background_audio_export / video_background_audio_device：分别验证原声导出与真实 Qt 音频后端的对齐、循环和静音区间。
+- video_background_vulkan / video_background_full_export / video_background_window：分别验证离屏动态帧和帧槽、完整 MP4 导出及真实 Vulkan 窗口；最后一项仅在 Windows Vulkan 构建注册。
+
+视频背景测试可按标签单独运行，缺少设备或外部工具时集成项返回 77，CTest 显示为跳过：
+
+~~~powershell
+ctest --test-dir build/windows-release -C Release -L video-background --output-on-failure
+~~~
+
+原视频导出程序的完整集成检查是手动入口，不存在名为 `video_export_vulkan_integration` 的已注册 CTest。在准备好 Qt/依赖 DLL、外部 FFmpeg 和 Vulkan 设备的开发终端中运行：
+
+~~~powershell
+./build/windows-release/Release/midi_play_video_export_tests.exe -platform offscreen --integration
+~~~
+
+各层的前置条件、完整视频背景集成命令和严格发布门禁见 [视频背景验收](docs/video-background.md#验证与发布)。常规 CTest 的零失败不意味着所有集成项均已执行，验收记录应分别列出通过、跳过和失败数量。
 
 节拍器点击资源 `assets/metronome.sf2` 已提交到源码并通过 Qt Resource 嵌入可执行文件。`scripts/generate-metronome-soundfont.py` 使用 Python 标准库生成原创采样，仅用于重建该资源，普通构建和运行不需要 Python。内置资源需要写入系统临时目录供 FluidSynth 读取，退出时自动清理；提取或准备失败时仅禁用节拍器并显示原因。
 
@@ -486,12 +532,14 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 | MIDI format 0/1 | 多轨道同时播放，program/channel 和 tempo 基本正确 |
 | MIDI format 2 | 独立序列按规范串联，播放时长和轨道顺序合理 |
 | 拖动进度 | 播放中释放后继续播放，暂停中释放后保持暂停，下一次播放从目标位置开始 |
+| 视频背景（实验） | 两种后端下布局一致；短视频循环、长视频截断；拖动后收敛至目标帧；自然结束定格，重播和显式停止归零；切换模式保留路径 |
+| 视频原声 | 默认屏蔽；取消屏蔽后起点、循环和变速与画面一致；拖动与短音轨空缺区间静音；音乐结束停止，导出尾音不继续原声 |
 | SoundFont | 无有效配置时启动引导可跳过；缺少音源时播放仅内联报错；SF2/SF3 可配置和切换，失败时保留原有选择 |
 | 节拍器 | 小节首拍重音、变速同步，暂停和停止无声，关闭不截断钢琴音，切换音源后仍能发声 |
 | 简谱条显隐 | 默认隐藏简谱条和黄线，音符在琴键顶部判定；播放和暂停时切换立即生效，切换图形模式后保持选择 |
 | 流光特效 | Vulkan 下显示无特效及低/中/高三档，默认中特效；传统 Qt 只显示“无特效（特效需开启 Vulkan）”，不出现灰色特效等级 |
-| 设置持久化 | 重启后主题、音符色彩、刷新率、图形模式、流光特效等级、背景图片适配、不透明度与最大边长、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
-| Release 部署 | exe、Qt 平台插件、FluidSynth 与 LAME DLL 完整，发行包不含外部 SF2/SF3 音源 |
+| 设置持久化 | 重启后主题、音符色彩、刷新率、图形模式、流光特效等级、背景模式、图片/视频路径、原声开关、适配、不透明度与最大边长、简谱条显隐、标题栏模式和自定义音源路径仍可恢复 |
+| Release 部署 | exe、Qt 平台/Multimedia 插件、FluidSynth、LAME 和 FFmpeg 解码 DLL 完整；不含用户 SF2/SF3、背景文件或 FFmpeg 命令行工具；核对 build-info.json |
 
 自动测试不替代人工听音验收；音频设备、系统音量和 FluidSynth 驱动初始化仍需在目标机器上确认。
 
@@ -500,15 +548,15 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - v0.4.0 中，设置文件无法写入时，启动音源引导仍可能关闭，所选路径仅在本次运行中生效；重启后可能需要重新配置。
 - v0.4.0 中，音源文件临时移走后再恢复，播放可以恢复，但旧错误提示可能仍显示；在设置中重新加载音源可清除提示。
 - 当前只验证 Windows x64 / MSVC；macOS/Linux 的 Qt 架构分支已预留，但没有同等完整的构建、部署和音频验收基线。
-- 当前只有 FluidSynth 音频后端，不提供 Qt Multimedia 后端或外部 MIDI 硬件输出。音频导出支持 MP3/WAV，尚不支持 FLAC 或响度归一化。
+- 乐曲合成只有 FluidSynth 后端，不提供其他 MIDI 合成后端或外部 MIDI 硬件输出；视频原声通过独立的 Qt Multimedia 播放器输出。MP3/WAV 音频导出尚不支持 FLAC 或目标响度归一化。
 - Vulkan 是否可用取决于显卡、驱动、Qt Vulkan 支持和运行环境。启动或设备初始化失败时程序会尝试回退传统 Qt；若图形设备在运行中丢失，建议重启后在设置中选择传统 Qt。
-- 图片背景支持本地静态图片，不支持动态 WebP、多图轮播或网络 URL；WebP 文件大小上限为 64 MB。视频背景支持本地、有限时长的 SDR 视频，暂不支持 HDR 色调映射和直播；长 GOP 的随机定位速度受解码性能影响。原文件不会复制到发行目录，移动或删除后需要重新选择。
+- 图片背景支持本地静态图片，不支持动态 WebP、多图轮播或网络 URL；WebP 文件大小上限为 64 MB。视频背景为实验功能，支持本地、可 seek、有限时长的 SDR 视频，暂不支持 HDR 色调映射和直播；长 GOP 的随机定位速度受解码性能影响，缺少轨道时长的大文件首次打开可能需要额外扫描。原声使用独立设备时钟，不承诺采样级同步。原文件不会复制到发行目录，移动或删除后需要重新选择。
 - MusicXML 解析面向播放所需语义，不等价于完整的 MuseScore notation DOM；复杂排版、符号布局和编辑语义不在当前范围内。
 - 当前不支持 .mxl、.mscx、.mscz 等压缩或 MuseScore 专用工程格式。
 - 简谱、鼓组 lane、量化网格和调性识别是播放可视化的派生数据，不能当作完整的自动扒谱结果。
 - Windows 默认使用自定义标题栏，也可在设置中切换为原生标题栏；macOS/Linux 不提供自定义标题栏选项。
 - 播放事件使用软件单调时钟调度，视觉位置按 transport 样本更新；当前目标是稳定播放和低 CPU 占用，不承诺严格的显示器 v-sync 或音频帧级视觉同步。
-- 视频导出依赖外部 FFmpeg；发行包不包含 FFmpeg、NVIDIA 驱动或 NVENC 运行时。没有可用的 FFmpeg 时视频导出会保持禁用；没有兼容 NVIDIA 编码器时自动使用软件 H.264，速度取决于 CPU 和画面复杂度。
+- 视频导出依赖外部 FFmpeg 命令行工具；发行包包含背景解码所需 FFmpeg DLL，但不包含 ffmpeg/ffprobe 可执行程序、NVIDIA 驱动或 NVENC 运行时。没有可用的 FFmpeg 命令行工具时视频导出会保持禁用，背景播放仍可使用随包解码库；没有兼容 NVIDIA 编码器时自动使用软件 H.264，速度取决于 CPU 和画面复杂度。
 - 视频导出目前要求 Vulkan 图形设备；Vulkan 不可用时可继续使用播放器和音频导出，但视频导出不可用。
 
 后续可沿以下方向扩展：
@@ -527,7 +575,7 @@ assets/
   metronome.sf2                       原创节拍器资源（嵌入可执行文件）
 docs/
   images/midiplay-banner.svg          README 使用的深色底横版 Logo
-  *.md                                主题、视频导出、性能复盘与发行记录等文档
+  *.md                                架构、主题、视频背景/导出、性能与发行记录
 src/
   app/                                应用服务和设置服务
   domain/music/                       音乐文档、时间线和分析
@@ -538,6 +586,8 @@ src/
   infrastructure/midi/                MIDI parser、normalizer、builder
   infrastructure/readers/             通用 reader registry 和 adapter
   infrastructure/audio/               FluidSynth 动态适配和线程边界
+  infrastructure/media/               FFmpeg 视频帧解码和轨道元数据
+  infrastructure/encoding/            音视频编码、原声混音和外部 FFmpeg 交互
   infrastructure/settings/            QSettings INI 存储
   infrastructure/resources/           项目音频资源设置模型
   presentation/                       Qt Widgets、设置窗口和渲染器
@@ -547,7 +597,7 @@ build.env.sample.psd1                  环境配置模板（本地实际配置�
 cmake/                                DLL 部署与发行目录依赖检查
 CMakeLists.txt                        构建目标、资源复制和安装规则
 CMakePresets.json                     Windows MSVC / Ninja 预设
-vcpkg.json                            锁定基线的 FluidSynth、WebP 和 LAME 依赖清单
+vcpkg.json                            锁定基线的 FluidSynth、WebP、LAME 和 FFmpeg 依赖清单
 ~~~
 
 ## 参与开发
@@ -556,7 +606,7 @@ vcpkg.json                            锁定基线的 FluidSynth、WebP 和 LAME
 
 1. 使用与目标平台匹配的 Qt、编译器和 FluidSynth 运行时；
 2. Debug 或 Release 构建通过；
-3. ctest 全部通过；
+3. CTest 零失败，并记录跳过项及原因；视频背景相关发行需通过严格门禁；
 4. 对涉及播放时序、seek、SoundFont 或渲染性能的改动补充对应测试或验收说明；
 5. 保持领域层不依赖 Qt Widgets 和 FluidSynth 具体类型。
 
@@ -566,4 +616,4 @@ Logo 与图标的使用规范见 [品牌资源说明](assets/branding/README.md)
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE)。发行包不包含第三方乐曲 SoundFont，用户自行选择的音源遵循各自的许可证或使用条款。仓库仅保留项目原创、程序化生成的节拍器资源 `assets/metronome.sf2`；Qt、FluidSynth、LAME 等第三方依赖仍遵循各自的许可证。Windows 发行包动态链接 LAME，并在 `licenses/vcpkg/mp3lame` 保留其版权与许可文本。
+本项目采用 [MIT License](LICENSE)。发行包不包含第三方乐曲 SoundFont，用户自行选择的音源遵循各自的许可证或使用条款。仓库中的 SoundFont 仅保留项目原创、程序化生成的节拍器资源 `assets/metronome.sf2`；视频测试素材为人工合成，来源与重建命令见 [视频背景回归素材](docs/video-background.md#回归素材)，不随发行包部署。Qt、FluidSynth、LAME、FFmpeg 等第三方依赖仍遵循各自的许可证；Windows 发行包在 `licenses/vcpkg` 中保留所部署 vcpkg 依赖的版权与许可文本。

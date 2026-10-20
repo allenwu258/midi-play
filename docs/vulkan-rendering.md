@@ -17,7 +17,7 @@ UI 实例内容与本帧绘制 offset 可能来自不同帧，从而影响整排
 
 ## 当前约束
 
-- 每张交换链图像独立持有 framebuffer、静态 UI、动态 UI、音符、文字图集、staging 和 descriptor。它们随交换链创建、等待 GPU 后释放，不能与 `currentFrame()` 混用。
+- 每张交换链图像独立持有 framebuffer、静态 UI、动态 UI、音符、文字图集、背景纹理、staging 和 descriptor。它们随交换链创建、等待 GPU 后释放，不能与 `currentFrame()` 混用。
 - 使用仅含颜色附件的 render pass，并显式声明获取图像到颜色附件读写的外部依赖。该 2D 场景无需深度附件。
 - `completePresentation()` 在 Qt 提交和呈现后完成相应队列，避免框架下一次获取图像时过早复用信号量。图形和呈现队列不同的设备使用 device wait，因为 Qt 公共接口不暴露呈现队列。
 - 上述 Qt 兼容边界会限制 CPU/GPU 多帧并行；它是有意的正确性取舍。升级 Qt 后，只有连续呈现通过同等生命周期和 validation 检查，才能移除这一步。不能只删除等待来提高测试帧率。
@@ -34,9 +34,17 @@ UI 实例内容与本帧绘制 offset 可能来自不同帧，从而影响整排
 
 仅切换普通/鲜明时，`NoteRenderCache` 保留 chart、音符样式索引、时间和几何，只重算去重材质并推进 `materialRevision`。`VulkanScene` 对比已消费的材质版本，重新打包音符实例；动态琴键及光晕同步使用新材质，静态 UI 和文字图集保持原版本。两种模式共用包含精确音高、轨道、声部、有效力度、ghost 与 percussion 的样式键，避免不同音级错误共用颜色。OKLCH 转换仅在材质创建/失效时执行，GLSL 与既有 GPU 同步机制保持不变。
 
+## 视频背景资源
+
+实时窗口接收 VideoBackgroundController 解码完成的 QImage，复用图片背景的 placement、遮罩与不透明度。每张交换链图像在自身同步边界内更新背景纹理；同尺寸视频帧复用 image 和 staging，仅替换像素，内容变化不重建静态几何。上述 completePresentation() 兼容等待仍然适用。
+
+离屏导出不使用 QVulkanWindow 的交换链，它拥有三个独立 frame slot。视频背景的纹理、staging 与 descriptor 跟随各自 slot，仅在对应 completeRender 完成后复用，不再为逐帧背景更新等待全部在途槽。静态图片仍共享纹理，避免将旧图片模式的背景显存扩大为三份；共享文字图集变化仍需等待。实时窗口与离屏导出的同步规则不能相互替代。
+
+video_background_vulkan 覆盖三槽连续提交、背景变化、异步帧与独立同步输出的像素对照，并检查背景上传阶段没有新增跨槽 fence 等待。该项验证的是资源复用和输出正确性，不等同于完整 validation layer 压力测试，也不保证整体导出速度同比提升。时间映射、原声和完整验收入口见 [视频背景（实验）](video-background.md)。
+
 ## 验证
 
-普通 CTest 包含静态琴键缓存回归。GPU 检查需要桌面会话和可用 Vulkan 驱动，不能使用 `-platform offscreen`。在配置了 Qt DLL 路径的开发终端中执行：
+普通 CTest 包含静态琴键缓存回归。下列实时窗口 GPU 检查需要桌面会话和可用 Vulkan 驱动，不能使用 `-platform offscreen`；独立离屏 renderer 测试可使用 offscreen 平台，但仍需要可用 GPU。在配置了 Qt DLL 路径的开发终端中执行（构建目录按实际情况替换）：
 
 ```powershell
 $env:VK_LAYER_VALIDATE_SYNC = '1'
