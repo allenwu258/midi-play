@@ -100,9 +100,17 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     // Schema 15 replaces the two-state switch; preserve legacy image preferences.
     const auto legacyMode = result.backgroundImageEnabled
         ? midi_play::settings::BackgroundMode::Image : midi_play::settings::BackgroundMode::None;
-    result.backgroundMode = midi_play::settings::normalizeBackgroundMode(
-        static_cast<midi_play::settings::BackgroundMode>(file.value(
-            QStringLiteral("Visualization/backgroundMode"), int(legacyMode)).toInt()));
+    const bool hasBackgroundMode = file.contains(QStringLiteral("Visualization/backgroundMode"));
+    bool backgroundModeConversionOk = false;
+    const int configuredBackgroundMode = file.value(
+        QStringLiteral("Visualization/backgroundMode"), int(legacyMode)).toInt(&backgroundModeConversionOk);
+    const bool validBackgroundMode = backgroundModeConversionOk
+        && configuredBackgroundMode >= int(midi_play::settings::BackgroundMode::None)
+        && configuredBackgroundMode <= int(midi_play::settings::BackgroundMode::Video);
+    // An explicit None is authoritative. Invalid values retain the legacy
+    // preference instead of silently turning off an existing image background.
+    result.backgroundMode = validBackgroundMode
+        ? static_cast<midi_play::settings::BackgroundMode>(configuredBackgroundMode) : legacyMode;
     result.backgroundImageEnabled = result.backgroundMode == midi_play::settings::BackgroundMode::Image;
     result.backgroundVideoPath = file.value(QStringLiteral("Visualization/backgroundVideoPath")).toString().trimmed();
     result.backgroundVideoMuted = file.value(QStringLiteral("Visualization/backgroundVideoMuted"), true).toBool();
@@ -211,6 +219,10 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
         && (!backgroundOpacityConversionOk || configuredBackgroundOpacity < 0 || configuredBackgroundOpacity > 100)
         && warning) {
         const auto message = QStringLiteral("设置文件中的背景不透明度无效，已限制到 0%–100% 范围");
+        *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
+    }
+    if (hasBackgroundMode && !validBackgroundMode && warning) {
+        const auto message = QStringLiteral("设置文件中的背景模式无效，已恢复旧版图片背景开关");
         *warning = warning->isEmpty() ? message : *warning + QStringLiteral("；") + message;
     }
     return result;

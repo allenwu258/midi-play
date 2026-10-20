@@ -105,6 +105,36 @@ void testVideoTrackDuration()
     const auto loopPosition = midi_play::visualization::backgroundVideoPosition(duration + 500'000, 8'000'000, duration);
     require(reader.frameAt(loopPosition, &error).image == firstCycle, "MKV loops on the video track endpoint");
 }
+void testInvalidBackgroundModeMigration()
+{
+    using namespace midi_play;
+    for (const bool legacyEnabled : {false, true}) {
+        for (const QVariant raw : {QVariant(), QVariant(0), QVariant(1), QVariant(2),
+                                  QVariant(-1), QVariant(99), QVariant("broken")}) {
+            QTemporaryDir directory;
+            const auto path = directory.filePath("settings.ini");
+            {
+                QSettings file(path, QSettings::IniFormat);
+                file.setValue("Visualization/backgroundImageEnabled", legacyEnabled);
+                file.setValue("Visualization/backgroundImagePath", "old.png");
+                if (raw.isValid()) file.setValue("Visualization/backgroundMode", raw);
+            }
+            infrastructure::settings::QSettingsStore store(path);
+            QString warning;
+            auto settings = store.load(&warning);
+            bool converted = false;
+            const int value = raw.toInt(&converted);
+            const bool valid = raw.isValid() && converted && value >= 0 && value <= 2;
+            const auto expected = valid ? static_cast<midi_play::settings::BackgroundMode>(value)
+                : legacyEnabled ? midi_play::settings::BackgroundMode::Image : midi_play::settings::BackgroundMode::None;
+            require(settings.backgroundMode == expected, "invalid mode preserves legacy setting; valid modes win");
+            require(warning.isEmpty() == (!raw.isValid() || valid), "only invalid present modes report warnings");
+            require(settings.backgroundImagePath == "old.png", "migration retains image path");
+            require(store.save(settings, &warning), "migrated settings save");
+            require(store.load(&warning).backgroundMode == expected && warning.isEmpty(), "migration remains stable after save");
+        }
+    }
+}
 void testCoarseTimeBaseSeeking()
 {
     using namespace midi_play;
@@ -478,7 +508,7 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
     try {
-        testTimeline(); testSettings(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testAudioTimeOrigin(); testAudioLoopEvents(); testSeekAcknowledgment(); testStopAtEndpoint();
+        testTimeline(); testSettings(); testInvalidBackgroundModeMigration(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testAudioTimeOrigin(); testAudioLoopEvents(); testSeekAcknowledgment(); testStopAtEndpoint();
 #if MIDI_PLAY_HAS_VULKAN
         if (application.arguments().contains("--vulkan")) testOffscreen();
         if (application.arguments().contains("--integration")) testVideoExport();
