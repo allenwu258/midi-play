@@ -20,7 +20,11 @@ param(
     # 额外运行需要真实音源的音频冒烟测试。
     [switch] $AudioSmoke,
     # 外部 SF2/SF3 测试音源路径；启用 AudioSmoke 时必须显式提供。
-    [string] $SoundFontPath = ''
+    [string] $SoundFontPath = '',
+    # 发布门禁：所有视频背景集成路径必须运行；缺设备/工具导致跳过视为失败。
+    [switch] $RequireVideoIntegration,
+    # 外部 FFmpeg 仅用于测试和导出，不复制到发布包。
+    [string] $FfmpegTestPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -139,6 +143,13 @@ try {
     $cmake = Require-File $cmake 'CMake (install the VS CMake component or set CMakeExe)'
     $ctest = Require-File (Join-Path (Split-Path $cmake) 'ctest.exe') 'CTest'
     $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    if ($RequireVideoIntegration -and -not $enableVulkan) {
+        throw '-RequireVideoIntegration requires a Vulkan build.'
+    }
+    if ($FfmpegTestPath) { $FfmpegTestPath = Require-File $FfmpegTestPath 'FFmpeg integration executable' }
+    if ($RequireVideoIntegration -and -not $FfmpegTestPath) {
+        throw '-RequireVideoIntegration requires -FfmpegTestPath.'
+    }
     if ($enableVulkan) {
         if (-not $settings.VulkanSdk) { throw 'Configure VulkanSdk or use -Traditional.' }
         $null = Require-File "$($settings.VulkanSdk)\Include\vulkan\vulkan.h" 'Vulkan headers'
@@ -248,7 +259,13 @@ try {
     }
     Invoke-Checked $cmake $configure
     Invoke-Checked $cmake @('--build', $buildDirectory, '--config', 'Release', '--parallel', "$Jobs")
+    if ($FfmpegTestPath) { $env:PATH = "$(Split-Path $FfmpegTestPath);$env:PATH" }
     Invoke-Checked $ctest @('--test-dir', $buildDirectory, '-C', 'Release', '--output-on-failure', '--timeout', '60')
+    if ($RequireVideoIntegration) {
+        # Direct execution deliberately treats skip code 77 as failure.
+        Invoke-Checked "$buildDirectory\Release\midi_play_video_background_tests.exe" @(
+            '-platform', 'windows', '--audio', '--audio-export', '--vulkan', '--integration', '--window')
+    }
 
     # 先在随机 staging 目录完成安装、Qt 部署和离线验证，全部通过后再替换正式包。
     $stage = Join-Path $repo "dist\.$PackageName-staging-$([Guid]::NewGuid().ToString('N'))"

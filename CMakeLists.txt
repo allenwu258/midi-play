@@ -411,6 +411,27 @@ if (BUILD_TESTING)
     add_test(NAME video_background_timeline_and_decoder
         COMMAND midi_play_video_background_tests -platform offscreen)
     set_tests_properties(video_background_timeline_and_decoder PROPERTIES TIMEOUT 60)
+    set_tests_properties(video_background_timeline_and_decoder PROPERTIES LABELS "video-background;unit")
+    add_test(NAME video_background_audio_export
+        COMMAND midi_play_video_background_tests -platform offscreen --audio-export)
+    add_test(NAME video_background_audio_device
+        COMMAND midi_play_video_background_tests -platform offscreen --audio)
+    set_tests_properties(video_background_audio_export video_background_audio_device PROPERTIES
+        LABELS "video-background;integration" TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
+    if (MIDI_PLAY_HAS_VULKAN)
+        add_test(NAME video_background_vulkan
+            COMMAND midi_play_video_background_tests -platform offscreen --vulkan)
+        add_test(NAME video_background_full_export
+            COMMAND midi_play_video_background_tests -platform offscreen --integration)
+        set_tests_properties(video_background_vulkan video_background_full_export PROPERTIES
+            LABELS "video-background;integration;vulkan" TIMEOUT 180 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
+        if (WIN32)
+            add_test(NAME video_background_window
+                COMMAND midi_play_video_background_tests -platform windows --window)
+            set_tests_properties(video_background_window PROPERTIES
+                LABELS "video-background;integration;vulkan;desktop" TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
+        endif()
+    endif()
     # 将 offscreen 平台同时复制到测试程序目录并注入 CTest 环境，保证直接运行
     # `-platform offscreen` 与 CTest 执行路径一致。
     if (TARGET Qt6::QOffscreenIntegrationPlugin)

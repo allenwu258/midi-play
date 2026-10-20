@@ -1,3 +1,6 @@
+#if MIDI_PLAY_HAS_VULKAN
+#include <vulkan/vulkan.h>
+#endif
 #include "domain/visualization/backgroundvideotimeline.h"
 #include "infrastructure/media/videoframereader.h"
 #include "infrastructure/encoding/backgroundaudioexport.h"
@@ -17,6 +20,8 @@
 #endif
 #include <QApplication>
 #include <QAudioOutput>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QMediaPlayer>
 #include <QCheckBox>
 #include <QComboBox>
@@ -239,7 +244,7 @@ void testDecoderAndAsync()
 void testAudioExport()
 {
     const auto ffmpeg = QStandardPaths::findExecutable("ffmpeg");
-    if (ffmpeg.isEmpty()) { std::puts("SKIP: optional external FFmpeg audio integration"); return; }
+    require(!ffmpeg.isEmpty(), "audio export test requires FFmpeg");
     QTemporaryDir directory;
     QString pcm, error;
     midi_play::media::VideoFrameReader reader;
@@ -255,7 +260,7 @@ void testAudioExport()
     for (int i = 120000 * 2; i < 132300 * 2; ++i) tail += std::abs(samples[i]);
     require(audible > 1 && tail < .001, "background audio stops before export tail");
 }
-void testAudioTimeOrigin()
+void testAudioTimeOrigin(bool exportAudio = false)
 {
     using namespace midi_play;
     const auto path = QFileInfo(QString::fromUtf8(MIDI_PLAY_TEST_VIDEO)).dir().filePath("background-delayed-video.mp4");
@@ -282,8 +287,9 @@ void testAudioTimeOrigin()
         controller.synchronize(500'000, 6'000'000, false, 100, true);
         require(player->position() == 1500, "Qt audio uses the same source time as video");
     }
+    if (!exportAudio) return;
     const auto ffmpeg = QStandardPaths::findExecutable("ffmpeg");
-    if (ffmpeg.isEmpty()) return;
+    require(!ffmpeg.isEmpty(), "offset audio export requires FFmpeg");
     QTemporaryDir directory;
     QString pcm;
     require(encoding::mixBackgroundVideoAudio(ffmpeg, path, metadata, 2'000'000, 100, 44100,
@@ -508,7 +514,39 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
     try {
-        testTimeline(); testSettings(); testInvalidBackgroundModeMigration(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testAudioTimeOrigin(); testAudioLoopEvents(); testSeekAcknowledgment(); testStopAtEndpoint();
+        const auto arguments = application.arguments();
+        const bool audio = arguments.contains("--audio");
+        const bool audioExport = arguments.contains("--audio-export") || arguments.contains("--integration");
+        const bool vulkan = arguments.contains("--vulkan") || arguments.contains("--integration") || arguments.contains("--window");
+        if (audio && QMediaDevices::audioOutputs().isEmpty()) {
+            std::puts("SKIP: no audio output device"); return 77;
+        }
+        if (audioExport && QStandardPaths::findExecutable("ffmpeg").isEmpty()) {
+            std::puts("SKIP: FFmpeg executable is unavailable"); return 77;
+        }
+#if MIDI_PLAY_HAS_VULKAN
+        if (vulkan) {
+            VkInstance instance = VK_NULL_HANDLE;
+            VkInstanceCreateInfo info {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+            const auto created = vkCreateInstance(&info, nullptr, &instance);
+            uint32_t devices = 0;
+            const auto enumerated = created == VK_SUCCESS
+                ? vkEnumeratePhysicalDevices(instance, &devices, nullptr) : created;
+            if (instance) vkDestroyInstance(instance, nullptr);
+            if (enumerated != VK_SUCCESS || devices == 0) {
+                std::puts("SKIP: no Vulkan device available"); return 77;
+            }
+        }
+#else
+        if (vulkan) { std::puts("SKIP: Vulkan is not built"); return 77; }
+#endif
+        if (!audio && !audioExport && !vulkan) {
+            testTimeline(); testSettings(); testInvalidBackgroundModeMigration(); testVideoTrackDuration();
+            testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing();
+            testAudioTimeOrigin(); testSeekAcknowledgment(); testStopAtEndpoint();
+        }
+        if (audio) { testDecoderAndAsync(); testAudioTimeOrigin(); testAudioLoopEvents(); }
+        if (audioExport) { testAudioExport(); testAudioTimeOrigin(true); }
 #if MIDI_PLAY_HAS_VULKAN
         if (application.arguments().contains("--vulkan")) testOffscreen();
         if (application.arguments().contains("--integration")) testVideoExport();
