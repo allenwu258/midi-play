@@ -30,6 +30,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
+#include <QToolButton>
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
@@ -366,6 +367,23 @@ void testSeekAcknowledgment()
     service.positionChanged(3'100'000, 6'000'000, 0);
     require(view->exportState().transportPositionUs == 3'100'000, "acknowledged seek resumes transport updates");
 }
+void testStopAtEndpoint()
+{
+    using namespace midi_play;
+    app::PlayerApplicationService service;
+    presentation::MainWindow window(&service, nullptr);
+    auto* stop = window.findChild<QToolButton*>("stopButton");
+    require(stop != nullptr, "stop control exists");
+    service.positionChanged(2'000'000, 2'000'000, 0);
+    service.playbackStateChanged(playback::State::Stopped);
+    require(stop->isEnabled(), "natural endpoint permits explicit reset");
+    service.positionChanged(0, 2'000'000, 0);
+    require(!stop->isEnabled(), "stopped at zero disables redundant reset");
+    service.positionChanged(500'000, 2'000'000, 0);
+    require(stop->isEnabled(), "seeking in stopped state re-enables reset");
+    service.playbackStateChanged(playback::State::Playing);
+    require(stop->isEnabled(), "replay keeps stop available");
+}
 #if MIDI_PLAY_HAS_VULKAN
 void testOffscreen()
 {
@@ -460,7 +478,7 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
     try {
-        testTimeline(); testSettings(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testAudioTimeOrigin(); testAudioLoopEvents(); testSeekAcknowledgment();
+        testTimeline(); testSettings(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testAudioTimeOrigin(); testAudioLoopEvents(); testSeekAcknowledgment(); testStopAtEndpoint();
 #if MIDI_PLAY_HAS_VULKAN
         if (application.arguments().contains("--vulkan")) testOffscreen();
         if (application.arguments().contains("--integration")) testVideoExport();

@@ -736,6 +736,10 @@ void MainWindow::updatePosition(qint64 position, qint64 duration, qint64 sampled
     }
     // 采样时刻一并交给视图，用于连续播放期间按播放倍率外推当前位置。
     m_visualization->setTransportPosition(m_positionUs, m_durationUs, sampledAtUs);
+    // Stopped can retain the natural endpoint or a user-selected seek position.
+    // Position-only changes must also refresh the explicit reset action.
+    m_stopButton->setEnabled(m_durationUs > 0 && m_playbackState != playback::State::Empty
+        && (m_playbackState != playback::State::Stopped || m_positionUs > 0));
 }
 
 // 将领域状态同步到可视化、状态文字和传输按钮，不在展示层触发播放转换。
@@ -809,7 +813,8 @@ void MainWindow::updateTransportControls()
                              && m_playbackState != playback::State::Error
                              && !m_service->isSoundFontLoading());
     m_pauseButton->setEnabled(m_playbackState == playback::State::Playing);
-    m_stopButton->setEnabled(hasDocument && m_playbackState != playback::State::Stopped);
+    m_stopButton->setEnabled(hasDocument
+        && (m_playbackState != playback::State::Stopped || m_positionUs > 0));
     m_positionSlider->setEnabled(hasDocument);
     updateExportButtonState();
 }
