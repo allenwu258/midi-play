@@ -33,6 +33,8 @@
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
+#include <cmath>
+#include <numbers>
 
 namespace {
 void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -209,8 +211,10 @@ void testAudioExport()
     if (ffmpeg.isEmpty()) { std::puts("SKIP: optional external FFmpeg audio integration"); return; }
     QTemporaryDir directory;
     QString pcm, error;
+    midi_play::media::VideoFrameReader reader;
+    require(reader.open(QString::fromUtf8(MIDI_PLAY_TEST_VIDEO), 256, &error), qPrintable(error));
     require(midi_play::encoding::mixBackgroundVideoAudio(ffmpeg, QString::fromUtf8(MIDI_PLAY_TEST_VIDEO),
-        2'000'000, 5'000'000, 200, 44100, 132300, directory.path(), pcm, nullptr, &error), qPrintable(error));
+        reader.metadata(), 5'000'000, 200, 44100, 132300, directory.path(), pcm, nullptr, &error), qPrintable(error));
     QFile file(pcm); require(file.open(QIODevice::ReadOnly), "read mixed audio");
     const auto data = file.readAll();
     require(data.size() == 132300 * 8, "mixed audio has exact output duration");
@@ -219,6 +223,54 @@ void testAudioExport()
     for (int i = 0; i < 44100; ++i) audible += std::abs(samples[i]);
     for (int i = 120000 * 2; i < 132300 * 2; ++i) tail += std::abs(samples[i]);
     require(audible > 1 && tail < .001, "background audio stops before export tail");
+}
+void testAudioTimeOrigin()
+{
+    using namespace midi_play;
+    const auto path = QFileInfo(QString::fromUtf8(MIDI_PLAY_TEST_VIDEO)).dir().filePath("background-delayed-video.mp4");
+    media::VideoFrameReader reader;
+    QString error;
+    require(reader.open(path, 256, &error), qPrintable(error));
+    const auto metadata = reader.metadata();
+    require(metadata.startTimeUs == 1'000'000 && metadata.mediaStartTimeUs == 0,
+        "video and container origins remain distinct");
+    require(metadata.audioStartUs == -1'000'000 && metadata.audioEndUs == 2'000'000,
+        "audio interval is relative to video origin");
+    if (QCoreApplication::arguments().contains("--audio")) {
+        presentation::visualization::VideoBackgroundController controller;
+        QImage frame;
+        QObject::connect(&controller, &presentation::visualization::VideoBackgroundController::frameReady,
+            &controller, [&](const QImage& image) { frame = image; });
+        controller.setSource(path, 256);
+        controller.synchronize(0, 6'000'000, false, 100, true);
+        require(waitUntil([&] { return !frame.isNull(); }), "offset video loads");
+        controller.setMuted(false);
+        auto* player = controller.findChild<QMediaPlayer*>();
+        controller.findChild<QAudioOutput*>()->setVolume(0);
+        require(waitUntil([&] { return player->duration() > 0; }), "offset audio loads");
+        controller.synchronize(500'000, 6'000'000, false, 100, true);
+        require(player->position() == 1500, "Qt audio uses the same source time as video");
+    }
+    const auto ffmpeg = QStandardPaths::findExecutable("ffmpeg");
+    if (ffmpeg.isEmpty()) return;
+    QTemporaryDir directory;
+    QString pcm;
+    require(encoding::mixBackgroundVideoAudio(ffmpeg, path, metadata, 2'000'000, 100, 44100,
+        88200, directory.path(), pcm, nullptr, &error), qPrintable(error));
+    QFile output(pcm);
+    require(output.open(QIODevice::ReadOnly), "read offset audio");
+    const auto bytes = output.readAll();
+    const auto* samples = reinterpret_cast<const float*>(bytes.constData());
+    const auto energy = [&](double frequency) {
+        double real = 0, imaginary = 0;
+        for (int i = 4410; i < 22050; ++i) {
+            const double phase = 2 * std::numbers::pi * frequency * i / 44100;
+            real += samples[2 * i] * std::cos(phase);
+            imaginary += samples[2 * i] * std::sin(phase);
+        }
+        return real * real + imaginary * imaginary;
+    };
+    require(energy(880) > 100 * energy(440), "export drops the audio preceding the first video frame");
 }
 void testContinuousScrubbing()
 {
@@ -369,7 +421,7 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
     try {
-        testTimeline(); testSettings(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testSeekAcknowledgment();
+        testTimeline(); testSettings(); testVideoTrackDuration(); testCoarseTimeBaseSeeking(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testAudioTimeOrigin(); testSeekAcknowledgment();
 #if MIDI_PLAY_HAS_VULKAN
         if (application.arguments().contains("--vulkan")) testOffscreen();
         if (application.arguments().contains("--integration")) testVideoExport();

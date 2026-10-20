@@ -195,7 +195,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         if (video.metadata().hasAudio) {
             report(20, QStringLiteral("正在混合视频原声"));
             if (!encoding::mixBackgroundVideoAudio(ffmpeg.executablePath, scene.backgroundVideoPath,
-                video.metadata().durationUs, end, options.ratePercent, ExportTimeline::audioSampleRate,
+                video.metadata(), end, options.ratePercent, ExportTimeline::audioSampleRate,
                 timeline.sampleCount(), directory.path(), pcmPath, canceled, &error)) return failure(error);
         }
     }

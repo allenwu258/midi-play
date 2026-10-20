@@ -7,6 +7,12 @@
 namespace midi_play::media {
 struct VideoMetadata {
     qint64 durationUs = 0;
+    // Absolute source timestamps; Qt positions are relative to mediaStartTimeUs.
+    qint64 startTimeUs = 0;
+    qint64 mediaStartTimeUs = 0;
+    // First audio track's half-open interval, relative to the first video frame.
+    qint64 audioStartUs = 0;
+    qint64 audioEndUs = 0;
     QSize sourceSize;
     bool hasAudio = false;
 };

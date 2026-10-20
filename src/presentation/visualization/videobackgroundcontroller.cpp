@@ -130,6 +130,8 @@ void VideoBackgroundController::synchronizeAudio(bool discontinuity)
     if (m_audioPlayer->source() != source) { m_audioPlayer->setSource(source); discontinuity = true; }
     m_audioPlayer->setPlaybackRate(m_rate / 100.0);
     const qint64 videoUs = midi_play::visualization::backgroundVideoPosition(m_musicUs, m_durationUs, m_metadata.durationUs);
+    const qint64 mediaPositionMs = std::max<qint64>(0,
+        m_metadata.startTimeUs - m_metadata.mediaStartTimeUs + videoUs) / 1000;
     const qint64 loop = m_musicUs / m_metadata.durationUs;
     if (discontinuity || loop != m_audioLoop) m_audioEndedLoop = -1;
     // An audio track may finish before the video stream. Keep the rest of this
@@ -138,8 +140,8 @@ void VideoBackgroundController::synchronizeAudio(bool discontinuity)
     if (!m_playing || m_musicUs >= m_durationUs) m_audioPlayer->pause();
     // The music transport remains authoritative; resync on loop/seek and bound
     // independent device-clock drift. Scrubbing and paused previews stay silent.
-    if (discontinuity || loop != m_audioLoop || std::abs(m_audioPlayer->position() - videoUs / 1000) > 120)
-        m_audioPlayer->setPosition(videoUs / 1000);
+    if (discontinuity || loop != m_audioLoop || std::abs(m_audioPlayer->position() - mediaPositionMs) > 120)
+        m_audioPlayer->setPosition(mediaPositionMs);
     m_audioLoop = loop;
     if (m_playing && m_musicUs < m_durationUs) m_audioPlayer->play();
 }

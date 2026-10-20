@@ -34,13 +34,13 @@ bool run(const QString& executable, const QStringList& arguments,
 }
 
 bool mixBackgroundVideoAudio(const QString& executable, const QString& videoPath,
-    qint64 videoDurationUs, qint64 musicDurationUs, int ratePercent, int sampleRate,
+    const media::VideoMetadata& video, qint64 musicDurationUs, int ratePercent, int sampleRate,
     qint64 totalSamples, const QString& temporaryDirectory, QString& musicPcmPath,
     const std::atomic_bool* canceled, QString* error)
 {
     const QDir directory(temporaryDirectory);
     const qint64 cycleSamples = std::max<qint64>(1,
-        (std::min(videoDurationUs, musicDurationUs) * sampleRate + 999'999) / 1'000'000);
+        (std::min(video.durationUs, musicDurationUs) * sampleRate + 999'999) / 1'000'000);
     const qint64 audibleSamples = std::min(totalSamples,
         (musicDurationUs * sampleRate * 100 + qint64(ratePercent) * 1'000'000 - 1)
             / (qint64(ratePercent) * 1'000'000));
@@ -51,9 +51,11 @@ bool mixBackgroundVideoAudio(const QString& executable, const QString& videoPath
     const QString cycle = directory.filePath(QStringLiteral("background-cycle.pcm"));
     const QString mixed = directory.filePath(QStringLiteral("mixed-audio.pcm"));
     const QString rate = QString::number(sampleRate);
-    const QString cycleFilter = QStringLiteral("aresample=%1:async=1:first_pts=0,atrim=end_sample=%2,apad=whole_len=%2")
-        .arg(sampleRate).arg(cycleSamples);
-    if (!run(executable, {QStringLiteral("-i"), videoPath, QStringLiteral("-map"), QStringLiteral("0:a:0"),
+    // Preserve source timestamps before translating to the video track origin.
+    // first_pts trims audio preroll and inserts silence for delayed audio tracks.
+    const QString cycleFilter = QStringLiteral("asetpts=PTS-(%1)/TB,aresample=%2:async=1:first_pts=0,atrim=end_sample=%3,apad=whole_len=%3")
+        .arg(QString::number(video.startTimeUs / 1'000'000.0, 'f', 6)).arg(sampleRate).arg(cycleSamples);
+    if (!run(executable, {QStringLiteral("-copyts"), QStringLiteral("-i"), videoPath, QStringLiteral("-map"), QStringLiteral("0:a:0"),
         QStringLiteral("-vn"), QStringLiteral("-af"), cycleFilter, QStringLiteral("-ac"), QStringLiteral("2"),
         QStringLiteral("-ar"), rate, QStringLiteral("-f"), QStringLiteral("f32le"), cycle}, canceled, error)) return false;
     QStringList arguments {QStringLiteral("-stream_loop"), QStringLiteral("-1"),
