@@ -66,6 +66,10 @@ private:
     // GPU 已完成也不会自动释放，保证调用方仍可按票据顺序回读。
     struct FrameSlot {
         Texture target;
+        Texture background;
+        QSize backgroundSize;
+        qint64 backgroundCacheKey = 0;
+        VkDescriptorSet descriptor = VK_NULL_HANDLE;
         VkFramebuffer framebuffer = VK_NULL_HANDLE;
         VkCommandBuffer command = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -93,7 +97,7 @@ private:
     // 将图片经暂存缓冲上传，显式转换传输与片元采样布局。
     void uploadTexture(Texture& texture, const QImage& image, VkCommandBuffer command);
     // 更新共享描述符的指定组合采样绑定，纹理上传在后续命令中完成。
-    void bindTexture(const Texture& texture, uint32_t binding);
+    void bindTexture(const Texture& texture, uint32_t binding, VkDescriptorSet descriptor);
     // 绑定实例缓冲，按给定层范围绘制每实例六个顶点。
     void draw(VkCommandBuffer command, Buffer& buffer, VulkanInstanceRange range);
     // 等待在途 GPU 使用结束，但保留票据和 inFlight，以便随后按顺序回读。
@@ -112,15 +116,13 @@ private:
     VkRenderPass m_pass = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_descriptorLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptors = VK_NULL_HANDLE;
-    VkDescriptorSet m_descriptor = VK_NULL_HANDLE;
     VkPipelineLayout m_layout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkSampler m_sampler = VK_NULL_HANDLE;
     VkQueryPool m_timestampQueries = VK_NULL_HANDLE;
     float m_timestampPeriod = 0.0f;
-    Texture m_atlas, m_background; // 所有帧槽共享，修改内容前需等待各槽 fence。
+    Texture m_atlas, m_staticBackground; // Immutable images remain shared; video textures are per slot.
     std::unique_ptr<media::VideoFrameReader> m_videoReader;
-    qint64 m_backgroundCacheKey = 0;
     std::vector<FrameSlot> m_slots;
     quint64 m_atlasRevision = 0;
     float m_scale = 1, m_offsetX = 0, m_offsetY = 0; // 导出裁剪区等比缩放及物理像素偏移。
@@ -215,11 +217,11 @@ void VulkanOffscreenRenderer::Impl::createImage(Texture& texture, QSize size, Vk
     check(vkCreateImageView(m_device, &view, nullptr, &texture.view), "create image view");
 }
 // 描述符声明采样时布局；实际布局转换由上传命令完成，更新前须等待共享资源的在途使用。
-void VulkanOffscreenRenderer::Impl::bindTexture(const Texture& texture, uint32_t binding)
+void VulkanOffscreenRenderer::Impl::bindTexture(const Texture& texture, uint32_t binding, VkDescriptorSet target)
 {
     VkDescriptorImageInfo image {m_sampler, texture.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkWriteDescriptorSet descriptor {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    descriptor.dstSet = m_descriptor; descriptor.dstBinding = binding;
+    descriptor.dstSet = target; descriptor.dstBinding = binding;
     descriptor.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; descriptor.descriptorCount = 1;
     descriptor.pImageInfo = &image;
     vkUpdateDescriptorSets(m_device, 1, &descriptor, 0, nullptr);
@@ -385,13 +387,13 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config, 
     VkDescriptorSetLayoutCreateInfo descriptor {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     descriptor.bindingCount = 2; descriptor.pBindings = bindings;
     check(vkCreateDescriptorSetLayout(m_device, &descriptor, nullptr, &m_descriptorLayout), "descriptor layout");
-    VkDescriptorPoolSize poolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+    constexpr int slotCount = 3;
+    VkDescriptorPoolSize poolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * slotCount};
     VkDescriptorPoolCreateInfo descriptors {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    descriptors.maxSets = 1; descriptors.poolSizeCount = 1; descriptors.pPoolSizes = &poolSize;
+    descriptors.maxSets = slotCount; descriptors.poolSizeCount = 1; descriptors.pPoolSizes = &poolSize;
     check(vkCreateDescriptorPool(m_device, &descriptors, nullptr, &m_descriptors), "descriptor pool");
     VkDescriptorSetAllocateInfo allocation {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocation.descriptorPool = m_descriptors; allocation.descriptorSetCount = 1; allocation.pSetLayouts = &m_descriptorLayout;
-    check(vkAllocateDescriptorSets(m_device, &allocation, &m_descriptor), "descriptor set");
     VkSamplerCreateInfo sampler {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
     sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -403,7 +405,6 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config, 
     check(vkCreatePipelineLayout(m_device, &layout, nullptr, &m_layout), "pipeline layout");
     m_pipeline = createScenePipeline(m_device, m_layout, m_pass);
     createImage(m_atlas, {2048, 2048}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-    bindTexture(m_atlas, 0);
     // 背景转换为未预乘 RGBA；空背景复用图集视图，保证两个描述符始终有效。
     if (!config.backgroundVideoPath.isEmpty()) {
         m_videoReader = std::make_unique<media::VideoFrameReader>();
@@ -415,11 +416,10 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config, 
     }
     if (!m_config.background.isNull()) {
         m_config.background = m_config.background.convertToFormat(QImage::Format_RGBA8888);
-        createImage(m_background, m_config.background.size(), VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        bindTexture(m_background, 1);
-    } else bindTexture(m_atlas, 1);
+        if (!m_videoReader)
+            createImage(m_staticBackground, m_config.background.size(), VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    }
     // 有界三槽允许 CPU 准备后续帧与此前 GPU 工作重叠，不无限堆积显存资源。
-    constexpr int slotCount = 3;
     m_slots.resize(slotCount);
     if (m_diagnostics.gpuTimestamps) {
         VkQueryPoolCreateInfo query {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -448,6 +448,13 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config, 
     framebuffer.layers = 1;
     for (int i = 0; i < slotCount; ++i) {
         auto& slot = m_slots[size_t(i)];
+        check(vkAllocateDescriptorSets(m_device, &allocation, &slot.descriptor), "frame descriptor set");
+        bindTexture(m_atlas, 0, slot.descriptor);
+        if (m_videoReader) {
+            slot.backgroundSize = m_config.background.size();
+            createImage(slot.background, slot.backgroundSize, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+            bindTexture(slot.background, 1, slot.descriptor);
+        } else bindTexture(m_staticBackground.image ? m_staticBackground : m_atlas, 1, slot.descriptor);
         slot.command = commands[size_t(i)];
         slot.timestampQueryBase = uint32_t(i * 2);
         check(vkCreateFence(m_device, &fence, nullptr, &slot.fence), "create frame fence");
@@ -498,23 +505,20 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     // 无空闲槽时交给调用方先 completeRender，不能覆盖仍持有票据的已完成帧。
     if (slotIndex < 0) return false;
     auto& slot = m_slots[size_t(slotIndex)];
-    bool videoChanged = false;
     if (m_videoReader) {
         QString error;
         const auto target = midi_play::visualization::backgroundVideoPosition(position,
             m_config.state.durationUs, m_videoReader->metadata().durationUs);
         const QImage frame = m_videoReader->frameAt(target, &error, canceled).image;
         if (frame.isNull()) throw std::runtime_error(error.toStdString());
-        videoChanged = frame.cacheKey() != m_backgroundCacheKey;
-        if (videoChanged) {
-            waitForAllSlots();
-            if (frame.size() != m_config.background.size()) {
-                destroy(m_background);
-                createImage(m_background, frame.size(), VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-                bindTexture(m_background, 1);
-            }
-            m_config.background = frame;
-            m_backgroundCacheKey = frame.cacheKey();
+        m_config.background = frame;
+        // This slot has been completed before reuse. Its image, staging memory,
+        // and descriptors can change without waiting for the other frame slots.
+        if (frame.size() != slot.backgroundSize) {
+            destroy(slot.background);
+            createImage(slot.background, frame.size(), VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+            slot.backgroundSize = frame.size();
+            bindTexture(slot.background, 1, slot.descriptor);
         }
     }
     auto state = m_config.state;
@@ -542,9 +546,12 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     if (m_diagnostics.enabled) m_diagnostics.bufferUploadNs += quint64(timer.nsecsElapsed());
 
     const bool atlasChanged = m_atlasRevision != m_scene.atlasRevision();
-    const bool backgroundChanged = m_background.image && (!m_background.uploaded || videoChanged);
-    // 所有槽共享纹理；覆盖图集/暂存数据前先等待旧采样命令完成，票据仍保留供顺序回读。
-    if (atlasChanged || backgroundChanged) waitForAllSlots();
+    Texture& background = m_videoReader ? slot.background : m_staticBackground;
+    const bool backgroundChanged = background.image
+        && (!background.uploaded || (m_videoReader && slot.backgroundCacheKey != m_config.background.cacheKey()));
+    // Only shared resources need a cross-slot barrier. Video staging and images
+    // belong to the free slot and cannot be referenced by another in-flight frame.
+    if (atlasChanged || (!m_videoReader && backgroundChanged)) waitForAllSlots();
 
     if (m_diagnostics.enabled) timer.restart();
     check(vkResetCommandBuffer(slot.command, 0), "reset frame command buffer");
@@ -561,7 +568,10 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
         uploadTexture(m_atlas, m_scene.atlas(), slot.command);
         m_atlasRevision = m_scene.atlasRevision();
     }
-    if (backgroundChanged) uploadTexture(m_background, m_config.background, slot.command);
+    if (backgroundChanged) {
+        uploadTexture(background, m_config.background, slot.command);
+        slot.backgroundCacheKey = m_config.background.cacheKey();
+    }
     const auto color = theme::themeFor(state.themeMode).visualization.background;
     VkClearValue clear {}; clear.color = {{float(color.redF()), float(color.greenF()), float(color.blueF()), 1}};
     const QSize size = m_config.outputSize;
@@ -573,7 +583,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     const VkViewport viewport {0, 0, float(size.width()), float(size.height()), 0, 1};
     vkCmdSetViewport(slot.command, 0, 1, &viewport); vkCmdSetScissor(slot.command, 0, 1, &m_scissor);
     vkCmdBindPipeline(slot.command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-    vkCmdBindDescriptorSets(slot.command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_layout, 0, 1, &m_descriptor, 0, nullptr);
+    vkCmdBindDescriptorSets(slot.command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_layout, 0, 1, &slot.descriptor, 0, nullptr);
     const auto& g = m_scene.geometry(); const auto& effects = m_scene.effectsProfile();
     // m_scale 作为离屏 DPR，同时使用物理像素偏移将逻辑裁剪区域居中到输出帧。
     const FrameConstants constants {float(size.width()), float(size.height()),
@@ -686,12 +696,13 @@ void VulkanOffscreenRenderer::Impl::cleanup()
             if (slot.framebuffer) vkDestroyFramebuffer(m_device, slot.framebuffer, nullptr);
             if (slot.fence) vkDestroyFence(m_device, slot.fence, nullptr);
             destroy(slot.target);
+            destroy(slot.background);
             destroy(slot.notes); destroy(slot.staticUi); destroy(slot.dynamicUi); destroy(slot.readback);
         }
         m_slots.clear();
         if (m_timestampQueries) vkDestroyQueryPool(m_device, m_timestampQueries, nullptr);
         m_timestampQueries = VK_NULL_HANDLE;
-        destroy(m_atlas); destroy(m_background);
+        destroy(m_atlas); destroy(m_staticBackground);
         if (m_sampler) vkDestroySampler(m_device, m_sampler, nullptr);
         if (m_layout) vkDestroyPipelineLayout(m_device, m_layout, nullptr);
         if (m_descriptors) vkDestroyDescriptorPool(m_device, m_descriptors, nullptr);

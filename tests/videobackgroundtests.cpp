@@ -472,6 +472,50 @@ void testVideoExport()
             "full export includes three video loops and a frozen tail");
     }
 }
+void testQueuedVideoFrames()
+{
+    using namespace midi_play::presentation::visualization;
+    const auto oldDiagnostics = qgetenv("MIDI_PLAY_VIDEO_DIAGNOSTICS");
+    qputenv("MIDI_PLAY_VIDEO_DIAGNOSTICS", "1");
+    ExportSceneConfig config;
+    config.backgroundVideoPath = QString::fromUtf8(MIDI_PLAY_TEST_VIDEO);
+    config.outputSize = {1920, 1080};
+    config.state.durationUs = 8'000'000;
+    config.state.visualEffectsEnabled = false;
+    VulkanOffscreenRenderer renderer;
+    VulkanOffscreenRenderer reference;
+    QString error;
+    require(renderer.initialize(config, &error), qPrintable(error));
+    require(reference.initialize(config, &error), qPrintable(error));
+    qputenv("MIDI_PLAY_VIDEO_DIAGNOSTICS", oldDiagnostics);
+    QImage warmup;
+    require(renderer.render(0, warmup, nullptr, &error), qPrintable(error));
+    QElapsedTimer timer;
+    timer.start();
+    quint64 submissionWaitNs = 0;
+    QImage previous;
+    for (int group = 0; group < 20; ++group) {
+        VulkanRenderTicket tickets[3];
+        const auto before = renderer.diagnostics().fenceWaitNs;
+        for (int slot = 0; slot < 3; ++slot)
+            require(renderer.beginRender((group * 3 + slot) * 50'000, tickets[slot], nullptr, &error), qPrintable(error));
+        submissionWaitNs += renderer.diagnostics().fenceWaitNs - before;
+        for (int slot = 0; slot < 3; ++slot) {
+            QImage frame;
+            require(renderer.completeRender(tickets[slot], frame, nullptr, &error), qPrintable(error));
+            require(!frame.isNull() && (previous.isNull() || previous != frame), "queued frames retain independent background pixels");
+            if (group == 0 || group == 19) {
+                QImage expected;
+                require(reference.render((group * 3 + slot) * 50'000, expected, nullptr, &error), qPrintable(error));
+                require(frame == expected, "queued frames match the synchronous renderer at each timestamp");
+            }
+            previous = frame;
+        }
+    }
+    std::printf("Video pipeline: 60 frames, %lld ms, submission fence waits %.3f ms\n",
+        timer.elapsed(), submissionWaitNs / 1'000'000.0);
+    require(submissionWaitNs == 0, "video uploads never wait for unrelated frame slots");
+}
 void testRealtimeVulkan()
 {
     using namespace midi_play;
@@ -548,7 +592,7 @@ int main(int argc, char** argv)
         if (audio) { testDecoderAndAsync(); testAudioTimeOrigin(); testAudioLoopEvents(); }
         if (audioExport) { testAudioExport(); testAudioTimeOrigin(true); }
 #if MIDI_PLAY_HAS_VULKAN
-        if (application.arguments().contains("--vulkan")) testOffscreen();
+        if (application.arguments().contains("--vulkan")) { testOffscreen(); testQueuedVideoFrames(); }
         if (application.arguments().contains("--integration")) testVideoExport();
         if (application.arguments().contains("--window")) testRealtimeVulkan();
 #endif
