@@ -49,15 +49,9 @@ void VideoBackgroundController::synchronize(qint64 musicUs, qint64 durationUs, b
     // Small backwards corrections are normal when a transport sample replaces
     // an extrapolated display time. They must not starve the in-flight decoder.
     discontinuity |= musicUs + 100'000 < m_musicUs || musicUs - m_musicUs > 250'000;
-    if (discontinuity) {
-        ++m_epoch;
-        if (m_watcher && m_worker) {
-            // Interrupt long GOP catch-up; the replacement starts only after the
-            // old worker exits, keeping both memory and concurrency bounded.
-            m_worker->canceled.store(true);
-            m_worker = std::make_shared<Worker>();
-        }
-    }
+    // A seek replaces the pending target, not the running decoder. Let one
+    // in-flight frame finish so continuous dragging cannot starve presentation.
+    // Source changes still cancel and invalidate all results through m_epoch.
     const bool changed = musicUs != m_musicUs || durationUs != m_durationUs;
     const bool audioChanged = discontinuity || playing != m_playing || ratePercent != m_rate;
     m_musicUs = musicUs; m_durationUs = durationUs; m_playing = playing; m_rate = ratePercent;
@@ -87,6 +81,8 @@ void VideoBackgroundController::requestFrame()
             } else {
                 const bool first = m_metadata.durationUs == 0;
                 m_metadata = result.metadata;
+                // At most one completed intermediate preview is published before
+                // decoding the newest target; no unbounded seek queue is kept.
                 if (!result.frame.image.isNull()) emit frameReady(result.frame.image);
                 if (first) synchronizeAudio(true);
             }

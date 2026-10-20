@@ -29,6 +29,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
@@ -191,6 +192,41 @@ void testAudioExport()
     for (int i = 120000 * 2; i < 132300 * 2; ++i) tail += std::abs(samples[i]);
     require(audible > 1 && tail < .001, "background audio stops before export tail");
 }
+void testContinuousScrubbing()
+{
+    using namespace midi_play;
+    const auto arguments = QCoreApplication::arguments();
+    const int sourceOption = arguments.indexOf("--scrub-video");
+    const QString path = sourceOption >= 0 && sourceOption + 1 < arguments.size()
+        ? arguments[sourceOption + 1] : QString::fromUtf8(MIDI_PLAY_TEST_VIDEO);
+    presentation::visualization::FallingNotesView view;
+    view.setGraphicsMode(settings::GraphicsMode::Traditional);
+    view.setTransportPosition(0, 12'000'000);
+    view.setBackgroundImageMaximumDimension(256);
+    view.setBackgroundVideoPath(path);
+    require(waitUntil([&] { return !view.exportBackground().isNull(); }), "scrub source loads");
+    auto* controller = view.findChild<presentation::visualization::VideoBackgroundController*>();
+    int frames = 0, requests = 0;
+    QObject::connect(controller, &presentation::visualization::VideoBackgroundController::frameReady,
+        &view, [&](const QImage&) { ++frames; });
+    QTimer updates;
+    QObject::connect(&updates, &QTimer::timeout, &view, [&] {
+        view.previewPosition(5'000'000 + (requests++ % 120) * 40'000);
+    });
+    QElapsedTimer elapsed; elapsed.start();
+    updates.start(1);
+    require(waitUntil([&] { return elapsed.elapsed() >= 2000; }), "continuous scrub completes");
+    updates.stop();
+    std::printf("Continuous scrub: %d requests, %d frames during dragging\n", requests, frames);
+    require(requests > 10 && frames > 1, "continuous dragging publishes frames before release");
+    media::VideoFrameReader expected;
+    QString error;
+    require(expected.open(path, 256, &error), qPrintable(error));
+    const auto finalFrame = expected.frameAt(750'000, &error).image;
+    view.previewPosition(750'000);
+    require(waitUntil([&] { return view.exportBackground() == finalFrame; }), "scrub settles at exact latest target");
+    view.setBackgroundVideoPath({});
+}
 void testSeekAcknowledgment()
 {
     using namespace midi_play;
@@ -305,7 +341,7 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
     try {
-        testTimeline(); testSettings(); testDecoderAndAsync(); testAudioExport(); testSeekAcknowledgment();
+        testTimeline(); testSettings(); testDecoderAndAsync(); testContinuousScrubbing(); testAudioExport(); testSeekAcknowledgment();
 #if MIDI_PLAY_HAS_VULKAN
         if (application.arguments().contains("--vulkan")) testOffscreen();
         if (application.arguments().contains("--integration")) testVideoExport();

@@ -244,7 +244,6 @@ void FallingNotesView::setRefreshRate(int hz)
 void FallingNotesView::resetTransientEffects(qint64 positionUs)
 {
     m_state.effectsStartUs = std::max<qint64>(0, positionUs);
-    synchronizeVideo(true);
 #if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setEffectsStart(m_state.effectsStartUs);
 #endif
