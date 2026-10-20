@@ -7,6 +7,7 @@
 #include "notecolormode.h"
 #include "visualeffectlevel.h"
 #include "backgroundimagealignment.h"
+#include "backgroundmode.h"
 
 #include <QString>
 #include <QtGlobal>
@@ -26,7 +27,7 @@ inline constexpr bool kDefaultShowNotationStrip = false;
 inline constexpr int kDefaultBackgroundImageMaximumDimension = 2048;
 inline constexpr int kMinimumBackgroundImageMaximumDimension = 256;
 inline constexpr int kMaximumBackgroundImageMaximumDimension = 4096;
-inline constexpr int kSettingsSchemaVersion = 14;
+inline constexpr int kSettingsSchemaVersion = 15;
 
 // 存储层提供原始快照，应用服务负责再次规范化并向消费者发布变更。
 struct PlayerSettings {
@@ -45,6 +46,9 @@ struct PlayerSettings {
     // 手动安装目录，切换为 PATH 检测时仍保留。
     QString ffmpegPath;
     bool backgroundImageEnabled = false;
+    BackgroundMode backgroundMode = BackgroundMode::None;
+    QString backgroundVideoPath;
+    bool backgroundVideoMuted = true;
     // 关闭图片背景时保留路径，供再次启用时恢复。
     QString backgroundImagePath;
     BackgroundImageAlignment backgroundImageAlignment = kDefaultBackgroundImageAlignment;

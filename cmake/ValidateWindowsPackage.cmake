@@ -7,7 +7,7 @@ endif()
 # 最小文件集合覆盖 GUI/CLI、Qt 平台插件、音频编解码器和 app-local MSVC CRT。
 foreach (required IN ITEMS midi_play.exe midi_play_cli.exe Qt6Core.dll Qt6Gui.dll
          Qt6Widgets.dll Qt6Xml.dll platforms/qwindows.dll libfluidsynth-3.dll
-         libwebp.dll libmp3lame.dll
+         libwebp.dll libmp3lame.dll Qt6Multimedia.dll
          vcruntime140.dll vcruntime140_1.dll msvcp140.dll)
     if (NOT EXISTS "${PACKAGE_DIR}/${required}")
         message(FATAL_ERROR "Incomplete Windows package: missing ${required}")

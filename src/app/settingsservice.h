@@ -33,6 +33,12 @@ public:
     bool ffmpegUsePath() const noexcept { return m_settings.ffmpegUsePath; }
     const QString& backgroundImagePath() const noexcept { return m_settings.backgroundImagePath; }
     bool backgroundImageEnabled() const noexcept { return m_settings.backgroundImageEnabled; }
+    settings::BackgroundMode backgroundMode() const noexcept { return m_settings.backgroundMode; }
+    const QString& backgroundVideoPath() const noexcept { return m_settings.backgroundVideoPath; }
+    bool backgroundVideoMuted() const noexcept { return m_settings.backgroundVideoMuted; }
+    QString activeBackgroundVideoPath() const {
+        return backgroundMode() == settings::BackgroundMode::Video ? backgroundVideoPath() : QString();
+    }
     settings::BackgroundImageAlignment backgroundImageAlignment() const noexcept
     { return m_settings.backgroundImageAlignment; }
     int backgroundImageOpacity() const noexcept { return m_settings.backgroundImageOpacity; }
@@ -68,6 +74,9 @@ public slots:
     void setBackgroundImagePath(const QString& path);
     // 背景开关独立于路径，透明度夹取到 0..100。
     void setBackgroundImageEnabled(bool enabled);
+    void setBackgroundMode(settings::BackgroundMode mode);
+    void setBackgroundVideoPath(const QString& path);
+    void setBackgroundVideoMuted(bool muted);
     void setBackgroundImageAlignment(settings::BackgroundImageAlignment alignment);
     void setBackgroundImageOpacity(int opacity);
     void setBackgroundImageMaximumDimension(int dimension);
@@ -89,6 +98,9 @@ signals:
     void ffmpegUsePathChanged(bool enabled);
     void backgroundImagePathChanged(const QString& path);
     void backgroundImageEnabledChanged(bool enabled);
+    void backgroundModeChanged(midi_play::settings::BackgroundMode mode);
+    void backgroundVideoPathChanged(const QString& path);
+    void backgroundVideoMutedChanged(bool muted);
     void backgroundImageAlignmentChanged(midi_play::settings::BackgroundImageAlignment alignment);
     void backgroundImageOpacityChanged(int opacity);
     void backgroundImageMaximumDimensionChanged(int dimension);

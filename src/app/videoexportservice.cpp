@@ -6,6 +6,8 @@
 #include "domain/playback/playbackmodel.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/encoding/ffmpegprobe.h"
+#include "infrastructure/encoding/backgroundaudioexport.h"
+#include "infrastructure/media/videoframereader.h"
 #include "infrastructure/encoding/ffmpegvideoencoder.h"
 #include "infrastructure/encoding/ffmpegvideoencoderworker.h"
 #include <QDir>
@@ -130,7 +132,8 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         const QFileInfo info(path); const QString canonical = info.canonicalFilePath();
         return canonical.isEmpty() ? info.absoluteFilePath() : canonical;
     };
-    for (const auto& input : {options.sourcePath, options.soundFontPath, options.backgroundPath, options.ffmpegExecutable}) {
+    for (const auto& input : {options.sourcePath, options.soundFontPath, options.backgroundPath,
+                              options.scene.backgroundVideoPath, options.ffmpegExecutable}) {
         if (!input.isEmpty() && identity(input).compare(identity(options.outputPath), Qt::CaseInsensitive) == 0)
             return failure(QStringLiteral("输出路径不能覆盖输入资源"));
     }
@@ -148,7 +151,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     scene.state.durationUs = end;
     presentation::visualization::VulkanOffscreenRenderer renderer;
     QString error;
-    if (!renderer.initialize(scene, &error)) return failure(error);
+    if (!renderer.initialize(scene, &error, canceled)) return failure(error);
     QTemporaryDir directory(output.dir().filePath(QStringLiteral(".midi-play-video-XXXXXX")));
     if (!directory.isValid()) return failure(QStringLiteral("无法创建导出临时目录"));
     QString pcmPath;
@@ -185,6 +188,16 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         if (result.frames != timeline.sampleCount() || QFileInfo(pcmPath).size() != timeline.sampleCount() * 8)
             return failure(QStringLiteral("离线音频长度与视频时间线不一致"));
         clipped = result.clippedSamples;
+    }
+    if (!options.backgroundVideoMuted && !scene.backgroundVideoPath.isEmpty()) {
+        media::VideoFrameReader video;
+        if (!video.open(scene.backgroundVideoPath, scene.backgroundMaximumDimension, &error, canceled)) return failure(error);
+        if (video.metadata().hasAudio) {
+            report(20, QStringLiteral("正在混合视频原声"));
+            if (!encoding::mixBackgroundVideoAudio(ffmpeg.executablePath, scene.backgroundVideoPath,
+                video.metadata().durationUs, end, options.ratePercent, ExportTimeline::audioSampleRate,
+                timeline.sampleCount(), directory.path(), pcmPath, canceled, &error)) return failure(error);
+        }
     }
     const QString temporaryOutput = directory.filePath(QStringLiteral("video.mp4"));
     encoding::FfmpegVideoEncoderWorker encoder(3);
@@ -247,7 +260,7 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     validationTimer.start();
     // ffprobe 可用时校验媒体规格，并始终执行完整解码检查，再允许覆盖最终输出。
     if (!encoding::FfmpegVideoEncoder::validate(ffmpeg.executablePath, temporaryOutput, canceled, &error,
-                                                size, options.fps, timeline.frameCount(), options.includeAudio,
+                                                size, options.fps, timeline.frameCount(), !pcmPath.isEmpty(),
                                                 timeline.videoDurationUs(), ExportTimeline::audioSampleRate))
         return failure(error);
     metrics.validationMs = validationTimer.elapsed();

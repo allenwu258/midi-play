@@ -12,6 +12,7 @@ struct VideoExportOptions {
     QString outputPath;
     QString sourcePath;
     QString backgroundPath;
+    bool backgroundVideoMuted = true;
     QString soundFontPath;
     presentation::visualization::ExportSceneConfig scene;
     int fps = 60;

@@ -97,6 +97,15 @@ midi_play::settings::PlayerSettings QSettingsStore::load(QString* warning)
     // 兼容只保存背景路径的旧配置：未提供开关时按路径非空推导启用状态。
     result.backgroundImageEnabled = file.value(
         QStringLiteral("Visualization/backgroundImageEnabled"), !result.backgroundImagePath.isEmpty()).toBool();
+    // Schema 15 replaces the two-state switch; preserve legacy image preferences.
+    const auto legacyMode = result.backgroundImageEnabled
+        ? midi_play::settings::BackgroundMode::Image : midi_play::settings::BackgroundMode::None;
+    result.backgroundMode = midi_play::settings::normalizeBackgroundMode(
+        static_cast<midi_play::settings::BackgroundMode>(file.value(
+            QStringLiteral("Visualization/backgroundMode"), int(legacyMode)).toInt()));
+    result.backgroundImageEnabled = result.backgroundMode == midi_play::settings::BackgroundMode::Image;
+    result.backgroundVideoPath = file.value(QStringLiteral("Visualization/backgroundVideoPath")).toString().trimmed();
+    result.backgroundVideoMuted = file.value(QStringLiteral("Visualization/backgroundVideoMuted"), true).toBool();
     const bool hasBackgroundAlignment = file.contains(QStringLiteral("Visualization/backgroundImageAlignment"));
     const QVariant backgroundAlignmentValue = file.value(
         QStringLiteral("Visualization/backgroundImageAlignment"),
@@ -255,6 +264,11 @@ bool QSettingsStore::save(const midi_play::settings::PlayerSettings& settings, Q
         file.setValue(QStringLiteral("Visualization/backgroundImagePath"), settings.backgroundImagePath);
     }
     file.setValue(QStringLiteral("Visualization/backgroundImageEnabled"), settings.backgroundImageEnabled);
+    const auto mode = settings.backgroundMode == midi_play::settings::BackgroundMode::None && settings.backgroundImageEnabled
+        ? midi_play::settings::BackgroundMode::Image : midi_play::settings::normalizeBackgroundMode(settings.backgroundMode);
+    file.setValue(QStringLiteral("Visualization/backgroundMode"), int(mode));
+    file.setValue(QStringLiteral("Visualization/backgroundVideoPath"), settings.backgroundVideoPath);
+    file.setValue(QStringLiteral("Visualization/backgroundVideoMuted"), settings.backgroundVideoMuted);
     file.setValue(QStringLiteral("Visualization/backgroundImageAlignment"),
                   midi_play::settings::backgroundImageAlignmentPersistentValue(settings.backgroundImageAlignment));
     file.setValue(QStringLiteral("Visualization/backgroundImageOpacity"),

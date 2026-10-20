@@ -283,7 +283,8 @@ void testBackgroundModePreference()
                 && !dialog.findChild<QPushButton*>(
                 QStringLiteral("clearBackgroundImageButton")),
             "background settings must expose mode, image, alignment, opacity and dimension controls");
-    require(mode->count() == 2 && mode->itemText(0) == QStringLiteral("无背景")
+    require(mode->count() == 3 && mode->itemText(2) == QStringLiteral("视频背景")
+                && mode->itemText(0) == QStringLiteral("无背景")
                 && mode->itemText(1) == QStringLiteral("图片背景")
                 && !mode->currentData().toBool() && imagePath->parentWidget()->isHidden(),
             "new users must see no background with the image row hidden");

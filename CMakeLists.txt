@@ -12,7 +12,8 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
 # 运行时依赖由 vcpkg/Qt 提供；Vulkan 和着色器编译器按能力探测，不强制所有构建环境具备。
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Concurrent Xml Multimedia)
+find_package(FFMPEG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(WebP CONFIG REQUIRED)
 find_package(mp3lame CONFIG REQUIRED)
@@ -69,6 +70,14 @@ endif()
 
 # 核心静态库集中领域、应用、基础设施和展示实现，GUI 与 CLI 共享同一业务组件。
 set(MIDI_PLAY_COMMON_SOURCES
+    src/infrastructure/encoding/backgroundaudioexport.h
+    src/infrastructure/encoding/backgroundaudioexport.cpp
+    src/domain/settings/backgroundmode.h
+    src/domain/visualization/backgroundvideotimeline.h
+    src/infrastructure/media/videoframereader.h
+    src/infrastructure/media/videoframereader.cpp
+    src/presentation/visualization/videobackgroundcontroller.h
+    src/presentation/visualization/videobackgroundcontroller.cpp
     src/app/audioexportservice.h
     src/app/audioexportservice.cpp
     src/app/exporttimeline.h
@@ -270,6 +279,9 @@ if (MIDI_PLAY_HAS_VULKAN)
         FILES ${VULKAN_SHADER_BINARIES})
 endif()
 target_include_directories(midi_play_core PUBLIC src)
+target_include_directories(midi_play_core PRIVATE ${FFMPEG_INCLUDE_DIRS})
+target_link_directories(midi_play_core PRIVATE ${FFMPEG_LIBRARY_DIRS})
+target_link_libraries(midi_play_core PRIVATE ${FFMPEG_LIBRARIES} Qt6::Multimedia)
 target_link_libraries(midi_play_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Xml Threads::Threads)
 target_link_libraries(midi_play_core PRIVATE WebP::webp mp3lame::mp3lame)
 if (MIDI_PLAY_HAS_VULKAN)
@@ -348,6 +360,24 @@ endif()
 
 if (WIN32)
     # WebP 还依赖 sharpyuv；安装和构建后处理都复制两个导入运行库。
+    # The process-local decoder is independent of the external export executable.
+    # Derive its runtime directory from the discovered headers, never from PATH.
+    list(GET FFMPEG_INCLUDE_DIRS 0 MIDI_PLAY_FFMPEG_INCLUDE_DIR)
+    get_filename_component(MIDI_PLAY_FFMPEG_PREFIX "${MIDI_PLAY_FFMPEG_INCLUDE_DIR}/.." ABSOLUTE)
+    file(GLOB MIDI_PLAY_FFMPEG_DLLS CONFIGURE_DEPENDS
+        "${MIDI_PLAY_FFMPEG_PREFIX}/bin/avcodec-*.dll"
+        "${MIDI_PLAY_FFMPEG_PREFIX}/bin/avformat-*.dll"
+        "${MIDI_PLAY_FFMPEG_PREFIX}/bin/avutil-*.dll"
+        "${MIDI_PLAY_FFMPEG_PREFIX}/bin/swscale-*.dll"
+        "${MIDI_PLAY_FFMPEG_PREFIX}/bin/swresample-*.dll")
+    if (NOT MIDI_PLAY_FFMPEG_DLLS)
+        message(FATAL_ERROR "FFmpeg decoder runtime DLLs were not found")
+    endif()
+    add_custom_command(TARGET midi_play_core POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MIDI_PLAY_FFMPEG_DLLS}
+            "$<TARGET_FILE:Qt6::Multimedia>" "$<TARGET_FILE_DIR:midi_play_core>"
+        VERBATIM)
+    install(FILES ${MIDI_PLAY_FFMPEG_DLLS} DESTINATION ${CMAKE_INSTALL_BINDIR})
     add_custom_command(TARGET midi_play_core POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:WebP::webp>" "$<TARGET_FILE:WebP::sharpyuv>"
@@ -374,6 +404,13 @@ endif()
 # 测试目标复用核心库；Qt offscreen 插件同时部署到测试目录，支持直接运行和 CTest。
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(midi_play_video_background_tests tests/videobackgroundtests.cpp)
+    target_link_libraries(midi_play_video_background_tests PRIVATE midi_play_core Qt6::Multimedia)
+    target_compile_definitions(midi_play_video_background_tests PRIVATE
+        MIDI_PLAY_TEST_VIDEO="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/background-video.mp4")
+    add_test(NAME video_background_timeline_and_decoder
+        COMMAND midi_play_video_background_tests -platform offscreen)
+    set_tests_properties(video_background_timeline_and_decoder PROPERTIES TIMEOUT 60)
     # 将 offscreen 平台同时复制到测试程序目录并注入 CTest 环境，保证直接运行
     # `-platform offscreen` 与 CTest 执行路径一致。
     if (TARGET Qt6::QOffscreenIntegrationPlugin)

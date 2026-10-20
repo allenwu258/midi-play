@@ -121,7 +121,7 @@ try {
     $deployQt = Require-File "$qtRoot\bin\windeployqt.exe" 'Qt deployment tool'
     $null = Require-File "$qtRoot\lib\Qt6Core.lib" 'MSVC Qt library'
     $null = Require-File "$qtRoot\plugins\platforms\qwindows.dll" 'Qt Windows platform plugin'
-    foreach ($module in @('Core', 'Gui', 'Widgets', 'Concurrent', 'Xml')) {
+    foreach ($module in @('Core', 'Gui', 'Widgets', 'Concurrent', 'Xml', 'Multimedia')) {
         $null = Require-File "$qtRoot\lib\cmake\Qt6$module\Qt6${module}Config.cmake" "Qt $module module"
     }
     $null = Require-File "$vcpkgRoot\scripts\buildsystems\vcpkg.cmake" 'vcpkg checkout'
@@ -236,6 +236,7 @@ try {
         '-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF', '-DBUILD_TESTING=ON', '-DCMAKE_INSTALL_BINDIR=.',
         "-DFLUIDSYNTH_DLL=$fluidSynth", "-DWebP_DIR=$(Split-Path $webPConfig)",
         "-Dmp3lame_DIR=$(Split-Path $lameConfig)",
+        "-DCMAKE_MODULE_PATH=$($installedDirectory.Replace('\', '/'))/x64-windows/share/ffmpeg",
         "-DMIDI_PLAY_ENABLE_VULKAN=$vulkanOption",
         "-DMIDI_PLAY_REQUIRE_VULKAN=$vulkanOption",
         "-DMIDI_PLAY_TEST_SOUNDFONT=$SoundFontPath")
@@ -285,6 +286,7 @@ try {
         Push-Location $stage
         try {
             Invoke-Checked "$stage\midi_play_cli.exe" @('--help')
+            Invoke-Checked "$stage\midi_play_cli.exe" @('--video-background-test', "$repo\tests\fixtures\background-video.mp4")
             Invoke-Checked "$stage\midi_play_cli.exe" @('--render-test', "$repo\tests\fixtures\deployment.musicxml", "$stage\.smoke.png")
             $null = Require-File "$stage\.smoke.png" 'Packaged Qt render smoke output'
             Remove-Item -LiteralPath "$stage\.smoke.png"

@@ -6,6 +6,7 @@
 #include "domain/visualization/visiblenoteindex.h"
 #include "infrastructure/audio/fluidsynthengine.h"
 #include "infrastructure/midi/midireader.h"
+#include "infrastructure/media/videoframereader.h"
 #include "infrastructure/readers/midireaderadapter.h"
 #include "infrastructure/readers/musicreaderregistry.h"
 #include "infrastructure/readers/musicxmlreaderadapter.h"
@@ -36,6 +37,7 @@ void printUsage(FILE* stream)
         "       midi_play_cli --midi-test <MIDI file>\n"
         "       midi_play_cli --export-mp3|--export-wav <music file> <output file> --soundfont <sf2|sf3> [--bitrate 128|160|192|256|320] [--sample-rate 44100|48000] [--tail-ms 0..5000] [--metronome]\n"
         "       midi_play_cli --render-test <music file> <output.png> [position_us [width [height]]] [--theme dark|light] [--note-colors normal|vivid]\n"
+        "       midi_play_cli --video-background-test <video file>\n"
         "       midi_play_cli --help\n",
         stream);
 }
@@ -308,6 +310,19 @@ int main(int argc, char* argv[])
     application->setOrganizationName(QStringLiteral("MidiPlay"));
     const QStringList arguments = application->arguments();
     const QString command = arguments.value(1);
+    if (command == QStringLiteral("--video-background-test") && arguments.size() == 3) {
+        midi_play::media::VideoFrameReader reader;
+        QString error;
+        if (!reader.open(arguments.at(2), 256, &error)) { qCritical().noquote() << error; return 1; }
+        const auto first = reader.frameAt(0, &error);
+        const auto last = reader.frameAt(reader.metadata().durationUs - 1, &error);
+        const auto replay = reader.frameAt(0, &error);
+        if (first.image.isNull() || last.image.isNull() || replay.image != first.image) {
+            qCritical().noquote() << "Background decode/seek smoke failed:" << error; return 1;
+        }
+        qInfo() << "Background decoder smoke passed; duration_us=" << reader.metadata().durationUs;
+        return 0;
+    }
     // 无参数等同帮助；未识别的命令或位置参数数量错误按使用错误返回 2。
     if (arguments.size() == 1 || command == QStringLiteral("--help")
         || command == QStringLiteral("-h")) {

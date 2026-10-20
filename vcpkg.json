@@ -4,6 +4,11 @@
   "builtin-baseline": "52d80838fb40c755b1615fbc9c7b994a33742a22",
   "dependencies": [
     {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["avcodec", "avformat", "swscale", "swresample"]
+    },
+    {
       "name": "fluidsynth",
       "features": [
         "sndfile"

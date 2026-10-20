@@ -16,6 +16,8 @@ struct ExportSceneConfig {
     QSize outputSize {1920, 1080}; // 编码帧的物理像素尺寸。
     QFont font;
     QImage background; // 按值保存源图像，离屏初始化时独立上传到设备纹理。
+    QString backgroundVideoPath; // Independent decoder; frames are evaluated at absolute music time.
+    int backgroundMaximumDimension = 2048;
     bool retainMeasureGutter = true; // 默认保留左侧小节标记栏及虚拟琴键。
 };
 
@@ -68,7 +70,8 @@ public:
     ~VulkanOffscreenRenderer();
     // 建立导出资源并保存配置，清除加载/错误状态；重新初始化会替换旧实现。
     // 所有带 error 的接口要求传入有效指针，异常信息写入该字符串。
-    bool initialize(const ExportSceneConfig& config, QString* error);
+    bool initialize(const ExportSceneConfig& config, QString* error,
+                    const std::atomic_bool* canceled = nullptr);
     // 提交一帧并填充票据；取消或没有空闲槽时返回 false，不生成新票据。
     bool beginRender(qint64 musicPositionUs, VulkanRenderTicket& ticket,
                      const std::atomic_bool* canceled, QString* error);

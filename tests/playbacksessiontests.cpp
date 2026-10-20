@@ -1074,6 +1074,12 @@ void testPlaybackSessionRateChangePreservesAudioState()
     session.seek(session.durationMicroseconds() - 10'000);
     require(waitUntil([&] { return session.state() == State::Stopped; }),
             "a rate-adjusted playhead must still stop at the end of the song");
+    require(session.positionMicroseconds() == session.durationMicroseconds(),
+            "natural completion must retain the terminal position for background freeze");
+    session.play();
+    require(session.state() == State::Playing && session.positionMicroseconds() < 10'000,
+            "replay after natural completion must restart at zero");
+    session.stop();
 }
 
 // 倍率重建事件时保持 NoteOn/NoteOff 顺序、音高和代次隔离。

@@ -81,6 +81,13 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     m_audio->setEnabled(!defaults.soundFontPath.isEmpty());
     if (defaults.soundFontPath.isEmpty()) m_audio->setToolTip(QStringLiteral("请先在设置中选择音源"));
     form->addRow(QString(), m_audio);
+    if (!defaults.scene.backgroundVideoPath.isEmpty()) {
+        auto* originalAudio = new QLabel(defaults.backgroundVideoMuted
+            ? QStringLiteral("视频原声：已屏蔽（跟随背景设置）")
+            : QStringLiteral("视频原声：将包含在导出中（跟随背景设置）"), m_controls);
+        originalAudio->setWordWrap(true);
+        form->addRow(QString(), originalAudio);
+    }
 
     m_metronome = new QCheckBox(QStringLiteral("包含节拍器"), m_controls);
     form->addRow(QString(), m_metronome);
@@ -196,7 +203,7 @@ void VideoExportPage::updatePreview()
         visualization::VulkanOffscreenRenderer renderer;
         QImage frame;
         QString error;
-        if (renderer.initialize(config, &error)) renderer.render(position, frame, cancel.get(), &error);
+        if (renderer.initialize(config, &error, cancel.get())) renderer.render(position, frame, cancel.get(), &error);
         return qMakePair(frame, error);
     }));
 #else

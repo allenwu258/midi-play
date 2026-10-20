@@ -107,6 +107,14 @@ void PlaybackSession::play()
     if (m_state == State::Playing || !m_document || !m_document->isValid()) {
         return;
     }
+    if (m_positionUs >= m_durationUs) {
+        m_positionUs = 0;
+        m_clockBaseUs = 0;
+        m_playHead.reset();
+        m_scheduler.reset();
+        m_metronomeScheduler.seek(*m_metronomeTimeline, 0);
+        emitPosition();
+    }
     startPlaybackFromCurrentPosition();
 }
 
@@ -253,8 +261,16 @@ void PlaybackSession::onTimer()
         m_audioService->submitBatch(window.events, window.generation);
     }
     if (m_positionUs >= m_durationUs) {
-        // 到达时长后通过统一 stop 流程清理后端和游标。
-        stop();
+        // Natural completion keeps the exact endpoint. Explicit stop still resets.
+        m_timer->stop();
+        m_audioService->stopMetronome();
+        advanceEventGeneration();
+        flushActiveNotes();
+        m_audioService->stop();
+        m_positionUs = m_durationUs;
+        m_playHead.pause(m_durationUs);
+        emitPosition();
+        setState(State::Stopped);
         return;
     }
     dispatchMetronome(now);

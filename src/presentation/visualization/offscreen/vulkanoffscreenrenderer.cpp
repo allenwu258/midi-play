@@ -4,6 +4,8 @@
 #include "presentation/visualization/exportframing.h"
 #include "presentation/visualization/vulkanscene.h"
 #include "presentation/visualization/vulkanpipeline.h"
+#include "infrastructure/media/videoframereader.h"
+#include "domain/visualization/backgroundvideotimeline.h"
 #include <QElapsedTimer>
 #include <algorithm>
 #include <cmath>
@@ -54,7 +56,7 @@ QString physicalDeviceTypeName(VkPhysicalDeviceType type)
 class VulkanOffscreenRenderer::Impl {
 public:
     ~Impl() { cleanup(); }
-    void initialize(const ExportSceneConfig& config);
+    void initialize(const ExportSceneConfig& config, const std::atomic_bool* canceled);
     bool beginRender(qint64 position, VulkanRenderTicket& ticket, const std::atomic_bool* canceled);
     bool completeRender(VulkanRenderTicket& ticket, QImage& frame, const std::atomic_bool* canceled);
     bool render(qint64 position, QImage& frame, const std::atomic_bool* canceled);
@@ -117,6 +119,8 @@ private:
     VkQueryPool m_timestampQueries = VK_NULL_HANDLE;
     float m_timestampPeriod = 0.0f;
     Texture m_atlas, m_background; // 所有帧槽共享，修改内容前需等待各槽 fence。
+    std::unique_ptr<media::VideoFrameReader> m_videoReader;
+    qint64 m_backgroundCacheKey = 0;
     std::vector<FrameSlot> m_slots;
     quint64 m_atlasRevision = 0;
     float m_scale = 1, m_offsetX = 0, m_offsetY = 0; // 导出裁剪区等比缩放及物理像素偏移。
@@ -249,8 +253,9 @@ void VulkanOffscreenRenderer::Impl::uploadTexture(Texture& texture, const QImage
 }
 
 // 建立独立设备及离屏目标，所有成功创建的句柄由 Impl 析构统一回收。
-void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
+void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config, const std::atomic_bool* canceled)
 {
+    if (canceled && canceled->load()) throw std::runtime_error("Video initialization canceled");
     m_diagnostics = {};
     m_diagnostics.enabled = qEnvironmentVariableIntValue("MIDI_PLAY_VIDEO_DIAGNOSTICS") > 0;
     m_config = config;
@@ -400,8 +405,16 @@ void VulkanOffscreenRenderer::Impl::initialize(const ExportSceneConfig& config)
     createImage(m_atlas, {2048, 2048}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     bindTexture(m_atlas, 0);
     // 背景转换为未预乘 RGBA；空背景复用图集视图，保证两个描述符始终有效。
-    if (!config.background.isNull()) {
-        m_config.background = config.background.convertToFormat(QImage::Format_RGBA8888);
+    if (!config.backgroundVideoPath.isEmpty()) {
+        m_videoReader = std::make_unique<media::VideoFrameReader>();
+        QString error;
+        if (!m_videoReader->open(config.backgroundVideoPath, config.backgroundMaximumDimension, &error, canceled))
+            throw std::runtime_error(error.toStdString());
+        m_config.background = m_videoReader->frameAt(0, &error).image;
+        if (m_config.background.isNull()) throw std::runtime_error(error.toStdString());
+    }
+    if (!m_config.background.isNull()) {
+        m_config.background = m_config.background.convertToFormat(QImage::Format_RGBA8888);
         createImage(m_background, m_config.background.size(), VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
         bindTexture(m_background, 1);
     } else bindTexture(m_atlas, 1);
@@ -485,6 +498,25 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     // 无空闲槽时交给调用方先 completeRender，不能覆盖仍持有票据的已完成帧。
     if (slotIndex < 0) return false;
     auto& slot = m_slots[size_t(slotIndex)];
+    bool videoChanged = false;
+    if (m_videoReader) {
+        QString error;
+        const auto target = midi_play::visualization::backgroundVideoPosition(position,
+            m_config.state.durationUs, m_videoReader->metadata().durationUs);
+        const QImage frame = m_videoReader->frameAt(target, &error, canceled).image;
+        if (frame.isNull()) throw std::runtime_error(error.toStdString());
+        videoChanged = frame.cacheKey() != m_backgroundCacheKey;
+        if (videoChanged) {
+            waitForAllSlots();
+            if (frame.size() != m_config.background.size()) {
+                destroy(m_background);
+                createImage(m_background, frame.size(), VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+                bindTexture(m_background, 1);
+            }
+            m_config.background = frame;
+            m_backgroundCacheKey = frame.cacheKey();
+        }
+    }
     auto state = m_config.state;
     state.transportPositionUs = position; state.updateVisibleWindow();
     QElapsedTimer timer;
@@ -510,7 +542,7 @@ bool VulkanOffscreenRenderer::Impl::beginRender(qint64 position, VulkanRenderTic
     if (m_diagnostics.enabled) m_diagnostics.bufferUploadNs += quint64(timer.nsecsElapsed());
 
     const bool atlasChanged = m_atlasRevision != m_scene.atlasRevision();
-    const bool backgroundChanged = m_background.image && !m_background.uploaded;
+    const bool backgroundChanged = m_background.image && (!m_background.uploaded || videoChanged);
     // 所有槽共享纹理；覆盖图集/暂存数据前先等待旧采样命令完成，票据仍保留供顺序回读。
     if (atlasChanged || backgroundChanged) waitForAllSlots();
 
@@ -673,9 +705,10 @@ void VulkanOffscreenRenderer::Impl::cleanup()
 VulkanOffscreenRenderer::VulkanOffscreenRenderer() = default;
 VulkanOffscreenRenderer::~VulkanOffscreenRenderer() = default;
 // 公开包装层负责异常转错误；初始化失败销毁部分构建的实现。
-bool VulkanOffscreenRenderer::initialize(const ExportSceneConfig& config, QString* error)
+bool VulkanOffscreenRenderer::initialize(const ExportSceneConfig& config, QString* error,
+                                        const std::atomic_bool* canceled)
 {
-    try { m_impl = std::make_unique<Impl>(); m_impl->initialize(config); return true; }
+    try { m_impl = std::make_unique<Impl>(); m_impl->initialize(config, canceled); return true; }
     catch (const std::exception& e) { *error = QString::fromUtf8(e.what()); m_impl.reset(); return false; }
 }
 // 对外提交接口；调用方提供有效 error 指针，并区分取消/槽满与异常错误。

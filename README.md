@@ -55,9 +55,10 @@ MIDI Play 将“音乐文件导入、统一音乐语义、播放事件调度、S
 - **统一导出页面**：顶部“导出”入口提供“音频”和“视频”两个 Tab。音频使用独立 FluidSynth 实例将展开后的播放事件离线合成为 MP3 或 16-bit PCM WAV；可选采样率、MP3 码率、节拍器和尾音，支持进度、取消及安全覆盖。视频使用 Vulkan 离屏渲染和外部 FFmpeg 生成 MP4，可配置分辨率、帧率、画质、播放速度、音乐、节拍器和尾音，并提供画面预览。
 - **SoundFont**：不内置乐曲音源，启动时检查用户已配置的 SF2/SF3；未配置或加载失败时引导选择，允许暂时跳过。支持播放中事务化切换，SF3 由启用 libsndfile/Ogg Vorbis 的 FluidSynth 后端解码。
 - **下落式可视化**：显示音符、长音和踏板尾段、触发线、钢琴键、鼓轨、简谱、小节/节拍、歌词和标记。
-- **双渲染模式**：默认优先使用 Vulkan 绘制，传统 Qt 绘制作为兼容和故障回退模式；两者共享音符布局、主题、色彩和单图片背景设置，也可在设置中手动选择。
+- **双渲染模式**：默认优先使用 Vulkan 绘制，传统 Qt 绘制作为兼容和故障回退模式；两者共享音符布局、主题、色彩、图片和视频背景设置，也可在设置中手动选择。
 - **流光玻璃特效**：Vulkan 模式提供可关闭的音符边缘流光、局部泛光、击键反馈和粒子点缀，并支持低、中、高三档强度；传统 Qt 模式不渲染这些 Vulkan 专属特效。
 - **单图片背景**：可为下落音符区域选择本地 PNG、JPEG、静态 WebP 或 BMP 图片；WebP 由随程序部署的解码库读取，不依赖 Qt WebP 插件。图片异步加载、按区域比例裁剪并带可读性遮罩，背景图最大边长可在设置中调整为 256～4096 px（默认 2048 px），Vulkan 与传统 Qt 绘制共享配置。
+- **视频背景**：本地视频按音乐时间轴定位、循环和变速；暂停时定格，自然结束保留终帧，再次播放从头开始。拖动进度条时音符和背景同步预览，松开后提交音频跳转。默认屏蔽视频原声，可在设置中开启；视频导出支持动态背景和原声混音。实现与验收说明见 docs/video-background.md。
 - **可调视觉刷新率**：支持 30、60、120 FPS 及自定义整数刷新率；该设置只影响视觉位置发布和绘制，不改变音频调度精度。
 - **平台标题栏选项**：Windows 默认使用自定义标题栏，也可切换为原生标题栏；macOS/Linux 当前仅使用原生标题栏。
 - **深色 / 浅色主题**：设置中切换并自动保存；两套主题同时覆盖控件、下落音符和琴键，兼容传统 Qt 与 Vulkan 绘制。
@@ -108,7 +109,7 @@ MusicXML 和 MIDI 的导入结果都面向播放和音游式可视化。MusicAna
 - **Vulkan SDK**：构建 Vulkan 版本时需要 x64 头文件、导入库和 `glslangValidator`。只构建传统版本可以不安装；
 - **CMake >= 3.24**：默认使用所配置 Visual Studio 附带的版本，也可以单独指定。
 
-不需要预先安装 FluidSynth、LAME 或 libwebp。脚本根据 `vcpkg.json` 自动下载或恢复缓存并构建 FluidSynth、libsndfile、libwebp、LAME 和 Ogg/Vorbis/FLAC/Opus 等传递依赖。首次构建需要联网，耗时取决于网络和 vcpkg 缓存；后续构建复用已安装依赖。程序通过 `QLibrary` 使用 FluidSynth，不链接 Qt Multimedia。
+不需要预先安装 FluidSynth、LAME、libwebp 或 FFmpeg 解码库。脚本根据 `vcpkg.json` 自动下载或恢复缓存并构建依赖。首次构建需要联网，后续构建复用已安装依赖。程序通过 `QLibrary` 使用 FluidSynth，视频帧使用进程内 FFmpeg 解码，视频原声使用 Qt Multimedia；Qt SDK 需安装 Multimedia 模块。视频导出仍使用用户配置的外部 FFmpeg 可执行程序。
 
 ### 统一环境配置
 
@@ -244,7 +245,7 @@ cmake --build --preset windows-msvc-debug
 - **视觉刷新率**：30 FPS、60 FPS、120 FPS 或“自定义”；
 - **图形模式**：Vulkan（推荐）或传统 Qt 绘制（兼容）；新用户首次启动优先尝试 Vulkan，成功后保存 Vulkan，失败后自动保存传统 Qt；未包含 Vulkan 的构建只提供传统模式；
 - **流光特效**：Vulkan 模式显示“无特效”“流光玻璃（低）”“流光玻璃（中）”“流光玻璃（高）”；默认启用“流光玻璃（中）”。传统 Qt 模式只显示“无特效（特效需开启 Vulkan）”，切换回 Vulkan 后可重新选择特效等级；
-- **下落背景**：选择“无背景”或“图片背景”；启用图片后可选择背景图最大边长、背景适配（顶部对齐、底部对齐、左侧对齐、右侧对齐、裁剪铺满、完整显示）和背景不透明度。图片只覆盖下落音符区域，底部键盘会用完整白键延伸填满小节编号左侧的预留区，不覆盖播放控制栏；无法读取的图片不会被应用。
+- **下落背景**：选择“无背景”“图片背景”或“视频背景”；图片和视频共用最大边长、背景适配（顶部对齐、底部对齐、左侧对齐、右侧对齐、裁剪铺满、完整显示）和不透明度。背景只覆盖下落音符区域。视频模式提供“屏蔽视频原声”开关，默认开启；无法读取的视频会显示错误，音乐仍可继续播放。
 - **显示简谱条**：默认关闭。关闭时移除琴键上方的简谱条及黄色判定线，音符在琴键顶部判定；开启后恢复简谱条和黄线。修改立即生效并自动保存，两种图形模式行为一致；
 - **标题栏样式**：Windows 默认使用自定义标题栏，也可选择原生标题栏；macOS/Linux 只显示原生模式；
 - **音源**：选择或更换本地 .sf2/.sf3，成功加载后自动保存选择；加载失败会显示内联错误。
@@ -281,16 +282,19 @@ QStandardPaths::AppLocalDataLocation/settings.ini
 
 | 配置键 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| General/schemaVersion | int | 14 | 设置结构版本 |
+| General/schemaVersion | int | 15 | 设置结构版本 |
 | General/themeMode | int | 0 | 0 为深色；1 为浅色；旧配置缺失或无效时回退深色 |
 | General/noteColorMode | int | 1 | 0 为普通；1 为鲜明；缺失或无效时回退鲜明，不重置其他偏好 |
 | General/visualizationRefreshRate | int | 60 | 有效范围 1..1000，界面提供常用预设和自定义输入 |
 | General/graphicsMode | int | 未配置时优先 Vulkan | 持久化值 0 为传统 Qt 绘制；1 为 Vulkan；首次解析成功后保存实际使用的后端 |
 | Visualization/backgroundImagePath | string | 空 | 单图片背景的绝对路径；空值表示未选择图片，文件只在本地引用，不复制到程序目录 |
 | Visualization/backgroundImageEnabled | bool | false | 是否启用图片背景；关闭时保留已选路径，旧配置有图片路径且缺少本项时默认启用 |
+| Visualization/backgroundMode | int | 0 | 0 无背景；1 图片；2 视频；缺失时从旧图片开关迁移 |
+| Visualization/backgroundVideoPath | string | 空 | 本地视频绝对路径，与图片路径独立保留 |
+| Visualization/backgroundVideoMuted | bool | true | 屏蔽视频原声；关闭后播放和视频导出均包含第一条原声音轨 |
 | Visualization/backgroundImageAlignment | int | 4（裁剪铺满） | `0` 顶部对齐，`1` 底部对齐，`2` 左侧对齐，`3` 右侧对齐，`4` 裁剪铺满，`5` 完整显示 |
-| Visualization/backgroundImageOpacity | int | 100 | 背景不透明度，范围 0..100；仅影响图片和其可读性暗化层 |
-| Visualization/backgroundImageMaximumDimension | int | 2048 | 背景图解码后的最大边长，范围 256..4096 px；较小图片不会被放大 |
+| Visualization/backgroundImageOpacity | int | 100 | 背景不透明度，范围 0..100；影响图片、视频及其可读性暗化层 |
+| Visualization/backgroundImageMaximumDimension | int | 2048 | 图片/视频帧解码后的最大边长，范围 256..4096 px；较小素材不会被放大 |
 | Visualization/visualEffectsEnabled | bool | true（传统 Qt 运行时为 false） | 是否启用 Vulkan 流光玻璃特效；传统 Qt 模式强制关闭 |
 | Visualization/visualEffectsLevel | int | 1（中） | `0` 为低（0.5 倍），`1` 为中（0.75 倍），`2` 为高（1 倍）；拖尾特效在各档继续按半强度处理 |
 | General/showNotationStrip | bool | false | 是否显示简谱条；缺少此配置键的旧版配置也默认隐藏 |
@@ -498,7 +502,7 @@ ctest --test-dir build/windows-release -C Release --output-on-failure
 - 当前只验证 Windows x64 / MSVC；macOS/Linux 的 Qt 架构分支已预留，但没有同等完整的构建、部署和音频验收基线。
 - 当前只有 FluidSynth 音频后端，不提供 Qt Multimedia 后端或外部 MIDI 硬件输出。音频导出支持 MP3/WAV，尚不支持 FLAC 或响度归一化。
 - Vulkan 是否可用取决于显卡、驱动、Qt Vulkan 支持和运行环境。启动或设备初始化失败时程序会尝试回退传统 Qt；若图形设备在运行中丢失，建议重启后在设置中选择传统 Qt。
-- 单图片背景当前只支持本地静态图片，不支持动态 WebP、多图轮播、视频、网络 URL 或背景音频；WebP 文件大小上限为 64 MB。原图不会复制到发行目录，移动或删除文件后需要在设置中重新选择。
+- 图片背景支持本地静态图片，不支持动态 WebP、多图轮播或网络 URL；WebP 文件大小上限为 64 MB。视频背景支持本地、有限时长的 SDR 视频，暂不支持 HDR 色调映射和直播；长 GOP 的随机定位速度受解码性能影响。原文件不会复制到发行目录，移动或删除后需要重新选择。
 - MusicXML 解析面向播放所需语义，不等价于完整的 MuseScore notation DOM；复杂排版、符号布局和编辑语义不在当前范围内。
 - 当前不支持 .mxl、.mscx、.mscz 等压缩或 MuseScore 专用工程格式。
 - 简谱、鼓组 lane、量化网格和调性识别是播放可视化的派生数据，不能当作完整的自动扒谱结果。

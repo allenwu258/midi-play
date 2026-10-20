@@ -26,6 +26,7 @@
 #include <memory>
 
 namespace midi_play::presentation::visualization {
+class VideoBackgroundController;
 
 #if MIDI_PLAY_HAS_VULKAN
 class FallingNotesVulkanWindow;
@@ -78,6 +79,10 @@ public slots:
     void setGraphicsMode(midi_play::settings::GraphicsMode mode);
     // 异步解码背景；仅最新请求的结果可以写回当前视图。
     void setBackgroundImagePath(const QString& path);
+    void setBackgroundVideoPath(const QString& path);
+    void setBackgroundVideoMuted(bool muted);
+    void previewPosition(qint64 positionUs);
+    void endPositionPreview();
     // 更新背景图解码上限；当前背景保留到新尺寸的异步解码完成。
     void setBackgroundImageMaximumDimension(int dimension);
     // 更新背景放置模式及 0..100 透明度，不重新解码图片。
@@ -97,6 +102,7 @@ public slots:
 signals:
     // 请求后端首帧成功或回退传统绘制时通知一次，报告实际采用的模式。
     void graphicsModeResolved(midi_play::settings::GraphicsMode mode);
+    void backgroundError(const QString& message);
 
 protected:
     // 传统后端绘制入口；Vulkan 子窗口存在时由子窗口负责绘制。
@@ -110,6 +116,8 @@ private:
     void rebuildFrameState();
     // 启动一次带当前解码上限的背景加载；请求号使过期任务无法写回。
     void startBackgroundImageLoad(bool clearCurrent);
+    void synchronizeVideo(bool discontinuity = false);
+    void presentBackground(const QImage& image);
     // 按 DPR 生成预乘 alpha 键盘底图，内存超过上限时退回直接绘制。
     void rebuildStaticKeyboard(qreal devicePixelRatio, const QRect& logicalRect);
 #if MIDI_PLAY_HAS_VULKAN
@@ -138,6 +146,12 @@ private:
     midi_play::settings::GraphicsMode m_graphicsMode = midi_play::settings::GraphicsMode::Traditional;
     bool m_graphicsModeResolutionPending = false;
     QString m_backgroundImagePath;
+    QString m_backgroundVideoPath;
+    VideoBackgroundController* m_videoBackground = nullptr;
+    int m_playbackRate = 100;
+    bool m_previewing = false;
+    qint64 m_authoritativePositionUs = 0;
+    qint64 m_authoritativeSampledAtUs = 0;
     QImage m_backgroundImage;
     int m_backgroundImageMaximumDimension = midi_play::settings::kDefaultBackgroundImageMaximumDimension;
     quint64 m_backgroundRequestId = 0; // 递增请求号用于丢弃过期异步解码结果。

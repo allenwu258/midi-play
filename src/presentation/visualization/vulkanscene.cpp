@@ -57,7 +57,6 @@ void VulkanScene::prepare(const midi_play::visualization::PlaybackSceneState& st
         || m_showNotationStrip != state.showNotationStrip;
     const bool backgroundChanged = m_hasBackground != hasBackground
         || (hasBackground && m_backgroundSize != backgroundSize)
-        || (hasBackground && m_backgroundRevision != backgroundRevision)
         || m_backgroundAlignment != midi_play::settings::normalizeBackgroundImageAlignment(
             state.backgroundImageAlignment)
         || m_backgroundOpacity != std::clamp(state.backgroundImageOpacity, 0, 100);

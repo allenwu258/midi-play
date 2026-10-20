@@ -1,6 +1,7 @@
 // 可视化宿主实现：汇总控制器输入，管理重绘、缓存及图形后端生命周期。
 #include "fallingnotesview.h"
 #include "backgroundimageloader.h"
+#include "videobackgroundcontroller.h"
 #include "domain/settings/playersettings.h"
 #if MIDI_PLAY_HAS_VULKAN
 #include "fallingnotesvulkanwindow.h"
@@ -27,6 +28,11 @@ FallingNotesView::FallingNotesView(QWidget* parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("fallingNotesView"));
+    m_videoBackground = new VideoBackgroundController(this);
+    connect(m_videoBackground, &VideoBackgroundController::frameReady,
+            this, &FallingNotesView::presentBackground);
+    connect(m_videoBackground, &VideoBackgroundController::errorOccurred,
+            this, &FallingNotesView::backgroundError);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_frameTimer.setTimerType(Qt::PreciseTimer);
@@ -38,6 +44,7 @@ FallingNotesView::FallingNotesView(QWidget* parent)
     setRefreshRate(60);
     connect(&m_frameTimer, &QChronoTimer::timeout, this, [this] {
         if (!isVisible()) return;
+        synchronizeVideo();
 #if MIDI_PLAY_HAS_VULKAN
         // Vulkan 窗口自行请求后续帧，宿主计时器只驱动传统绘制。
         if (m_vulkanWindow) return;
@@ -52,6 +59,8 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
     m_state.chart = std::move(chart);
     m_state.effectsStartUs = 0;
     m_visualClock.sample(0, m_state.chart ? m_state.chart->durationUs() : 0);
+    m_state.transportPositionUs = 0;
+    m_previewing = false;
     if (m_state.chart) {
         m_noteIndex.rebuild(m_state.chart->notes());
         m_state.durationUs = m_state.chart->durationUs();
@@ -60,6 +69,7 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
         m_noteIndex = {};
         m_state.durationUs = 0;
     }
+    synchronizeVideo(true);
     // 索引重建后旧候选 span 不再有效，必须先清空再等待下一帧重算。
     m_noteWindowCache.reset();
     m_state.candidateNoteIndices = {};
@@ -75,9 +85,13 @@ void FallingNotesView::setChart(midi_play::visualization::VisualChartPtr chart)
 // 接收音乐时间采样及单调时钟采样时刻，供绘制时按倍率有界外推。
 void FallingNotesView::setTransportPosition(qint64 positionUs, qint64 durationUs, qint64 sampledAtUs)
 {
+    m_authoritativePositionUs = positionUs;
+    m_authoritativeSampledAtUs = sampledAtUs;
+    if (m_previewing) return;
     m_state.transportPositionUs = std::clamp<qint64>(positionUs, 0, std::max<qint64>(0, durationUs));
     m_state.durationUs = std::max<qint64>(0, durationUs);
     m_visualClock.sample(m_state.transportPositionUs, m_state.durationUs, sampledAtUs);
+    synchronizeVideo(sampledAtUs == 0);
     m_frameStateDirty = true;
 #if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setTransportPosition(m_state.transportPositionUs, m_state.durationUs);
@@ -94,6 +108,8 @@ void FallingNotesView::setTransportState(midi_play::playback::State state)
         resetTransientEffects(m_state.transportPositionUs);
     m_state.transportState = state;
     m_visualClock.setPlaying(state == midi_play::playback::State::Playing);
+    if (m_previewing) m_visualClock.setPlaying(false);
+    synchronizeVideo(true);
     if (state == midi_play::playback::State::Playing) m_frameTimer.start();
     else m_frameTimer.stop();
     m_frameStateDirty = true;
@@ -162,7 +178,61 @@ void FallingNotesView::setNoteColorMode(midi_play::settings::NoteColorMode mode)
 
 void FallingNotesView::setPlaybackRate(int percent)
 {
+    m_playbackRate = percent;
     m_visualClock.setRate(percent);
+    synchronizeVideo(true);
+}
+
+void FallingNotesView::presentBackground(const QImage& image)
+{
+    if (m_backgroundImage.cacheKey() == image.cacheKey()) return;
+    m_backgroundImage = image;
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setBackgroundImage(image);
+#endif
+    update();
+}
+
+void FallingNotesView::setBackgroundVideoPath(const QString& path)
+{
+    if (m_backgroundVideoPath == path) return;
+    m_backgroundVideoPath = path;
+    m_videoBackground->setSource(path, m_backgroundImageMaximumDimension);
+    presentBackground({});
+    synchronizeVideo(true);
+}
+
+void FallingNotesView::setBackgroundVideoMuted(bool muted) { m_videoBackground->setMuted(muted); }
+
+void FallingNotesView::synchronizeVideo(bool discontinuity)
+{
+    if (m_backgroundVideoPath.isEmpty()) return;
+    m_videoBackground->synchronize(m_visualClock.position(), m_state.durationUs,
+        !m_previewing && m_state.transportState == midi_play::playback::State::Playing,
+        m_playbackRate, discontinuity);
+}
+
+void FallingNotesView::previewPosition(qint64 positionUs)
+{
+    m_previewing = true;
+    m_visualClock.setPlaying(false);
+    m_visualClock.sample(positionUs, m_state.durationUs);
+    m_state.transportPositionUs = m_visualClock.position();
+    m_frameStateDirty = true;
+    resetTransientEffects(positionUs);
+    synchronizeVideo(true);
+#if MIDI_PLAY_HAS_VULKAN
+    if (m_vulkanWindow) m_vulkanWindow->setTransportPosition(positionUs, m_state.durationUs);
+#endif
+    update();
+}
+
+void FallingNotesView::endPositionPreview()
+{
+    m_previewing = false;
+    m_visualClock.setPlaying(m_state.transportState == midi_play::playback::State::Playing);
+    setTransportPosition(m_authoritativePositionUs, m_state.durationUs, m_authoritativeSampledAtUs);
+    synchronizeVideo(true);
 }
 
 void FallingNotesView::setRefreshRate(int hz)
@@ -174,6 +244,7 @@ void FallingNotesView::setRefreshRate(int hz)
 void FallingNotesView::resetTransientEffects(qint64 positionUs)
 {
     m_state.effectsStartUs = std::max<qint64>(0, positionUs);
+    synchronizeVideo(true);
 #if MIDI_PLAY_HAS_VULKAN
     if (m_vulkanWindow) m_vulkanWindow->setEffectsStart(m_state.effectsStartUs);
 #endif
@@ -267,7 +338,7 @@ void FallingNotesView::startBackgroundImageLoad(bool clearCurrent)
         m_backgroundWatcher = nullptr;
         watcher->deleteLater();
         // finished 回调在宿主线程执行；过期结果只释放 watcher，不覆盖新背景。
-        if (requestId == m_backgroundRequestId && !image.isNull()) {
+        if (requestId == m_backgroundRequestId && m_backgroundVideoPath.isEmpty() && !image.isNull()) {
             m_backgroundImage = image;
 #if MIDI_PLAY_HAS_VULKAN
             if (m_vulkanWindow) m_vulkanWindow->setBackgroundImage(m_backgroundImage);
@@ -287,6 +358,7 @@ void FallingNotesView::startBackgroundImageLoad(bool clearCurrent)
 // 异步解码背景；请求号只屏蔽过期结果，不取消已启动的解码任务。
 void FallingNotesView::setBackgroundImagePath(const QString& path)
 {
+    if (m_backgroundImagePath == path.trimmed()) return;
     m_backgroundLoadDebounceTimer.stop();
     m_backgroundImagePath = path.trimmed();
     startBackgroundImageLoad(true);
@@ -297,6 +369,8 @@ void FallingNotesView::setBackgroundImageMaximumDimension(int dimension)
     const int normalized = midi_play::settings::normalizeBackgroundImageMaximumDimension(dimension);
     if (m_backgroundImageMaximumDimension == normalized) return;
     m_backgroundImageMaximumDimension = normalized;
+    if (!m_backgroundVideoPath.isEmpty())
+        m_videoBackground->setSource(m_backgroundVideoPath, normalized);
     // 立即使当前任务失效，防止旧尺寸结果在防抖窗口内写回；只加载最终尺寸。
     ++m_backgroundRequestId;
     if (m_backgroundImagePath.isEmpty()) return;

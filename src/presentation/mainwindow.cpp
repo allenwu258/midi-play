@@ -198,6 +198,8 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
         m_visualization->setBackgroundImageMaximumDimension(
             m_settingsService->backgroundImageMaximumDimension());
         m_visualization->setBackgroundImagePath(m_settingsService->activeBackgroundImagePath());
+        m_visualization->setBackgroundVideoPath(m_settingsService->activeBackgroundVideoPath());
+        m_visualization->setBackgroundVideoMuted(m_settingsService->backgroundVideoMuted());
         m_visualization->setBackgroundImageAlignment(m_settingsService->backgroundImageAlignment());
         m_visualization->setBackgroundImageOpacity(m_settingsService->backgroundImageOpacity());
         m_visualization->setShowNotationStrip(m_settingsService->showNotationStrip());
@@ -216,12 +218,17 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_visualization, &visualization::FallingNotesView::setGraphicsMode);
         // 路径或开关变化都重新读取有效背景路径，关闭背景时向视图传入空路径。
         const auto updateBackground = [this] {
+            m_visualization->setBackgroundVideoPath(m_settingsService->activeBackgroundVideoPath());
             m_visualization->setBackgroundImagePath(m_settingsService->activeBackgroundImagePath());
         };
         connect(m_settingsService, &app::SettingsService::backgroundImagePathChanged,
                 m_visualization, updateBackground);
-        connect(m_settingsService, &app::SettingsService::backgroundImageEnabledChanged,
+        connect(m_settingsService, &app::SettingsService::backgroundModeChanged,
                 m_visualization, updateBackground);
+        connect(m_settingsService, &app::SettingsService::backgroundVideoPathChanged,
+                m_visualization, updateBackground);
+        connect(m_settingsService, &app::SettingsService::backgroundVideoMutedChanged,
+                m_visualization, &visualization::FallingNotesView::setBackgroundVideoMuted);
         connect(m_settingsService, &app::SettingsService::backgroundImageMaximumDimensionChanged,
                 m_visualization, &visualization::FallingNotesView::setBackgroundImageMaximumDimension);
         connect(m_settingsService, &app::SettingsService::backgroundImageAlignmentChanged,
@@ -345,7 +352,9 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
                 m_metronomeButton->setToolTip(available
                     ? QStringLiteral("跟随乐曲节拍；小节首拍为重音，仅播放时发声") : reason);
             });
-    // 拖动阶段只预览标签；释放时提交一次 seek 并等待精确位置确认。
+    connect(m_visualization, &visualization::FallingNotesView::backgroundError, this,
+            [this](const QString& error) { m_statusLabel->setText(error); });
+    // Scrubbing previews notes and video together; release commits one audio seek.
     connect(m_positionSlider, &QSlider::sliderPressed, this, [this] { m_sliderDragging = true; });
     connect(m_positionSlider, &QSlider::sliderMoved, this, [this](int value) {
         if (m_durationUs <= 0) return;
@@ -353,6 +362,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
             static_cast<long double>(value) * m_durationUs / kSliderResolution);
         updateTimeDisplay(previewUs, m_durationUs);
         updateMetadata(previewUs);
+        m_visualization->previewPosition(previewUs);
     });
     connect(m_positionSlider, &QSlider::sliderReleased, this, [this] {
         if (m_durationUs > 0) {
@@ -363,6 +373,9 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
             m_service->seek(targetUs);
         }
         m_sliderDragging = false;
+        // Keep the preview until the playback controller publishes its exact
+        // seek acknowledgment; queued old samples must not flash on screen.
+        if (!m_seekPending) m_visualization->endPositionPreview();
     });
 
     // 应用服务先发布图表，再通知文档；文档通知重置秒级缓存和 seek 状态。
@@ -551,6 +564,13 @@ void MainWindow::openExportDialog()
     videoDefaults.scene.outputSize = QSize(1920, 1080);
     videoDefaults.scene.font = m_visualization->font();
     videoDefaults.scene.background = m_visualization->exportBackground();
+    if (m_settingsService) {
+        videoDefaults.scene.backgroundVideoPath = m_settingsService->activeBackgroundVideoPath();
+        videoDefaults.scene.backgroundMaximumDimension = m_settingsService->backgroundImageMaximumDimension();
+        videoDefaults.backgroundVideoMuted = m_settingsService->backgroundVideoMuted();
+        videoDefaults.backgroundPath = m_settingsService->activeBackgroundVideoPath().isEmpty()
+            ? m_settingsService->activeBackgroundImagePath() : m_settingsService->activeBackgroundVideoPath();
+    }
     videoDefaults.outputPath = QFileInfo(m_service->fileName()).absolutePath() + QLatin1Char('/')
         + QFileInfo(m_service->fileName()).completeBaseName() + QStringLiteral(".mp4");
 
@@ -703,6 +723,8 @@ void MainWindow::updatePosition(qint64 position, qint64 duration, qint64 sampled
             return;
         }
         m_seekPending = false;
+        m_visualization->setTransportPosition(m_positionUs, m_durationUs, sampledAtUs);
+        m_visualization->endPositionPreview();
     }
     if (!m_sliderDragging) {
         const int sliderValue = m_durationUs > 0

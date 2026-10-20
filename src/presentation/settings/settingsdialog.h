@@ -9,6 +9,7 @@
 #include "domain/settings/notecolormode.h"
 #include "domain/settings/visualeffectlevel.h"
 #include "domain/settings/backgroundimagealignment.h"
+#include "domain/settings/backgroundmode.h"
 
 class QCheckBox;
 class QComboBox;
@@ -77,7 +78,7 @@ private slots:
     void updateSoundFontPath(const QString& path);
     void updateBackgroundImagePath(const QString& path);
     // 同步背景开关和相关行的可见性，按内容重新调整窗口高度。
-    void updateBackgroundModeSelection(bool enabled);
+    void updateBackgroundModeSelection(midi_play::settings::BackgroundMode mode);
     // 阻断输入信号，回填背景适配与规范化的不透明度显示。
     void updateBackgroundAlignmentSelection(midi_play::settings::BackgroundImageAlignment alignment);
     void updateBackgroundOpacitySelection(int opacity);
@@ -125,6 +126,7 @@ private:
     QTimer* m_backgroundMaximumDimensionCommitTimer = nullptr;
     QFormLayout* m_formLayout = nullptr;
     QWidget* m_backgroundImageEditor = nullptr;
+    QCheckBox* m_backgroundVideoMuted = nullptr;
     QLabel* m_errorLabel = nullptr;
 };
 

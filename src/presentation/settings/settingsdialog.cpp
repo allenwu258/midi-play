@@ -202,8 +202,9 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     // 背景开关独立于图片路径；关闭时隐藏相关参数，保存路径仍可供再次启用。
     m_backgroundModeCombo = new QComboBox(this);
     m_backgroundModeCombo->setObjectName(QStringLiteral("backgroundModeCombo"));
-    m_backgroundModeCombo->addItem(QStringLiteral("无背景"), false);
-    m_backgroundModeCombo->addItem(QStringLiteral("图片背景"), true);
+    m_backgroundModeCombo->addItem(QStringLiteral("无背景"), 0);
+    m_backgroundModeCombo->addItem(QStringLiteral("图片背景"), 1);
+    m_backgroundModeCombo->addItem(QStringLiteral("视频背景"), 2);
     form->addRow(QStringLiteral("下落背景"), m_backgroundModeCombo);
 
     auto* backgroundEditor = new QWidget(this);
@@ -228,6 +229,12 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     backgroundLayout->addLayout(backgroundActions);
     form->addRow(QStringLiteral("背景图片"), backgroundEditor);
     form->setRowVisible(backgroundEditor, false);
+    m_backgroundVideoMuted = new QCheckBox(QStringLiteral("屏蔽视频原声"), this);
+    m_backgroundVideoMuted->setObjectName(QStringLiteral("backgroundVideoMuted"));
+    m_backgroundVideoMuted->setChecked(true);
+    m_backgroundVideoMuted->setToolTip(QStringLiteral("默认屏蔽；取消后视频原声跟随乐曲播放、暂停、变速和循环。拖动预览时静音。"));
+    form->addRow(QStringLiteral("视频音轨"), m_backgroundVideoMuted);
+    form->setRowVisible(m_backgroundVideoMuted, false);
 
     m_backgroundMaximumDimensionSpinBox = new QSpinBox(this);
     m_backgroundMaximumDimensionSpinBox->setObjectName(QStringLiteral("backgroundImageMaximumDimensionSpinBox"));
@@ -236,10 +243,10 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
         midi_play::settings::kMaximumBackgroundImageMaximumDimension);
     m_backgroundMaximumDimensionSpinBox->setSingleStep(256);
     m_backgroundMaximumDimensionSpinBox->setSuffix(QStringLiteral(" px"));
-    m_backgroundMaximumDimensionSpinBox->setAccessibleName(QStringLiteral("背景图最大边长"));
+    m_backgroundMaximumDimensionSpinBox->setAccessibleName(QStringLiteral("背景最大边长"));
     m_backgroundMaximumDimensionSpinBox->setToolTip(QStringLiteral(
-        "限制背景图解码后的最长边，不会放大较小图片；数值越大，内存占用越高。"));
-    form->addRow(QStringLiteral("背景图最大边长"), m_backgroundMaximumDimensionSpinBox);
+        "限制图片或视频帧解码后的最长边，不会放大较小素材；数值越大，内存占用越高。"));
+    form->addRow(QStringLiteral("背景最大边长"), m_backgroundMaximumDimensionSpinBox);
     form->setRowVisible(m_backgroundMaximumDimensionSpinBox, false);
     m_backgroundMaximumDimensionCommitTimer = new QTimer(this);
     m_backgroundMaximumDimensionCommitTimer->setSingleShot(true);
@@ -249,7 +256,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     m_backgroundAlignmentCombo->setObjectName(QStringLiteral("backgroundAlignmentCombo"));
     m_backgroundAlignmentCombo->setAccessibleName(QStringLiteral("背景适配"));
     m_backgroundAlignmentCombo->setToolTip(QStringLiteral(
-        "顶部、底部、左侧和右侧对齐会锚定裁剪位置；裁剪铺满居中裁剪，完整显示保留整张图片。"));
+        "顶部、底部、左侧和右侧对齐会锚定裁剪位置；裁剪铺满居中裁剪，完整显示保留完整画面。"));
     m_backgroundAlignmentCombo->addItem(QStringLiteral("顶部对齐"),
         int(midi_play::settings::BackgroundImageAlignment::Top));
     m_backgroundAlignmentCombo->addItem(QStringLiteral("底部对齐"),
@@ -285,7 +292,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
     form->setRowVisible(m_backgroundOpacityEditor, false);
     root->addLayout(form);
 
-    auto* hint = new QLabel(QStringLiteral("视觉刷新率仅影响下落音符和界面刷新，不影响音频播放精度；背景图片只覆盖下落音符区域，底部键盘会连续延伸到左侧。"), this);
+    auto* hint = new QLabel(QStringLiteral("背景只覆盖下落音符区域，图片与视频共用适配和不透明度。视频跟随音乐时间轴循环，结束时定格，再次播放从头开始；视频原声默认屏蔽。"), this);
     hint->setObjectName(QStringLiteral("settingsHint"));
     hint->setWordWrap(true);
     root->addWidget(hint);
@@ -355,7 +362,17 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::updateNotationStripSelection);
         updateSoundFontPath(m_settingsService->soundFontPath());
         updateBackgroundImagePath(m_settingsService->backgroundImagePath());
-        updateBackgroundModeSelection(m_settingsService->backgroundImageEnabled());
+        updateBackgroundModeSelection(m_settingsService->backgroundMode());
+        m_backgroundVideoMuted->setChecked(m_settingsService->backgroundVideoMuted());
+        connect(m_backgroundVideoMuted, &QCheckBox::toggled,
+                m_settingsService, &app::SettingsService::setBackgroundVideoMuted);
+        connect(m_settingsService, &app::SettingsService::backgroundVideoMutedChanged, this, [this](bool muted) {
+            const QSignalBlocker blocker(m_backgroundVideoMuted);
+            m_backgroundVideoMuted->setChecked(muted);
+        });
+        connect(m_settingsService, &app::SettingsService::backgroundVideoPathChanged, this, [this] {
+            updateBackgroundModeSelection(m_settingsService->backgroundMode());
+        });
         updateBackgroundAlignmentSelection(m_settingsService->backgroundImageAlignment());
         updateBackgroundOpacitySelection(m_settingsService->backgroundImageOpacity());
         updateBackgroundMaximumDimensionSelection(
@@ -396,7 +413,7 @@ SettingsDialog::SettingsDialog(app::SettingsService* settingsService,
                 this, &SettingsDialog::updateSoundFontPath);
         connect(m_settingsService, &app::SettingsService::backgroundImagePathChanged,
                 this, &SettingsDialog::updateBackgroundImagePath);
-        connect(m_settingsService, &app::SettingsService::backgroundImageEnabledChanged,
+        connect(m_settingsService, &app::SettingsService::backgroundModeChanged,
                 this, &SettingsDialog::updateBackgroundModeSelection);
         connect(m_settingsService, &app::SettingsService::backgroundImageAlignmentChanged,
                 this, &SettingsDialog::updateBackgroundAlignmentSelection);
@@ -548,6 +565,15 @@ void SettingsDialog::updateFfmpegControls()
 void SettingsDialog::chooseBackgroundImage()
 {
     if (!m_settingsService) return;
+    if (m_settingsService->backgroundMode() == midi_play::settings::BackgroundMode::Video) {
+        const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("选择下落音符背景视频"), {},
+            QStringLiteral("视频文件 (*.mp4 *.mkv *.mov *.webm *.avi *.m4v);;所有文件 (*)"));
+        if (!path.isEmpty()) {
+            m_errorLabel->hide();
+            m_settingsService->setBackgroundVideoPath(path);
+        }
+        return;
+    }
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("选择下落音符背景图片"), {},
         QStringLiteral("图片文件 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*)"));
@@ -566,7 +592,8 @@ void SettingsDialog::applyBackgroundModeFromUi()
 {
     if (!m_settingsService) return;
     m_errorLabel->hide();
-    m_settingsService->setBackgroundImageEnabled(m_backgroundModeCombo->currentData().toBool());
+    m_settingsService->setBackgroundMode(static_cast<midi_play::settings::BackgroundMode>(
+        m_backgroundModeCombo->currentData().toInt()));
 }
 
 void SettingsDialog::applyBackgroundAlignmentFromUi()
@@ -748,15 +775,31 @@ void SettingsDialog::updateSoundFontPath(const QString& path)
 void SettingsDialog::updateBackgroundImagePath(const QString& path)
 {
     if (!m_backgroundImagePathEdit) return;
+    if (m_settingsService && m_settingsService->backgroundMode() == midi_play::settings::BackgroundMode::Video) return;
     m_backgroundImagePathEdit->setText(path);
     m_backgroundImagePathEdit->setToolTip(path.isEmpty() ? QStringLiteral("尚未选择图片") : path);
     m_backgroundImagePathEdit->setCursorPosition(path.size());
 }
 
-void SettingsDialog::updateBackgroundModeSelection(bool enabled)
+void SettingsDialog::updateBackgroundModeSelection(midi_play::settings::BackgroundMode mode)
 {
+    const bool enabled = mode != midi_play::settings::BackgroundMode::None;
+    const bool video = mode == midi_play::settings::BackgroundMode::Video;
+    m_backgroundImagePathEdit->setAccessibleName(video ? QStringLiteral("下落音符背景视频") : QStringLiteral("下落音符背景图片"));
     const QSignalBlocker blocker(m_backgroundModeCombo);
-    m_backgroundModeCombo->setCurrentIndex(m_backgroundModeCombo->findData(enabled));
+    m_backgroundModeCombo->setCurrentIndex(m_backgroundModeCombo->findData(int(mode)));
+    m_loadBackgroundImageButton->setText(video ? QStringLiteral("选择视频") : QStringLiteral("选择图片"));
+    m_loadBackgroundImageButton->setToolTip(video ? QStringLiteral("选择本地 MP4、MKV、MOV、WebM 或 AVI 视频")
+                                                : QStringLiteral("选择本地 PNG、JPEG、WebP 或 BMP 图片"));
+    if (auto* label = qobject_cast<QLabel*>(m_formLayout->labelForField(m_backgroundImageEditor)))
+        label->setText(video ? QStringLiteral("背景视频") : QStringLiteral("背景图片"));
+    m_formLayout->setRowVisible(m_backgroundVideoMuted, video);
+    if (m_settingsService) {
+        const auto path = video ? m_settingsService->backgroundVideoPath() : m_settingsService->backgroundImagePath();
+        m_backgroundImagePathEdit->setText(path);
+        m_backgroundImagePathEdit->setToolTip(path);
+        m_backgroundImagePathEdit->setPlaceholderText(video ? QStringLiteral("尚未选择视频") : QStringLiteral("尚未选择图片"));
+    }
     m_formLayout->setRowVisible(m_backgroundImageEditor, enabled);
     m_formLayout->setRowVisible(m_backgroundMaximumDimensionSpinBox, enabled);
     m_formLayout->setRowVisible(m_backgroundAlignmentCombo, enabled);
@@ -792,7 +835,7 @@ void SettingsDialog::updateBackgroundMaximumDimensionSelection(int dimension)
     const QSignalBlocker blocker(m_backgroundMaximumDimensionSpinBox);
     m_backgroundMaximumDimensionSpinBox->setValue(normalized);
     m_backgroundMaximumDimensionSpinBox->setToolTip(QStringLiteral(
-        "限制背景图解码后的最长边，不会放大较小图片；数值越大，内存占用越高。"));
+        "限制图片或视频帧解码后的最长边，不会放大较小素材；数值越大，内存占用越高。"));
 }
 
 // 加载期间关闭重复选择入口；成功/失败信息由后续专用结果信号回填。

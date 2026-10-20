@@ -21,6 +21,7 @@ SettingsService::SettingsService(std::unique_ptr<ISettingsStore> store, QObject*
     qRegisterMetaType<midi_play::settings::NoteColorMode>();
     qRegisterMetaType<midi_play::settings::VisualEffectLevel>();
     qRegisterMetaType<midi_play::settings::BackgroundImageAlignment>();
+    qRegisterMetaType<midi_play::settings::BackgroundMode>();
 }
 
 // 启动时加载并规范化完整设置；只发布读取警告，界面从快照取得初始值。
@@ -50,6 +51,11 @@ void SettingsService::load()
     loadedSettings.soundFontPath = normalizeSoundFontPath(loadedSettings.soundFontPath);
     loadedSettings.ffmpegPath = normalizeFfmpegPath(loadedSettings.ffmpegPath);
     loadedSettings.backgroundImagePath = normalizeBackgroundImagePath(loadedSettings.backgroundImagePath);
+    loadedSettings.backgroundVideoPath = normalizeBackgroundImagePath(loadedSettings.backgroundVideoPath);
+    loadedSettings.backgroundMode = settings::normalizeBackgroundMode(loadedSettings.backgroundMode);
+    if (loadedSettings.backgroundMode == settings::BackgroundMode::None && loadedSettings.backgroundImageEnabled)
+        loadedSettings.backgroundMode = settings::BackgroundMode::Image;
+    loadedSettings.backgroundImageEnabled = loadedSettings.backgroundMode == settings::BackgroundMode::Image;
     loadedSettings.backgroundImageAlignment = settings::normalizeBackgroundImageAlignment(
         loadedSettings.backgroundImageAlignment);
     loadedSettings.backgroundImageOpacity = std::clamp(
@@ -185,9 +191,36 @@ void SettingsService::setBackgroundImagePath(const QString& path)
 
 void SettingsService::setBackgroundImageEnabled(bool enabled)
 {
-    if (m_settings.backgroundImageEnabled == enabled) return;
-    m_settings.backgroundImageEnabled = enabled;
-    emit backgroundImageEnabledChanged(enabled);
+    setBackgroundMode(enabled ? settings::BackgroundMode::Image : settings::BackgroundMode::None);
+}
+
+void SettingsService::setBackgroundMode(settings::BackgroundMode mode)
+{
+    mode = settings::normalizeBackgroundMode(mode);
+    if (m_settings.backgroundMode == mode) return;
+    const bool imageEnabled = mode == settings::BackgroundMode::Image;
+    const bool imageChanged = imageEnabled != m_settings.backgroundImageEnabled;
+    m_settings.backgroundMode = mode;
+    m_settings.backgroundImageEnabled = imageEnabled;
+    if (imageChanged) emit backgroundImageEnabledChanged(imageEnabled);
+    emit backgroundModeChanged(mode);
+    persistSettings();
+}
+
+void SettingsService::setBackgroundVideoPath(const QString& path)
+{
+    const auto normalized = normalizeBackgroundImagePath(path);
+    if (m_settings.backgroundVideoPath == normalized) return;
+    m_settings.backgroundVideoPath = normalized;
+    emit backgroundVideoPathChanged(normalized);
+    persistSettings();
+}
+
+void SettingsService::setBackgroundVideoMuted(bool muted)
+{
+    if (m_settings.backgroundVideoMuted == muted) return;
+    m_settings.backgroundVideoMuted = muted;
+    emit backgroundVideoMutedChanged(muted);
     persistSettings();
 }
 

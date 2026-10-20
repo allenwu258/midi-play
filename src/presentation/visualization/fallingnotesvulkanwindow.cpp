@@ -54,6 +54,7 @@ struct ImageResources {
     quint64 staticUiRevision = 0;
     quint64 atlasRevision = 0;
     quint64 backgroundRevision = 0;
+    QSize backgroundSize;
     // 压力测试可启用 GPU 完成事件，核验主机复用是否发生在前次绘制完成之后。
     VkEvent completionEvent = VK_NULL_HANDLE;
     bool submitted = false;
@@ -450,12 +451,16 @@ void FallingNotesVulkanRenderer::uploadBackground(ImageResources& frame, VkComma
     const quint64 revision = m_window->backgroundRevision();
     if (frame.backgroundRevision == revision) return;
 
-    if (frame.backgroundImageView) m_df->vkDestroyImageView(m_device, frame.backgroundImageView, nullptr);
-    if (frame.backgroundImage) m_df->vkDestroyImage(m_device, frame.backgroundImage, nullptr);
-    if (frame.backgroundImageMemory) m_df->vkFreeMemory(m_device, frame.backgroundImageMemory, nullptr);
-    frame.backgroundImageView = VK_NULL_HANDLE;
-    frame.backgroundImage = VK_NULL_HANDLE;
-    frame.backgroundImageMemory = VK_NULL_HANDLE;
+    const bool reuse = !image.isNull() && frame.backgroundImage && frame.backgroundSize == image.size();
+    if (!reuse) {
+        if (frame.backgroundImageView) m_df->vkDestroyImageView(m_device, frame.backgroundImageView, nullptr);
+        if (frame.backgroundImage) m_df->vkDestroyImage(m_device, frame.backgroundImage, nullptr);
+        if (frame.backgroundImageMemory) m_df->vkFreeMemory(m_device, frame.backgroundImageMemory, nullptr);
+        frame.backgroundImageView = VK_NULL_HANDLE;
+        frame.backgroundImage = VK_NULL_HANDLE;
+        frame.backgroundImageMemory = VK_NULL_HANDLE;
+        frame.backgroundSize = {};
+    }
 
     // 当前图像的前次工作已完成，此处可安全替换描述符引用的背景资源。
     if (image.isNull()) {
@@ -472,35 +477,40 @@ void FallingNotesVulkanRenderer::uploadBackground(ImageResources& frame, VkComma
 
     const int width = image.width();
     const int height = image.height();
-    VkImageCreateInfo info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    info.imageType = VK_IMAGE_TYPE_2D; info.format = VK_FORMAT_R8G8B8A8_UNORM;
-    info.extent = {uint32_t(width), uint32_t(height), 1};
-    info.mipLevels = info.arrayLayers = 1; info.samples = VK_SAMPLE_COUNT_1_BIT;
-    info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    checked(m_df->vkCreateImage(m_device, &info, nullptr, &frame.backgroundImage), "background image");
-    VkMemoryRequirements requirements;
-    m_df->vkGetImageMemoryRequirements(m_device, frame.backgroundImage, &requirements);
-    VkMemoryAllocateInfo allocation {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocation.allocationSize = requirements.size;
-    allocation.memoryTypeIndex = memoryType(requirements.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    checked(m_df->vkAllocateMemory(m_device, &allocation, nullptr, &frame.backgroundImageMemory), "background image memory");
-    checked(m_df->vkBindImageMemory(m_device, frame.backgroundImage, frame.backgroundImageMemory, 0), "bind background image");
-    VkImageViewCreateInfo view {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    view.image = frame.backgroundImage; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = info.format;
-    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    checked(m_df->vkCreateImageView(m_device, &view, nullptr, &frame.backgroundImageView), "background image view");
+    if (!reuse) {
+        VkImageCreateInfo info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType = VK_IMAGE_TYPE_2D; info.format = VK_FORMAT_R8G8B8A8_UNORM;
+        info.extent = {uint32_t(width), uint32_t(height), 1};
+        info.mipLevels = info.arrayLayers = 1; info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        checked(m_df->vkCreateImage(m_device, &info, nullptr, &frame.backgroundImage), "background image");
+        VkMemoryRequirements requirements;
+        m_df->vkGetImageMemoryRequirements(m_device, frame.backgroundImage, &requirements);
+        VkMemoryAllocateInfo allocation {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = memoryType(requirements.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        checked(m_df->vkAllocateMemory(m_device, &allocation, nullptr, &frame.backgroundImageMemory), "background image memory");
+        checked(m_df->vkBindImageMemory(m_device, frame.backgroundImage, frame.backgroundImageMemory, 0), "bind background image");
+        VkImageViewCreateInfo view {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = frame.backgroundImage; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = info.format;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        checked(m_df->vkCreateImageView(m_device, &view, nullptr, &frame.backgroundImageView), "background image view");
+        frame.backgroundSize = image.size();
+    }
 
     reserve(frame.backgroundStaging, image.sizeInBytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     upload(frame.backgroundStaging, image.constBits(), image.sizeInBytes());
     VkImageMemoryBarrier barrier {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcAccessMask = reuse ? VK_ACCESS_SHADER_READ_BIT : 0;
+    barrier.oldLayout = reuse ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = frame.backgroundImage;
     barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    m_df->vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+    m_df->vkCmdPipelineBarrier(command, reuse ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
     VkBufferImageCopy copy {};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
