@@ -337,6 +337,7 @@ try {
         vulkanEnabled = [bool]$enableVulkan
         vcpkgBaseline = $manifest.'builtin-baseline'
         audioSmokePassed = [bool]$AudioSmoke
+        videoIntegrationPassed = [bool]$RequireVideoIntegration
     } | ConvertTo-Json | Set-Content -LiteralPath "$stage\build-info.json" -Encoding UTF8
 
     # 保留上一份成功包，直到新包全部验证通过并完成原子目录替换。
