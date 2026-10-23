@@ -37,6 +37,7 @@ protected:
     void hideEvent(QHideEvent* event) override;
 
 private:
+    QString previewValidationError() const;
     app::IntroTextConfig introTextConfig() const;
     void updateScene();
     void updateIntroText();

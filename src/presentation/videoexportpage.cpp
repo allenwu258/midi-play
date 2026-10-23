@@ -316,6 +316,16 @@ QString VideoExportPage::validationError() const
     return visualization::IntroTextAsset::validationError(introTextConfig());
 }
 
+QString VideoExportPage::previewValidationError() const
+{
+    if (!m_available) return m_unavailableReason.isEmpty()
+        ? QStringLiteral("当前无法生成视频预览。") : m_unavailableReason;
+    const app::ExportTimeline timeline(m_defaults.scene.state.durationUs,
+        m_fps->currentData().toInt(), m_rate->value(), m_tail->value());
+    if (!timeline.valid()) return QStringLiteral("当前乐曲没有可预览的视频时间线。");
+    return visualization::IntroTextAsset::validationError(introTextConfig());
+}
+
 void VideoExportPage::setAvailability(bool available, const QString& reason)
 {
     m_available = available;
@@ -346,7 +356,7 @@ void VideoExportPage::updateIntroText()
     const QString error = m_preview->setConfig(introTextConfig());
     m_introError->setText(error);
     m_introError->setVisible(!error.isEmpty());
-    m_previewPlayButton->setEnabled(error.isEmpty());
+    m_previewPlayButton->setEnabled(previewValidationError().isEmpty());
     updatePreviewRange();
 }
 
@@ -409,7 +419,7 @@ void VideoExportPage::enterLayoutMode()
 
 void VideoExportPage::startPreviewPlayback()
 {
-    if (!introTextEnabled() || !m_available || !validationError().isEmpty()) return;
+    if (!introTextEnabled() || !previewValidationError().isEmpty()) return;
     m_textDebounce->stop();
     updateIntroText();
     m_layoutMode = false;

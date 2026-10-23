@@ -19,6 +19,7 @@
 #include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPlainTextEdit>
@@ -383,6 +384,22 @@ void testIntegration()
         require(status->isHidden(), "live page renders an initial background frame");
         auto* play = live.findChild<QPushButton*>(QStringLiteral("introPreviewPlay"));
         auto* slider = live.findChild<QSlider*>(QStringLiteral("introPreviewTimeline"));
+        auto* page = live.findChild<presentation::VideoExportPage*>();
+        auto* path = live.findChild<QLineEdit*>(QStringLiteral("videoExportPath"));
+        require(path && page, "live preview exposes export settings");
+        const QString originalPath = path->text();
+        for (const auto& invalidPath : {QString(), QStringLiteral("preview-only.txt")}) {
+            path->setText(invalidPath);
+            require(!page->validationError().isEmpty(), "export still rejects an invalid output path");
+            require(play->isEnabled(), "output path does not disable preview playback");
+            play->click();
+            require(play->text() == QStringLiteral("暂停"), "preview starts without an export destination");
+            waitEvents(100);
+            require(slider->value() > 0, "preview clock advances without an export destination");
+            play->click();
+            live.findChild<QPushButton*>(QStringLiteral("introPreviewLayout"))->click();
+        }
+        path->setText(originalPath);
         play->click();
         waitEvents(220);
         require(slider->value() >= 4 && slider->value() <= 10,
