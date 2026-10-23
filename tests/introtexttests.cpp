@@ -9,6 +9,8 @@
 #include "presentation/videoexportpage.h"
 #include "presentation/videoexportpreviewrenderer.h"
 #include "presentation/visualization/introtext.h"
+#include "presentation/theme/widgetstyles.h"
+#include "presentation/theme/themecontroller.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -25,6 +27,9 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -246,6 +251,82 @@ void testEditorAndDialog(const QString& snapshots)
             "short-video shortcut cannot seek beyond last encoded frame");
     require(dialog.findChild<QLabel*>(QStringLiteral("introTextTimeSummary"))->text().contains(QStringLiteral("截断")),
             "short-video truncation is explained");
+}
+
+void testDefaultVideoLayout(const QString& snapshots)
+{
+    for (const auto mode : {settings::ThemeMode::Dark, settings::ThemeMode::Light}) {
+        presentation::theme::ThemeController themeController(mode);
+        QWidget parent;
+        const auto& theme = presentation::theme::themeFor(mode);
+        parent.setPalette(presentation::theme::widgetPalette(theme));
+        parent.setStyleSheet(presentation::theme::mainWindowStyle(theme));
+        app::VideoExportOptions options;
+        options.scene.state.durationUs = 10'000'000;
+        options.scene.backgroundVideoPath = QStringLiteral("layout-test.mp4");
+        options.introText = textConfig();
+        options.introText.enabled = false;
+        presentation::ExportDialog dialog({}, {}, options, 0, true, {}, &parent);
+        auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("exportTabs"));
+        auto* page = dialog.findChild<presentation::VideoExportPage*>();
+        // Geometry verification needs no actual GPU or decoder allocation.
+        page->setPageActive(false);
+        tabs->setCurrentIndex(1);
+        page->setPageActive(false);
+        dialog.show();
+        waitEvents(20);
+        auto* toggle = dialog.findChild<QCheckBox*>(QStringLiteral("introTextEnabled"));
+        auto* transport = dialog.findChild<QWidget*>(QStringLiteral("introPreviewTransport"));
+        auto* slider = dialog.findChild<QSlider*>(QStringLiteral("introPreviewTimeline"));
+        auto* scroll = dialog.findChild<QScrollArea*>(QStringLiteral("videoExportParameters"));
+        auto* path = dialog.findChild<QLineEdit*>(QStringLiteral("videoExportPath"));
+        require(transport->isVisible() && !transport->isEnabled() && !slider->isEnabled(),
+                "preview controls stay visible and disabled without intro text");
+        const int compactWidth = dialog.width();
+        const int initialHeight = dialog.height();
+        std::printf("LAYOUT theme=%d screen=%dx%d initial=%dx%d content=%d scroll=%d\n",
+            int(mode), dialog.screen()->availableGeometry().width(), dialog.screen()->availableGeometry().height(),
+            dialog.width(), dialog.height(), page->preferredContentHeight(), scroll->verticalScrollBar()->maximum());
+        require(initialHeight > 760 || initialHeight >= dialog.screen()->availableGeometry().height() - 48,
+                "initial height grows to fit video options or available screen");
+        const auto assertFullForm = [&] {
+            // Full visibility is required whenever the screen can contain the requested form.
+            if (dialog.height() < page->preferredContentHeight() + 100) return;
+            require(scroll->verticalScrollBar()->maximum() == 0, "default video form fits without scrolling");
+            require(scroll->viewport()->rect().contains(QRect(path->mapTo(scroll->viewport(), QPoint()), path->size())),
+                    "output path is fully inside the initial viewport");
+        };
+        assertFullForm();
+        if (!snapshots.isEmpty()) dialog.grab().save(snapshots + QStringLiteral("/default-disabled-%1.png").arg(int(mode)));
+        toggle->setChecked(true);
+        waitEvents(20);
+        require(transport->isVisible() && transport->isEnabled() && slider->isEnabled(),
+                "enabling intro text activates the existing preview controls");
+        require(dialog.width() > compactWidth && dialog.height() >= initialHeight,
+                "enabling the editor widens the dialog without losing initial height");
+        std::printf("EXPANDED theme=%d size=%dx%d content=%d scroll=%d viewport=%d pathBottom=%d\n",
+            int(mode), dialog.width(), dialog.height(), page->preferredContentHeight(),
+            scroll->verticalScrollBar()->maximum(), scroll->viewport()->height(),
+            path->mapTo(scroll->viewport(), QPoint(0, path->height())).y());
+        if (dialog.screen()->availableGeometry().height() >= 920)
+            require(scroll->viewport()->rect().contains(QRect(path->mapTo(scroll->viewport(), QPoint()), path->size())),
+                    "output path remains fully visible with the expanded editor and preview status");
+        assertFullForm();
+        if (!snapshots.isEmpty()) dialog.grab().save(snapshots + QStringLiteral("/default-enabled-%1.png").arg(int(mode)));
+        toggle->setChecked(false);
+        waitEvents(20);
+        require(transport->isVisible() && !transport->isEnabled() && dialog.width() == compactWidth,
+                "disabling text restores width and preserves the disabled transport");
+        dialog.resize(compactWidth, 620);
+        waitEvents(20);
+        require(scroll->verticalScrollBar()->maximum() > 0, "small windows keep scrolling as a fallback");
+        scroll->ensureWidgetVisible(path);
+        require(scroll->viewport()->rect().intersects(QRect(path->mapTo(scroll->viewport(), QPoint()), path->size())),
+                "output path remains reachable in a small window");
+        page->setAvailability(false, QStringLiteral("不可用"));
+        toggle->setChecked(true);
+        require(!transport->isEnabled(), "unavailable video keeps preview transport disabled");
+    }
 }
 
 void testPreviewTimelineChanges()
@@ -526,6 +607,7 @@ int main(int argc, char** argv)
     const QString snapshots = qEnvironmentVariable("MIDI_PLAY_INTRO_SNAPSHOTS");
     if (!snapshots.isEmpty()) QDir().mkpath(snapshots);
     testEditorAndDialog(snapshots);
+    testDefaultVideoLayout(snapshots);
     std::puts("PASS: intro layout, animation, validation, dragging and dialog lifecycle");
     return 0;
 }

@@ -29,6 +29,7 @@ public:
     bool introTextEnabled() const;
     void setPageActive(bool active);
     QString validationError() const;
+    int preferredContentHeight() const;
 
 signals:
     void introTextPanelVisibilityChanged(bool visible);
@@ -61,6 +62,7 @@ private:
     QCheckBox* m_metronome = nullptr;
     QLineEdit* m_path = nullptr;
     QWidget* m_controls = nullptr;
+    QWidget* m_leftContent = nullptr;
     QLabel* m_previewStatus = nullptr;
     QLabel* m_availabilityLabel = nullptr;
     QLabel* m_introError = nullptr;

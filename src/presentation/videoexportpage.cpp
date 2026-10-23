@@ -42,6 +42,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     root->setContentsMargins(20, 20, 20, 20);
     root->setSpacing(18);
     auto* left = new QWidget(this);
+    m_leftContent = left;
     auto* leftLayout = new QVBoxLayout(left);
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(10);
@@ -60,6 +61,8 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     leftLayout->addWidget(m_availabilityLabel);
 
     m_previewTransport = new QWidget(left);
+    m_previewTransport->setObjectName(QStringLiteral("introPreviewTransport"));
+    m_previewTransport->setToolTip(QStringLiteral("启用入场文字后可拖动布局或播放预览。"));
     auto* transport = new QVBoxLayout(m_previewTransport);
     transport->setContentsMargins(0, 0, 0, 0);
     auto* buttons = new QGridLayout;
@@ -93,7 +96,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     auto* form = new QFormLayout(m_controls);
     form->setContentsMargins(0, 0, 0, 0);
     form->setHorizontalSpacing(18);
-    form->setVerticalSpacing(10);
+    form->setVerticalSpacing(6);
 
     m_size = new QComboBox(m_controls);
     m_size->addItem(QStringLiteral("1920 × 1080"), QSize(1920, 1080));
@@ -168,6 +171,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     leftLayout->addWidget(m_controls);
     leftLayout->addStretch(1);
     auto* leftScroll = new QScrollArea(this);
+    leftScroll->setObjectName(QStringLiteral("videoExportParameters"));
     leftScroll->setFrameShape(QFrame::NoFrame);
     leftScroll->setWidgetResizable(true);
     leftScroll->setWidget(left);
@@ -281,12 +285,18 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
         if (frame >= m_lastPreviewFrame) stopPreviewPlayback();
     });
     m_introPanel->setVisible(defaults.introText.enabled);
-    m_previewTransport->setVisible(defaults.introText.enabled);
+    m_previewTransport->setEnabled(defaults.introText.enabled);
     updateIntroText();
     // The dialog calls setAvailability before scheduling any GPU work.
 }
 
 bool VideoExportPage::introTextEnabled() const { return m_introEnabled->isChecked(); }
+
+int VideoExportPage::preferredContentHeight() const
+{
+    const auto margins = layout()->contentsMargins();
+    return m_leftContent->layout()->sizeHint().height() + margins.top() + margins.bottom();
+}
 
 app::IntroTextConfig VideoExportPage::introTextConfig() const
 {
@@ -338,7 +348,7 @@ void VideoExportPage::setAvailability(bool available, const QString& reason)
     m_unavailableReason = reason;
     m_controls->setEnabled(available);
     m_introPanel->setEnabled(available);
-    m_previewTransport->setEnabled(available);
+    m_previewTransport->setEnabled(available && introTextEnabled());
     m_availabilityLabel->setText(reason);
     m_availabilityLabel->setVisible(!available && !reason.isEmpty());
     if (available) updateScene();
@@ -405,7 +415,7 @@ void VideoExportPage::updateIntroTextVisibility(bool enabled)
 {
     stopPreviewPlayback();
     m_introPanel->setVisible(enabled && m_pageActive);
-    m_previewTransport->setVisible(enabled);
+    m_previewTransport->setEnabled(enabled && m_available);
     m_layoutMode = true;
     m_preview->setLayoutMode(true);
     updateIntroText();

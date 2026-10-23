@@ -9,6 +9,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScreen>
+#include <QShowEvent>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -24,8 +25,9 @@ ExportDialog::ExportDialog(const QString& sourcePath, const QString& soundFontPa
 {
     setObjectName(QStringLiteral("exportDialog"));
     setWindowTitle(QStringLiteral("导出"));
-    setMinimumSize(620, 620);
-    resize(680, 760);
+    const QSize available = screen()->availableGeometry().size() - QSize(24, 48);
+    setMinimumSize(QSize(620, 620).boundedTo(available));
+    resize(m_compactSize.boundedTo(available));
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(12, 12, 12, 12);
@@ -64,12 +66,35 @@ void ExportDialog::updateVideoLayout()
     layout()->activate();
     const QRect available = screen()->availableGeometry();
     const QSize wanted(expanded ? std::max(1150, m_compactSize.width()) : m_compactSize.width(),
-                       m_compactSize.height());
+                       std::max(m_compactSize.height(), preferredHeight()));
     resize(wanted.boundedTo(available.size() - QSize(24, 48)));
     if (isVisible()) {
         move(std::clamp(x(), available.left(), std::max(available.left(), available.right() - width())),
              std::clamp(y(), available.top(), std::max(available.top(), available.bottom() - height() - 32)));
     }
+}
+
+int ExportDialog::preferredHeight() const
+{
+    const auto margins = layout()->contentsMargins();
+    // QScrollArea's size hint caps its content; measure the full video form instead.
+    return m_videoPage->preferredContentHeight() + m_tabs->tabBar()->sizeHint().height()
+        + m_buttons->sizeHint().height() + margins.top() + margins.bottom()
+        + layout()->spacing() + 8;
+}
+
+void ExportDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+    if (m_initialSizeApplied) return;
+    m_initialSizeApplied = true;
+    m_videoPage->ensurePolished();
+    layout()->activate();
+    const QSize available = screen()->availableGeometry().size() - QSize(24, 48);
+    m_compactSize = QSize(m_compactSize.width(), std::max(m_compactSize.height(), preferredHeight()))
+                        .boundedTo(available);
+    resize(QSize(m_expanded ? std::max(1150, m_compactSize.width()) : m_compactSize.width(),
+                 m_compactSize.height()).boundedTo(available));
 }
 
 ExportDialog::ExportType ExportDialog::exportType() const noexcept

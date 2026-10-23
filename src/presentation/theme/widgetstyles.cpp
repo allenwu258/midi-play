@@ -139,6 +139,10 @@ QString mainWindowStyle(const AppTheme& theme)
         QSlider::sub-page:horizontal { background: @accent@; }
         QSlider::handle:horizontal { width: 14px; margin: -5px 0; border-radius: 7px; background: @handle@; }
         QSlider::handle:horizontal:hover { background: @accent@; }
+        QWidget#introPreviewTransport QPushButton:disabled, QLabel#introPreviewTime:disabled { color: @disabledText@; }
+        QSlider#introPreviewTimeline::groove:horizontal:disabled { background: @disabledBorder@; }
+        QSlider#introPreviewTimeline::sub-page:horizontal:disabled { background: @disabledBorder@; }
+        QSlider#introPreviewTimeline::handle:horizontal:disabled { background: @disabledText@; }
 
         QToolTip { background: @popup@; color: @text@; border: 1px solid @border@; padding: 4px; }
     )"), theme.widgets);
