@@ -66,7 +66,7 @@ void ExportDialog::updateVideoLayout()
     layout()->activate();
     const QRect available = screen()->availableGeometry();
     const QSize wanted(expanded ? std::max(1150, m_compactSize.width()) : m_compactSize.width(),
-                       std::max(m_compactSize.height(), preferredHeight()));
+                       std::max(m_compactSize.height(), preferredHeight(expanded)));
     resize(wanted.boundedTo(available.size() - QSize(24, 48)));
     if (isVisible()) {
         move(std::clamp(x(), available.left(), std::max(available.left(), available.right() - width())),
@@ -74,11 +74,11 @@ void ExportDialog::updateVideoLayout()
     }
 }
 
-int ExportDialog::preferredHeight() const
+int ExportDialog::preferredHeight(bool includeIntroEditor) const
 {
     const auto margins = layout()->contentsMargins();
     // QScrollArea's size hint caps its content; measure the full video form instead.
-    return m_videoPage->preferredContentHeight() + m_tabs->tabBar()->sizeHint().height()
+    return m_videoPage->preferredContentHeight(includeIntroEditor) + m_tabs->tabBar()->sizeHint().height()
         + m_buttons->sizeHint().height() + margins.top() + margins.bottom()
         + layout()->spacing() + 8;
 }
@@ -91,7 +91,7 @@ void ExportDialog::showEvent(QShowEvent* event)
     m_videoPage->ensurePolished();
     layout()->activate();
     const QSize available = screen()->availableGeometry().size() - QSize(24, 48);
-    m_compactSize = QSize(m_compactSize.width(), std::max(m_compactSize.height(), preferredHeight()))
+    m_compactSize = QSize(m_compactSize.width(), std::max(m_compactSize.height(), preferredHeight(m_expanded)))
                         .boundedTo(available);
     resize(QSize(m_expanded ? std::max(1150, m_compactSize.width()) : m_compactSize.width(),
                  m_compactSize.height()).boundedTo(available));

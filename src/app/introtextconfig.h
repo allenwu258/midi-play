@@ -27,9 +27,13 @@ enum class IntroTextExitEffect {
 // to the final encoded frame. Times are measured on the output-video timeline.
 struct IntroTextConfig {
     bool enabled = false;
-    QString text;
+    QString titleText;
+    QString bodyText;
     QString fontFamily = QStringLiteral("Microsoft YaHei");
-    int fontPixelSize = 32;
+    int titleFontPixelSize = 48;
+    int bodyFontPixelSize = 32;
+    // 1280x720 reference-canvas pen width in tenths of a pixel (0..40).
+    int outlineWidthTenths = 8;
     IntroTextAlignment alignment = IntroTextAlignment::Center;
     IntroTextPosition position = IntroTextPosition::Center;
     int offsetX = 0; // Relative to canvas center; positive values move right.

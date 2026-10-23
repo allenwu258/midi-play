@@ -29,7 +29,7 @@ public:
     bool introTextEnabled() const;
     void setPageActive(bool active);
     QString validationError() const;
-    int preferredContentHeight() const;
+    int preferredContentHeight(bool includeIntroEditor = true) const;
 
 signals:
     void introTextPanelVisibilityChanged(bool visible);
@@ -63,6 +63,7 @@ private:
     QLineEdit* m_path = nullptr;
     QWidget* m_controls = nullptr;
     QWidget* m_leftContent = nullptr;
+    QWidget* m_rightContent = nullptr;
     QLabel* m_previewStatus = nullptr;
     QLabel* m_availabilityLabel = nullptr;
     QLabel* m_introError = nullptr;

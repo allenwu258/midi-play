@@ -38,7 +38,7 @@ private:
     // 当前页校验通过且用户允许覆盖后，结束模态配置流程。
     void acceptExport();
     void updateVideoLayout();
-    int preferredHeight() const;
+    int preferredHeight(bool includeIntroEditor) const;
 
     QTabWidget* m_tabs = nullptr;
     AudioExportPage* m_audioPage = nullptr;

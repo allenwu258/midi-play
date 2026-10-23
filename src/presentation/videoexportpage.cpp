@@ -99,6 +99,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     form->setVerticalSpacing(6);
 
     m_size = new QComboBox(m_controls);
+    m_size->setObjectName(QStringLiteral("videoExportSize"));
     m_size->addItem(QStringLiteral("1920 × 1080"), QSize(1920, 1080));
     m_size->addItem(QStringLiteral("1280 × 720"), QSize(1280, 720));
     m_size->addItem(QStringLiteral("3840 × 2160"), QSize(3840, 2160));
@@ -186,6 +187,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     m_fps->setObjectName(QStringLiteral("videoExportFps"));
     m_tail->setObjectName(QStringLiteral("videoExportTail"));
     auto* right = new QWidget(this);
+    m_rightContent = right;
     auto* rightLayout = new QVBoxLayout(right);
     rightLayout->setContentsMargins(4, 0, 4, 0);
     m_introEditor = new IntroTextPanel(defaults.introText, right);
@@ -292,10 +294,13 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
 
 bool VideoExportPage::introTextEnabled() const { return m_introEnabled->isChecked(); }
 
-int VideoExportPage::preferredContentHeight() const
+int VideoExportPage::preferredContentHeight(bool includeIntroEditor) const
 {
     const auto margins = layout()->contentsMargins();
-    return m_leftContent->layout()->sizeHint().height() + margins.top() + margins.bottom();
+    const int leftHeight = m_leftContent->layout()->sizeHint().height();
+    const int rightHeight = includeIntroEditor && m_rightContent
+        ? m_rightContent->layout()->sizeHint().height() : 0;
+    return std::max(leftHeight, rightHeight) + margins.top() + margins.bottom();
 }
 
 app::IntroTextConfig VideoExportPage::introTextConfig() const

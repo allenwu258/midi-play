@@ -3,11 +3,12 @@
 #include "app/introtextconfig.h"
 #include <QWidget>
 
-class QPlainTextEdit;
-class QFontComboBox;
-class QSpinBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFontComboBox;
+class QPlainTextEdit;
+class QSlider;
+class QSpinBox;
 
 namespace midi_play::presentation {
 
@@ -24,11 +25,16 @@ signals:
 
 private:
     void changed(bool layoutChanged);
+
     bool m_updating = false;
     app::IntroTextConfig m_lastConfig;
-    QPlainTextEdit* m_introText = nullptr;
+    QPlainTextEdit* m_titleText = nullptr;
+    QPlainTextEdit* m_bodyText = nullptr;
     QFontComboBox* m_introFont = nullptr;
-    QSpinBox* m_introSize = nullptr;
+    QSpinBox* m_titleSize = nullptr;
+    QSpinBox* m_bodySize = nullptr;
+    QSlider* m_outlineSlider = nullptr;
+    QDoubleSpinBox* m_outlineSize = nullptr;
     QSpinBox* m_introWidth = nullptr;
     QComboBox* m_introAlignment = nullptr;
     QComboBox* m_introPosition = nullptr;

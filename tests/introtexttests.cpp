@@ -58,7 +58,8 @@ app::IntroTextConfig textConfig()
 {
     app::IntroTextConfig config;
     config.enabled = true;
-    config.text = QStringLiteral("夜曲 Nocturne\n作曲：示例 Composer\n演奏：Piano");
+    config.titleText = QStringLiteral("夜曲 Nocturne");
+    config.bodyText = QStringLiteral("作曲：示例 Composer\n演奏：Piano");
     return config;
 }
 QImage layer(IntroTextAsset& asset, qint64 timeUs)
@@ -121,7 +122,7 @@ void testLayoutAndAnimation()
     require(asset.prepare(config, {1280, 720}, &error), "custom prepares");
     require(asset.logicalBounds().center() == QPointF(660, 320), "custom center offsets are applied");
     config.position = app::IntroTextPosition::Center;
-    config.text = QStringLiteral("ABC");
+    config.titleText = QStringLiteral("ABC"); config.bodyText.clear();
     int previousLeft = -1;
     for (const auto alignment : {app::IntroTextAlignment::Left, app::IntroTextAlignment::Center, app::IntroTextAlignment::Right}) {
         config.alignment = alignment;
@@ -131,28 +132,66 @@ void testLayoutAndAnimation()
         previousLeft = left;
         require(asset.logicalBounds().center() == QPointF(640, 360), "alignment preserves block anchor");
     }
-    config.text = QStringLiteral("中文自动换行 Latin mixed text ").repeated(6);
+    config.titleText.clear(); config.bodyText = QStringLiteral("中文自动换行 Latin mixed text ").repeated(6);
     config.widthPercent = 30;
     require(asset.prepare(config, {1280, 720}, &error), "wrapped mixed script prepares");
     require(asset.logicalBounds().height() > 100, "long content wraps into multiple lines");
-    config.text = QStringLiteral("العربية हिन्दी e\u0301 😀 <b>literal</b>\n制表\t分隔");
+    config.titleText = QStringLiteral("العربية हिन्दी e\u0301 😀 <b>literal</b>");
+    config.bodyText = QStringLiteral("制表\t分隔");
     config.widthPercent = 80;
     require(asset.prepare(config, {1280, 720}, &error) && !inkBounds(layer(asset, 0)).isEmpty(),
             "Unicode and literal markup use Qt layout");
     config.displayMilliseconds = 0;
     require(asset.prepare(config, {1280, 720}, &error) && asset.animationState(0).opacity == 1,
             "zero hold starts visible and immediately fades");
+
+    config = textConfig();
+    config.titleText = QStringLiteral("TITLE");
+    config.bodyText = QStringLiteral("body");
+    config.titleFontPixelSize = 72;
+    config.bodyFontPixelSize = 24;
+    config.outlineWidthTenths = 0;
+    require(asset.prepare(config, {1280, 720}, &error), "independent title and body sizes prepare without outline");
+    const QImage noOutline = layer(asset, 0);
+    const QRect combinedInk = inkBounds(noOutline);
+    require(!combinedInk.isEmpty() && asset.logicalBounds().height() > 100,
+            "title and body are composed as a vertically spaced block");
+    const int titleBandBottom = qRound(asset.logicalBounds().top() + 8 + 72 * 1.5);
+    QRect titleInk;
+    QRect bodyInk;
+    for (int y = combinedInk.top(); y <= combinedInk.bottom(); ++y) {
+        bool rowHasInk = false;
+        for (int x = combinedInk.left(); x <= combinedInk.right(); ++x)
+            rowHasInk |= noOutline.pixelColor(x, y).alpha() > 0;
+        if (!rowHasInk) continue;
+        if (y < titleBandBottom) titleInk |= QRect(combinedInk.left(), y, combinedInk.width(), 1);
+        else bodyInk |= QRect(combinedInk.left(), y, combinedInk.width(), 1);
+    }
+    require(!titleInk.isEmpty() && !bodyInk.isEmpty() && titleInk.height() > bodyInk.height(),
+            "title and body use independent font sizes");
+    config.outlineWidthTenths = 30;
+    require(asset.prepare(config, {1280, 720}, &error), "adjustable outline prepares");
+    const QImage outlined = layer(asset, 0);
+    require(outlined != noOutline && inkBounds(outlined).width() >= combinedInk.width(),
+            "outline width invalidates the image cache and adds glyph coverage");
+    config.titleText.clear();
+    require(asset.prepare(config, {1280, 720}, &error) && !inkBounds(layer(asset, 0)).isEmpty(),
+            "body-only content prepares");
+    config.titleText = QStringLiteral("TITLE");
+    config.bodyText.clear();
+    require(asset.prepare(config, {1280, 720}, &error) && !inkBounds(layer(asset, 0)).isEmpty(),
+            "title-only content prepares");
 }
 void testValidation()
 {
     auto config = textConfig();
-    config.text = QStringLiteral(" \t\n ");
+    config.titleText = QStringLiteral(" \t\n "); config.bodyText.clear();
     require(!IntroTextAsset::validationError(config).isEmpty(), "blank enabled text rejected");
     config.enabled = false;
     require(IntroTextAsset::validationError(config).isEmpty(), "disabled text bypasses validation");
-    config = textConfig(); config.text = QString(2001, QLatin1Char('a'));
+    config = textConfig(); config.titleText = QString(2001, QLatin1Char('a')); config.bodyText.clear();
     require(!IntroTextAsset::validationError(config).isEmpty(), "excess text rejected without truncation");
-    config = textConfig(); config.text = QStringLiteral("A\n").repeated(50);
+    config = textConfig(); config.titleText.clear(); config.bodyText = QStringLiteral("A\n").repeated(50);
     require(!IntroTextAsset::validationError(config).isEmpty(), "excess explicit lines rejected");
     config = textConfig(); config.exitMilliseconds = 0;
     require(!IntroTextAsset::validationError(config).isEmpty(), "zero animation duration rejected");
@@ -160,8 +199,13 @@ void testValidation()
     require(!IntroTextAsset::validationError(config).isEmpty(), "static off-canvas text rejected");
     config = textConfig(); config.alignment = app::IntroTextAlignment(99);
     require(!IntroTextAsset::validationError(config).isEmpty(), "unknown enum rejected");
-    config = textConfig(); config.text = QStringLiteral("Line\n").repeated(40); config.fontPixelSize = 160;
+    config = textConfig(); config.titleText.clear(); config.bodyText = QStringLiteral("Line\n").repeated(40);
+    config.titleFontPixelSize = 160; config.bodyFontPixelSize = 160;
     require(!IntroTextAsset::validationError(config).isEmpty(), "oversized layout rejected before image allocation");
+    config = textConfig(); config.outlineWidthTenths = 41;
+    require(!IntroTextAsset::validationError(config).isEmpty(), "outline width above UI range is rejected");
+    config = textConfig(); config.titleText.clear(); config.bodyText.clear();
+    require(!IntroTextAsset::validationError(config).isEmpty(), "both optional text sections empty are rejected");
     IntroTextAsset asset;
     QString error;
     config = textConfig();
@@ -192,6 +236,18 @@ void testEditorAndDialog(const QString& snapshots)
     require(dialog.width() > compactWidth && !panel->isHidden(), "enable expands dialog and right editor");
     auto* preview = dialog.findChild<presentation::IntroTextPreviewWidget*>();
     auto* editor = dialog.findChild<presentation::IntroTextPanel*>();
+    auto* titleSize = dialog.findChild<QSpinBox*>(QStringLiteral("introTextTitleFontSize"));
+    auto* bodySize = dialog.findChild<QSpinBox*>(QStringLiteral("introTextBodyFontSize"));
+    auto* outlineSlider = dialog.findChild<QSlider*>(QStringLiteral("introTextOutlineSlider"));
+    auto* outlineWidth = dialog.findChild<QDoubleSpinBox*>(QStringLiteral("introTextOutlineWidth"));
+    require(titleSize && bodySize && outlineSlider && outlineWidth,
+            "title, body and outline controls are available");
+    titleSize->setValue(68);
+    bodySize->setValue(26);
+    outlineWidth->setValue(1.7);
+    require(editor->config().titleFontPixelSize == 68 && editor->config().bodyFontPixelSize == 26
+            && editor->config().outlineWidthTenths == 17 && outlineSlider->value() == 17,
+            "font sizes stay independent and outline controls stay synchronized");
     QImage background(1024, 576, QImage::Format_RGBA8888);
     background.fill(QColor(25, 33, 41));
     preview->setBaseFrame(background, 0);
@@ -243,7 +299,12 @@ void testEditorAndDialog(const QString& snapshots)
     waitEvents(20);
     require(dialog.width() == compactWidth && panel->isHidden(), "disable restores compact size");
     toggle->setChecked(true);
-    require(dialog.videoOptions().introText.text == options.introText.text, "toggle preserves text draft");
+    require(dialog.videoOptions().introText.titleText == options.introText.titleText
+            && dialog.videoOptions().introText.bodyText == options.introText.bodyText
+            && dialog.videoOptions().introText.titleFontPixelSize == 68
+            && dialog.videoOptions().introText.bodyFontPixelSize == 26
+            && dialog.videoOptions().introText.outlineWidthTenths == 17,
+            "toggle preserves title, body and styling draft");
     auto* hold = dialog.findChild<QDoubleSpinBox*>(QStringLiteral("introTextDisplayTime"));
     hold->setValue(20);
     waitEvents(200);
@@ -449,7 +510,8 @@ void testIntegration()
     require(base.status == app::VideoExportStatus::Success, qPrintable(base.error));
     const QByteArray basePixels = decode(ffmpeg, options.outputPath);
     options.introText = textConfig();
-    options.introText.fontPixelSize = 80;
+    options.introText.titleFontPixelSize = 80;
+    options.introText.bodyFontPixelSize = 40;
     options.introText.displayMilliseconds = 200;
     options.introText.exitMilliseconds = 400;
     options.introText.exitEffect = app::IntroTextExitEffect::SlideDown;
