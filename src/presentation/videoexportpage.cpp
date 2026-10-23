@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QShowEvent>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTimer>
@@ -343,13 +344,13 @@ void VideoExportPage::setAvailability(bool available, const QString& reason)
     if (available) updateScene();
     else {
         stopPreviewPlayback();
-        m_renderer->cancel();
+        m_renderer->release();
     }
 }
 
 void VideoExportPage::updateScene()
 {
-    if (!m_available) return;
+    if (!m_available || !m_pageActive || !isVisible()) return;
     m_renderer->setScene(options().scene);
     m_previewStatus->setText(QStringLiteral("正在生成预览…"));
     m_previewStatus->show();
@@ -424,7 +425,7 @@ void VideoExportPage::enterLayoutMode()
 
 void VideoExportPage::startPreviewPlayback()
 {
-    if (!introTextEnabled() || !previewValidationError().isEmpty()) return;
+    if (!introTextEnabled() || !m_pageActive || !isVisible() || !previewValidationError().isEmpty()) return;
     m_textDebounce->stop();
     updateIntroText();
     m_layoutMode = false;
@@ -458,19 +459,30 @@ void VideoExportPage::setPreviewFrame(qint64 frame, bool discontinuity)
     m_previewTimeLabel->setText(QStringLiteral("%1 / %2 · %3 · 无声预览")
         .arg(formattedTime(outputUs), formattedTime(m_lastPreviewFrame * 1'000'000 / fps),
              m_layoutMode ? QStringLiteral("布局") : QStringLiteral("时间")));
-    if (m_available) m_renderer->request(outputUs, musicUs, discontinuity);
+    if (m_available && m_pageActive && isVisible()) m_renderer->request(outputUs, musicUs, discontinuity);
+}
+
+void VideoExportPage::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    updateScene();
 }
 
 void VideoExportPage::hideEvent(QHideEvent* event)
 {
     stopPreviewPlayback();
+    m_renderer->release();
     QWidget::hideEvent(event);
 }
 
 void VideoExportPage::setPageActive(bool active)
 {
+    const bool changed = m_pageActive != active;
     m_pageActive = active;
     m_introPanel->setVisible(active && introTextEnabled());
-    if (!active) stopPreviewPlayback();
+    if (!active) {
+        stopPreviewPlayback();
+        m_renderer->release();
+    } else if (changed) updateScene();
 }
 } // namespace midi_play::presentation

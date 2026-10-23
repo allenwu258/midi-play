@@ -404,10 +404,20 @@ void testIntegration()
     QElapsedTimer timer; timer.start();
     while (received != 990'000 && timer.elapsed() < 10000) waitEvents(20);
     require(received == 990'000, "only the final seek is applied");
+    preview.release();
+    timer.restart();
+    while (preview.hasWorkerThread() && timer.elapsed() < 10000) waitEvents(20);
+    require(!preview.hasWorkerThread(), "release stops the idle renderer thread");
     {
+        options.scene.backgroundVideoPath = QString::fromUtf8(MIDI_PLAY_TEST_VIDEO);
         presentation::ExportDialog live({}, {}, options, 1'000'000, true, {});
-        live.findChild<QTabWidget*>(QStringLiteral("exportTabs"))->setCurrentIndex(1);
+        auto* tabs = live.findChild<QTabWidget*>(QStringLiteral("exportTabs"));
+        auto* renderer = live.findChild<presentation::VideoExportPreviewRenderer*>();
+        require(!renderer->hasWorkerThread(), "constructing an export dialog does not start a preview worker");
         live.show();
+        waitEvents(50);
+        require(!renderer->hasWorkerThread(), "default audio page does not allocate preview resources");
+        tabs->setCurrentIndex(1);
         auto* status = live.findChild<QLabel*>(QStringLiteral("videoPreviewStatus"));
         timer.restart();
         while (!status->isHidden() && timer.elapsed() < 10000) waitEvents(20);
@@ -453,6 +463,31 @@ void testIntegration()
         const int hiddenFrame = slider->value();
         waitEvents(100);
         require(slider->value() == hiddenFrame, "switching to audio stops preview playback");
+        timer.restart();
+        while (renderer->hasWorkerThread() && timer.elapsed() < 10000) waitEvents(20);
+        require(!renderer->hasWorkerThread(), "audio page releases the GPU and background decoder session");
+        for (int i = 0; i < 10; ++i) {
+            tabs->setCurrentIndex(1);
+            slider->setValue(i);
+            tabs->setCurrentIndex(0);
+        }
+        tabs->setCurrentIndex(1);
+        timer.restart();
+        while (!status->isHidden() && timer.elapsed() < 10000) waitEvents(20);
+        require(status->isHidden() && renderer->hasWorkerThread(),
+                "rapid tab switching rebuilds the latest preview session safely");
+        live.hide();
+        timer.restart();
+        while (renderer->hasWorkerThread() && timer.elapsed() < 10000) waitEvents(20);
+        require(!renderer->hasWorkerThread(), "hiding the dialog releases preview resources");
+        live.show();
+        timer.restart();
+        while (!status->isHidden() && timer.elapsed() < 10000) waitEvents(20);
+        require(status->isHidden(), "showing the dialog rebuilds a working preview");
+        renderer->release();
+        timer.restart();
+        while (renderer->hasWorkerThread() && timer.elapsed() < 10000) waitEvents(20);
+        require(!renderer->hasWorkerThread(), "explicit release completes before dialog destruction");
     }
     {
         auto* closing = new presentation::VideoExportPreviewRenderer;

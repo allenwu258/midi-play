@@ -19,6 +19,9 @@ public:
     void setScene(const visualization::ExportSceneConfig& scene);
     void request(qint64 outputTimeUs, qint64 musicTimeUs, bool discontinuity);
     void cancel();
+    // Cancel immediately; release GPU/decoder resources asynchronously before restarting.
+    void release();
+    bool hasWorkerThread() const noexcept { return m_thread != nullptr; }
 
 signals:
     void frameReady(const QImage& frame, qint64 outputTimeUs);
@@ -35,6 +38,7 @@ private:
     qint64 m_musicTimeUs = 0;
     bool m_busy = false;
     bool m_pending = false;
+    bool m_stopping = false;
     std::shared_ptr<std::atomic_bool> m_cancel;
 };
 } // namespace midi_play::presentation

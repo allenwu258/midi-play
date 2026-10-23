@@ -6,6 +6,15 @@ namespace midi_play::presentation {
 class VideoPreviewWorker final : public QObject {
     Q_OBJECT
 public:
+    void releaseResources()
+    {
+#if MIDI_PLAY_HAS_VULKAN
+        m_renderer.reset();
+        m_rendererCancel.reset();
+        m_generation = 0;
+#endif
+    }
+
     void render(const visualization::ExportSceneConfig& scene, quint64 generation,
                 quint64 revision, qint64 outputUs, qint64 musicUs,
                 const std::shared_ptr<std::atomic_bool>& canceled)
@@ -16,6 +25,8 @@ public:
         if (!canceled->load()) {
             if (generation != m_generation) {
                 m_renderer.reset();
+                // VideoFrameReader retains this token's address until renderer destruction.
+                m_rendererCancel = canceled;
                 auto renderer = std::make_unique<visualization::VulkanOffscreenRenderer>();
                 if (renderer->initialize(scene, &error, canceled.get())) {
                     m_renderer = std::move(renderer);
@@ -38,6 +49,7 @@ signals:
 private:
 #if MIDI_PLAY_HAS_VULKAN
     quint64 m_generation = 0;
+    std::shared_ptr<std::atomic_bool> m_rendererCancel;
     std::unique_ptr<visualization::VulkanOffscreenRenderer> m_renderer;
 #endif
 };
@@ -49,9 +61,7 @@ VideoExportPreviewRenderer::VideoExportPreviewRenderer(QObject* parent)
 
 VideoExportPreviewRenderer::~VideoExportPreviewRenderer()
 {
-    cancel();
-    // The worker is destroyed on its owning thread; neither captures this coordinator.
-    if (m_thread) m_thread->quit();
+    release();
 }
 
 void VideoExportPreviewRenderer::cancel()
@@ -59,6 +69,19 @@ void VideoExportPreviewRenderer::cancel()
     m_cancel->store(true);
     ++m_revision;
     m_pending = false;
+}
+
+void VideoExportPreviewRenderer::release()
+{
+    cancel();
+    if (m_thread && !m_stopping) {
+        m_stopping = true;
+        // Serialize cleanup behind any in-flight render; restart only after resources are gone.
+        QMetaObject::invokeMethod(m_worker, [worker = m_worker, thread = m_thread] {
+            worker->releaseResources();
+            thread->quit();
+        }, Qt::QueuedConnection);
+    }
 }
 
 void VideoExportPreviewRenderer::setScene(const visualization::ExportSceneConfig& scene)
@@ -82,7 +105,7 @@ void VideoExportPreviewRenderer::request(qint64 outputTimeUs, qint64 musicTimeUs
 
 void VideoExportPreviewRenderer::dispatch()
 {
-    if (m_busy || !m_pending || m_cancel->load()) return;
+    if (m_stopping || m_busy || !m_pending || m_cancel->load()) return;
     if (!m_thread) {
         // No parent: the thread outlives a closing dialog until cooperative cancellation finishes.
         m_thread = new QThread;
@@ -90,6 +113,13 @@ void VideoExportPreviewRenderer::dispatch()
         m_worker->moveToThread(m_thread);
         connect(m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
         connect(m_thread, &QThread::finished, m_thread, &QObject::deleteLater);
+        connect(m_thread, &QThread::finished, this, [this] {
+            m_thread = nullptr;
+            m_worker = nullptr;
+            m_busy = false;
+            m_stopping = false;
+            dispatch();
+        });
         connect(m_worker, &VideoPreviewWorker::completed, this,
             [this](quint64 generation, quint64 revision, qint64 outputUs,
                    const QImage& frame, const QString& error) {

@@ -34,6 +34,7 @@ signals:
     void introTextPanelVisibilityChanged(bool visible);
 
 protected:
+    void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
 
 private:

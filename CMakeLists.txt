@@ -570,6 +570,8 @@ if (BUILD_TESTING)
         COMMAND midi_play_video_export_tests -platform offscreen)
     add_executable(midi_play_intro_text_tests tests/introtexttests.cpp)
     target_link_libraries(midi_play_intro_text_tests PRIVATE midi_play_core)
+    target_compile_definitions(midi_play_intro_text_tests PRIVATE
+        MIDI_PLAY_TEST_VIDEO="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/background-video.mp4")
     if (COMMAND midi_play_deploy_offscreen_plugin)
         midi_play_deploy_offscreen_plugin(midi_play_intro_text_tests)
     endif()
