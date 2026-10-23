@@ -1,4 +1,5 @@
 #include "introtextpreviewwidget.h"
+#include <QEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -113,6 +114,7 @@ void IntroTextPreviewWidget::moveBlockTo(QPointF center)
 
 void IntroTextPreviewWidget::mouseMoveEvent(QMouseEvent* event)
 {
+    if (m_dragging && !event->buttons().testFlag(Qt::LeftButton)) finishDrag();
     const QPointF logical = toLogicalPoint(event->position());
     if (m_dragging) {
         moveBlockTo(m_dragCenter + logical - m_dragStart);
@@ -128,9 +130,19 @@ void IntroTextPreviewWidget::finishDrag()
 {
     if (m_dragging) {
         m_dragging = false;
-        releaseMouse();
+        if (mouseGrabber() == this) releaseMouse();
     }
     unsetCursor();
+}
+
+bool IntroTextPreviewWidget::event(QEvent* event)
+{
+    if (event->type() == QEvent::Hide || event->type() == QEvent::UngrabMouse
+        || event->type() == QEvent::WindowDeactivate
+        || (event->type() == QEvent::EnabledChange && !isEnabled())) {
+        finishDrag();
+    }
+    return QWidget::event(event);
 }
 
 void IntroTextPreviewWidget::mouseReleaseEvent(QMouseEvent* event)

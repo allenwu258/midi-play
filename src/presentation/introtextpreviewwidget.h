@@ -20,6 +20,7 @@ signals:
     void positionDragged(int offsetX, int offsetY);
 
 protected:
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;

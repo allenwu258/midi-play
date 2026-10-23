@@ -247,6 +247,52 @@ void testEditorAndDialog(const QString& snapshots)
             "short-video truncation is explained");
 }
 
+void testInterruptedDrag()
+{
+    presentation::IntroTextPreviewWidget preview;
+    preview.resize(512, 288);
+    auto config = textConfig();
+    int moves = 0;
+    QObject::connect(&preview, &presentation::IntroTextPreviewWidget::positionDragged,
+        [&] (int x, int y) {
+            ++moves;
+            config.position = app::IntroTextPosition::Custom;
+            config.offsetX = x;
+            config.offsetY = y;
+            preview.setConfig(config);
+        });
+    // Missing release, hide/show, capture loss, deactivation and disabling must all end a drag.
+    for (const auto interruption : {QEvent::None, QEvent::Hide, QEvent::UngrabMouse,
+                                    QEvent::WindowDeactivate, QEvent::EnabledChange}) {
+        config = textConfig();
+        preview.setConfig(config);
+        preview.setEnabled(true);
+        preview.show();
+        QApplication::processEvents();
+        const QPointF center(preview.width() / 2.0, preview.height() / 2.0);
+        QMouseEvent press(QEvent::MouseButtonPress, center, center,
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&preview, &press);
+        QMouseEvent move(QEvent::MouseMove, center + QPointF(10, 5), center + QPointF(10, 5),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        const int beforeDrag = moves;
+        QApplication::sendEvent(&preview, &move);
+        require(moves == beforeDrag + 1, "fresh drag still moves text after previous interruption");
+        if (interruption == QEvent::Hide) { preview.hide(); preview.show(); }
+        else if (interruption == QEvent::EnabledChange) { preview.setEnabled(false); preview.setEnabled(true); }
+        else if (interruption != QEvent::None) {
+            QEvent event(interruption);
+            QApplication::sendEvent(&preview, &event);
+        }
+        const int beforeHover = moves;
+        QMouseEvent hover(QEvent::MouseMove, center + QPointF(30, 20), center + QPointF(30, 20),
+                          Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&preview, &hover);
+        require(moves == beforeHover, "hover after drag interruption preserves text coordinates");
+        require(QWidget::mouseGrabber() != &preview, "interrupted drag releases mouse capture");
+    }
+}
+
 std::shared_ptr<music::MusicDocument> document()
 {
     auto result = std::make_shared<music::MusicDocument>();
@@ -393,6 +439,7 @@ int main(int argc, char** argv)
     }
     testLayoutAndAnimation();
     testValidation();
+    testInterruptedDrag();
     const QString snapshots = qEnvironmentVariable("MIDI_PLAY_INTRO_SNAPSHOTS");
     if (!snapshots.isEmpty()) QDir().mkpath(snapshots);
     testEditorAndDialog(snapshots);
