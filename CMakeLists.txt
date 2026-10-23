@@ -1,6 +1,6 @@
 # 项目总构建入口：声明 Qt/C++ 依赖、可选 Vulkan、核心库、可执行文件、测试与安装规则。
 cmake_minimum_required(VERSION 3.24)
-project(midi_play VERSION 0.4.7 LANGUAGES CXX)
+project(midi_play VERSION 0.4.10 LANGUAGES CXX)
 
 # 所有目标共享 C++20 标准，并启用 Qt 的自动元对象、UI 和资源处理。
 set(CMAKE_CXX_STANDARD 20)
