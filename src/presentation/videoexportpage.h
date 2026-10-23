@@ -79,6 +79,7 @@ private:
     VideoExportPreviewRenderer* m_renderer = nullptr;
     qint64 m_originalMusicPosition = 0;
     qint64 m_previewFrame = 0;
+    int m_previewFps = 60;
     qint64 m_lastPreviewFrame = 0;
     qint64 m_playbackStartFrame = 0;
     QElapsedTimer m_playbackClock;

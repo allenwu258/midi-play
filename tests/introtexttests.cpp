@@ -248,6 +248,36 @@ void testEditorAndDialog(const QString& snapshots)
             "short-video truncation is explained");
 }
 
+void testPreviewTimelineChanges()
+{
+    app::VideoExportOptions options;
+    options.fps = 60;
+    options.tailMilliseconds = 0;
+    options.scene.state.durationUs = 4'000'000;
+    options.introText = textConfig();
+    presentation::VideoExportPage page(options, 0);
+    page.setAvailability(false, QStringLiteral("无 GPU 测试"));
+    auto* fps = page.findChild<QComboBox*>(QStringLiteral("videoExportFps"));
+    auto* slider = page.findChild<QSlider*>(QStringLiteral("introPreviewTimeline"));
+    auto* time = page.findChild<QLabel*>(QStringLiteral("introPreviewTime"));
+    slider->setValue(180);
+    fps->setCurrentIndex(fps->findData(30));
+    require(slider->value() == 90 && time->text().startsWith(QStringLiteral("00:03.00")),
+            "60 to 30 FPS preserves three seconds of output time");
+    fps->setCurrentIndex(fps->findData(60));
+    require(slider->value() == 180, "30 to 60 FPS preserves output time");
+    slider->setValue(181);
+    fps->setCurrentIndex(fps->findData(30));
+    require(slider->value() == 91, "unrepresentable output time rounds to nearest frame");
+    page.findChild<QSpinBox*>(QStringLiteral("videoExportRate"))->setValue(120);
+    page.findChild<QSpinBox*>(QStringLiteral("videoExportTail"))->setValue(250);
+    require(slider->value() == 91, "rate and tail changes preserve output time within range");
+    fps->setCurrentIndex(fps->findData(60));
+    slider->setValue(slider->maximum());
+    fps->setCurrentIndex(fps->findData(30));
+    require(slider->value() == slider->maximum(), "FPS conversion clamps to final encoded frame");
+}
+
 void testInterruptedDrag()
 {
     presentation::IntroTextPreviewWidget preview;
@@ -457,6 +487,7 @@ int main(int argc, char** argv)
     testLayoutAndAnimation();
     testValidation();
     testInterruptedDrag();
+    testPreviewTimelineChanges();
     const QString snapshots = qEnvironmentVariable("MIDI_PLAY_INTRO_SNAPSHOTS");
     if (!snapshots.isEmpty()) QDir().mkpath(snapshots);
     testEditorAndDialog(snapshots);

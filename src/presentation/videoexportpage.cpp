@@ -175,6 +175,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
 
     m_size->setCurrentIndex(std::max(0, m_size->findData(defaults.scene.outputSize)));
     m_fps->setCurrentIndex(std::max(0, m_fps->findData(defaults.fps)));
+    m_previewFps = m_fps->currentData().toInt();
     m_quality->setCurrentIndex(std::max(0, m_quality->findData(defaults.crf)));
     m_rate->setObjectName(QStringLiteral("videoExportRate"));
     m_fps->setObjectName(QStringLiteral("videoExportFps"));
@@ -242,6 +243,10 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     });
     const auto timelineChanged = [this] {
         stopPreviewPlayback();
+        const int fps = m_fps->currentData().toInt();
+        // Preserve output time, quantized to the nearest frame in the new timebase.
+        m_previewFrame = (m_previewFrame * fps + m_previewFps / 2) / m_previewFps;
+        m_previewFps = fps;
         updatePreviewRange();
         setPreviewFrame(m_previewFrame, true);
     };
