@@ -381,6 +381,7 @@ MainWindow::MainWindow(app::PlayerApplicationService* service,
     // 应用服务先发布图表，再通知文档；文档通知重置秒级缓存和 seek 状态。
     connect(m_service, &app::PlayerApplicationService::documentLoaded, this,
             [this](const QString& title, qint64 duration) {
+                m_introTextDraft = {};
                 m_fileLabel->setText(title);
                 m_fileLabel->setToolTip(m_service->fileName());
                 m_durationUs = duration;
@@ -556,6 +557,7 @@ void MainWindow::openExportDialog()
 
     // 在打开参数页前快照主题、图表、背景和字体；最终导出使用独立离屏场景。
     app::VideoExportOptions videoDefaults;
+    videoDefaults.introText = m_introTextDraft;
     videoDefaults.ffmpegExecutable = m_ffmpegService ? m_ffmpegService->result().executablePath : QString();
     videoDefaults.sourcePath = m_service->fileName();
     videoDefaults.soundFontPath = m_service->soundFontPath();
@@ -582,6 +584,7 @@ void MainWindow::openExportDialog()
         return;
     }
     auto options = dialog.videoOptions();
+    m_introTextDraft = options.introText;
     options.ffmpegExecutable = videoDefaults.ffmpegExecutable;
     startVideoExport(options);
 }

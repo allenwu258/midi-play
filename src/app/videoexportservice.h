@@ -1,6 +1,7 @@
 #pragma once
 // 视频导出应用接口：离线音频、Vulkan 帧流水、FFmpeg 编码及最终成品提交。
 #include "domain/music/musicdocument.h"
+#include "app/introtextconfig.h"
 #include "presentation/visualization/offscreen/vulkanoffscreenrenderer.h"
 #include <atomic>
 #include <functional>
@@ -15,6 +16,7 @@ struct VideoExportOptions {
     bool backgroundVideoMuted = true;
     QString soundFontPath;
     presentation::visualization::ExportSceneConfig scene;
+    IntroTextConfig introText;
     int fps = 60;
     int ratePercent = 100;
     int crf = 20; // 17..23 的质量参数，具体硬件编码器由基础设施转换。

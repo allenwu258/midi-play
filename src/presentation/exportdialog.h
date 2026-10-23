@@ -34,10 +34,13 @@ public:
 private:
     // 当前页校验通过且用户允许覆盖后，结束模态配置流程。
     void acceptExport();
+    void updateVideoLayout();
 
     QTabWidget* m_tabs = nullptr;
     AudioExportPage* m_audioPage = nullptr;
     VideoExportPage* m_videoPage = nullptr;
     QDialogButtonBox* m_buttons = nullptr;
+    QSize m_compactSize {680, 760};
+    bool m_expanded = false;
 };
 } // namespace midi_play::presentation

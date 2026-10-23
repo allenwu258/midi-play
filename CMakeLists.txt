@@ -86,6 +86,7 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/app/offlineaudiorenderer.cpp
     src/app/videoexportservice.h
     src/app/videoexportservice.cpp
+    src/app/introtextconfig.h
     src/app/ffmpegservice.h
     src/app/ffmpegservice.cpp
     src/app/playerapplicationservice.h
@@ -196,6 +197,14 @@ set(MIDI_PLAY_COMMON_SOURCES
     src/presentation/audioexportpage.cpp
     src/presentation/videoexportpage.h
     src/presentation/videoexportpage.cpp
+    src/presentation/introtextpreviewwidget.h
+    src/presentation/introtextpreviewwidget.cpp
+    src/presentation/introtextpanel.h
+    src/presentation/introtextpanel.cpp
+    src/presentation/videoexportpreviewrenderer.h
+    src/presentation/videoexportpreviewrenderer.cpp
+    src/presentation/visualization/introtext.h
+    src/presentation/visualization/introtext.cpp
     src/presentation/transport/playbackratecontrol.h
     src/presentation/transport/playbackratecontrol.cpp
     src/presentation/playbackmetadatapresenter.h
@@ -559,6 +568,21 @@ if (BUILD_TESTING)
     endif()
     add_test(NAME video_export_configuration
         COMMAND midi_play_video_export_tests -platform offscreen)
+    add_executable(midi_play_intro_text_tests tests/introtexttests.cpp)
+    target_link_libraries(midi_play_intro_text_tests PRIVATE midi_play_core)
+    if (COMMAND midi_play_deploy_offscreen_plugin)
+        midi_play_deploy_offscreen_plugin(midi_play_intro_text_tests)
+    endif()
+    add_test(NAME intro_text_layout_and_interaction
+        COMMAND midi_play_intro_text_tests -platform offscreen)
+    add_test(NAME intro_text_video_roundtrip
+        COMMAND midi_play_intro_text_tests -platform offscreen --integration)
+    set_tests_properties(intro_text_video_roundtrip PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE LABELS "video-export;integration")
+    if (TARGET Qt6::QOffscreenIntegrationPlugin)
+        set_tests_properties(intro_text_layout_and_interaction intro_text_video_roundtrip PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>")
+    endif()
     add_executable(midi_play_video_encoder_tests tests/videoencodertests.cpp)
     target_link_libraries(midi_play_video_encoder_tests PRIVATE midi_play_core)
     add_test(NAME video_encoder_roundtrip COMMAND midi_play_video_encoder_tests)

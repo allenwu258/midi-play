@@ -7,6 +7,7 @@
 #include "domain/settings/thememode.h"
 #include "domain/visualization/visualchart.h"
 #include "playbackmetadatapresenter.h"
+#include "app/introtextconfig.h"
 
 #include <QMainWindow>
 #include <QPointer>
@@ -130,6 +131,7 @@ private:
     bool m_sliderDragging = false;
     // 单个导出任务的界面状态；取消标志与后台任务共享，进度窗口用弱指针追踪。
     bool m_exporting = false;
+    app::IntroTextConfig m_introTextDraft; // Accepted export draft, scoped to the loaded document.
     std::shared_ptr<std::atomic_bool> m_exportCancel;
     QPointer<QProgressDialog> m_exportProgress;
     // 等待 seek 的精确位置确认，避免排队的旧位置覆盖松开滑块时的展示。

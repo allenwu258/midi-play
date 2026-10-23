@@ -8,9 +8,11 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScreen>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace midi_play::presentation {
 
@@ -39,12 +41,35 @@ ExportDialog::ExportDialog(const QString& sourcePath, const QString& soundFontPa
     m_tabs->addTab(m_videoPage, QStringLiteral("视频"));
     m_videoPage->setAvailability(videoAvailable, videoUnavailableReason);
     root->addWidget(m_tabs, 1);
+    connect(m_videoPage, &VideoExportPage::introTextPanelVisibilityChanged,
+            this, &ExportDialog::updateVideoLayout);
+    connect(m_tabs, &QTabWidget::currentChanged, this, &ExportDialog::updateVideoLayout);
 
     m_buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     m_buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("开始导出"));
     root->addWidget(m_buttons);
     connect(m_buttons, &QDialogButtonBox::accepted, this, &ExportDialog::acceptExport);
     connect(m_buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    updateVideoLayout();
+}
+
+void ExportDialog::updateVideoLayout()
+{
+    const bool video = exportType() == ExportType::Video;
+    m_videoPage->setPageActive(video);
+    const bool expanded = video && m_videoPage->introTextEnabled();
+    if (expanded == m_expanded) return;
+    if (expanded) m_compactSize = size();
+    m_expanded = expanded;
+    layout()->activate();
+    const QRect available = screen()->availableGeometry();
+    const QSize wanted(expanded ? std::max(1150, m_compactSize.width()) : m_compactSize.width(),
+                       m_compactSize.height());
+    resize(wanted.boundedTo(available.size() - QSize(24, 48)));
+    if (isVisible()) {
+        move(std::clamp(x(), available.left(), std::max(available.left(), available.right() - width())),
+             std::clamp(y(), available.top(), std::max(available.top(), available.bottom() - height() - 32)));
+    }
 }
 
 ExportDialog::ExportType ExportDialog::exportType() const noexcept

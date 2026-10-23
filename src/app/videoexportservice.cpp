@@ -3,6 +3,7 @@
 #include "exporttimeline.h"
 #include "offlineaudiorenderer.h"
 #include "presentation/visualization/exportframing.h"
+#include "presentation/visualization/introtext.h"
 #include "domain/playback/playbackmodel.h"
 #include "domain/visualization/playbackvisualizationprojector.h"
 #include "infrastructure/encoding/ffmpegprobe.h"
@@ -144,13 +145,17 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
     const qint64 end = std::max(model.durationUs(), model.globalEvents().isEmpty() ? 0 : model.globalEvents().constLast().timestampUs);
     const ExportTimeline timeline(end, options.fps, options.ratePercent, options.tailMilliseconds);
     if (!timeline.valid()) return failure(QStringLiteral("乐曲时长、帧率、速度或尾音参数无效"));
+    QString error;
     auto scene = options.scene;
     // 从任务持有的文档独立投影，避免导出期间 GUI 切换乐曲影响场景。
     scene.state.chart = visualization::PlaybackVisualizationProjector().project(*document, 1, {});
     if (!scene.state.chart) return failure(QStringLiteral("无法构建视频场景"));
     scene.state.durationUs = end;
+    presentation::visualization::IntroTextAsset introText;
+    if (options.introText.enabled
+        && !introText.prepare(options.introText, size, &error))
+        return failure(error);
     presentation::visualization::VulkanOffscreenRenderer renderer;
-    QString error;
     if (!renderer.initialize(scene, &error, canceled)) return failure(error);
     QTemporaryDir directory(output.dir().filePath(QStringLiteral(".midi-play-video-XXXXXX")));
     if (!directory.isValid()) return failure(QStringLiteral("无法创建导出临时目录"));
@@ -221,6 +226,11 @@ VideoExportResult VideoExportService::exportDocument(std::shared_ptr<const music
         QImage frame;
         if (!encoder.acquireFrame(frame, &error)) return false;
         if (!renderer.completeRender(current.ticket, frame, canceled, &error)) return false;
+        if (options.introText.enabled
+            && !introText.composite(frame, current.index * 1'000'000 / options.fps)) {
+            error = QStringLiteral("无法合成入场文字帧。");
+            return false;
+        }
         if (!encoder.submitFrame(std::move(frame), &error)) return false;
         metrics.encodedFrames = encoder.encodedFrames();
         report(20 + int((current.index + 1) * 65 / timeline.frameCount()),

@@ -1,49 +1,98 @@
-// 视频导出表单实现：控制音频选项联动，并通过 QtConcurrent 渲染单帧预览。
 #include "videoexportpage.h"
-
+#include "introtextpanel.h"
+#include "introtextpreviewwidget.h"
+#include "videoexportpreviewrenderer.h"
+#include "app/exporttimeline.h"
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialog>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
-#include <QFutureWatcher>
-#include <QHBoxLayout>
+#include <QGridLayout>
+#include <QHideEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QSignalBlocker>
+#include <QSlider>
 #include <QSpinBox>
+#include <QTimer>
 #include <QVBoxLayout>
-#include <QtConcurrent>
+#include <algorithm>
 
 namespace midi_play::presentation {
+namespace {
+QString formattedTime(qint64 timeUs)
+{
+    return QStringLiteral("%1:%2.%3")
+        .arg(timeUs / 60'000'000, 2, 10, QLatin1Char('0'))
+        .arg(timeUs / 1'000'000 % 60, 2, 10, QLatin1Char('0'))
+        .arg(timeUs / 10'000 % 100, 2, 10, QLatin1Char('0'));
+}
+}
 
 VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
-                                 qint64 previewPositionUs, QWidget* parent)
-    : QWidget(parent), m_defaults(defaults), m_previewPosition(previewPositionUs)
+                               qint64 previewPositionUs, QWidget* parent)
+    : QWidget(parent), m_defaults(defaults), m_originalMusicPosition(previewPositionUs)
 {
     setObjectName(QStringLiteral("videoExportPage"));
-    auto* root = new QVBoxLayout(this);
+    auto* root = new QHBoxLayout(this);
     root->setContentsMargins(20, 20, 20, 20);
-    root->setSpacing(12);
-
-    m_preview = new QLabel(this);
-    m_preview->setObjectName(QStringLiteral("videoExportPreview"));
-    m_preview->setFixedSize(512, 288);
-    m_preview->setAlignment(Qt::AlignCenter);
-    root->addWidget(m_preview, 0, Qt::AlignCenter);
-
-    m_availabilityLabel = new QLabel(this);
+    root->setSpacing(18);
+    auto* left = new QWidget(this);
+    auto* leftLayout = new QVBoxLayout(left);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(10);
+    m_preview = new IntroTextPreviewWidget(left);
+    leftLayout->addWidget(m_preview, 0, Qt::AlignHCenter);
+    m_previewStatus = new QLabel(left);
+    m_previewStatus->setObjectName(QStringLiteral("videoPreviewStatus"));
+    m_previewStatus->setWordWrap(true);
+    m_previewStatus->setAlignment(Qt::AlignCenter);
+    m_previewStatus->hide();
+    leftLayout->addWidget(m_previewStatus);
+    m_availabilityLabel = new QLabel(left);
     m_availabilityLabel->setObjectName(QStringLiteral("exportWarning"));
     m_availabilityLabel->setWordWrap(true);
-    m_availabilityLabel->setAlignment(Qt::AlignCenter);
-    root->addWidget(m_availabilityLabel);
+    m_availabilityLabel->hide();
+    leftLayout->addWidget(m_availabilityLabel);
 
-    m_controls = new QWidget(this);
+    m_previewTransport = new QWidget(left);
+    auto* transport = new QVBoxLayout(m_previewTransport);
+    transport->setContentsMargins(0, 0, 0, 0);
+    auto* buttons = new QGridLayout;
+    auto* layoutButton = new QPushButton(QStringLiteral("布局 / 拖动"), m_previewTransport);
+    layoutButton->setObjectName(QStringLiteral("introPreviewLayout"));
+    m_previewPlayButton = new QPushButton(QStringLiteral("播放预览"), m_previewTransport);
+    m_previewPlayButton->setObjectName(QStringLiteral("introPreviewPlay"));
+    auto* start = new QPushButton(QStringLiteral("回到开头"), m_previewTransport);
+    start->setObjectName(QStringLiteral("introPreviewStart"));
+    m_previewMiddleButton = new QPushButton(QStringLiteral("退场中"), m_previewTransport);
+    m_previewMiddleButton->setObjectName(QStringLiteral("introPreviewExit"));
+    m_previewEndButton = new QPushButton(QStringLiteral("消失后"), m_previewTransport);
+    m_previewEndButton->setObjectName(QStringLiteral("introPreviewHidden"));
+    int buttonIndex = 0;
+    for (auto* button : {layoutButton, m_previewPlayButton, start, m_previewMiddleButton, m_previewEndButton}) {
+        button->setAutoDefault(false);
+        buttons->addWidget(button, buttonIndex / 3, buttonIndex % 3);
+        ++buttonIndex;
+    }
+    transport->addLayout(buttons);
+    m_previewSlider = new QSlider(Qt::Horizontal, m_previewTransport);
+    m_previewSlider->setObjectName(QStringLiteral("introPreviewTimeline"));
+    m_previewSlider->setAccessibleName(QStringLiteral("片头预览时间轴"));
+    transport->addWidget(m_previewSlider);
+    m_previewTimeLabel = new QLabel(m_previewTransport);
+    m_previewTimeLabel->setObjectName(QStringLiteral("introPreviewTime"));
+    m_previewTimeLabel->setWordWrap(true);
+    transport->addWidget(m_previewTimeLabel);
+    leftLayout->addWidget(m_previewTransport);
+    m_controls = new QWidget(left);
     auto* form = new QFormLayout(m_controls);
     form->setContentsMargins(0, 0, 0, 0);
     form->setHorizontalSpacing(18);
-    form->setVerticalSpacing(12);
+    form->setVerticalSpacing(10);
 
     m_size = new QComboBox(m_controls);
     m_size->addItem(QStringLiteral("1920 × 1080"), QSize(1920, 1080));
@@ -75,9 +124,8 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     m_rate->setValue(defaults.ratePercent);
     form->addRow(QStringLiteral("播放速度"), m_rate);
 
-    // 未配置音源时禁止启用音乐；节拍器仅能随音频一起导出。
     m_audio = new QCheckBox(QStringLiteral("包含音乐"), m_controls);
-    m_audio->setChecked(!defaults.soundFontPath.isEmpty());
+    m_audio->setChecked(defaults.includeAudio && !defaults.soundFontPath.isEmpty());
     m_audio->setEnabled(!defaults.soundFontPath.isEmpty());
     if (defaults.soundFontPath.isEmpty()) m_audio->setToolTip(QStringLiteral("请先在设置中选择音源"));
     form->addRow(QString(), m_audio);
@@ -91,6 +139,7 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
 
     m_metronome = new QCheckBox(QStringLiteral("包含节拍器"), m_controls);
     form->addRow(QString(), m_metronome);
+    m_metronome->setChecked(defaults.includeMetronome);
     m_metronome->setEnabled(m_audio->isChecked());
     connect(m_audio, &QCheckBox::toggled, m_metronome, &QWidget::setEnabled);
 
@@ -98,8 +147,13 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     m_tail->setRange(0, 5000);
     m_tail->setSingleStep(250);
     m_tail->setSuffix(QStringLiteral(" ms"));
-    m_tail->setValue(500);
+    m_tail->setValue(defaults.tailMilliseconds);
     form->addRow(QStringLiteral("尾音"), m_tail);
+
+    m_introEnabled = new QCheckBox(QStringLiteral("启用入场文字"), m_controls);
+    m_introEnabled->setObjectName(QStringLiteral("introTextEnabled"));
+    m_introEnabled->setChecked(defaults.introText.enabled);
+    form->addRow(QStringLiteral("导出内容"), m_introEnabled);
 
     auto* pathRow = new QWidget(m_controls);
     auto* pathLayout = new QHBoxLayout(pathRow);
@@ -110,26 +164,133 @@ VideoExportPage::VideoExportPage(const app::VideoExportOptions& defaults,
     pathLayout->addWidget(m_path, 1);
     pathLayout->addWidget(browse);
     form->addRow(QStringLiteral("输出文件"), pathRow);
-    root->addWidget(m_controls);
+    leftLayout->addWidget(m_controls);
+    leftLayout->addStretch(1);
+    auto* leftScroll = new QScrollArea(this);
+    leftScroll->setFrameShape(QFrame::NoFrame);
+    leftScroll->setWidgetResizable(true);
+    leftScroll->setWidget(left);
+    root->addWidget(leftScroll, 1);
 
+
+    m_size->setCurrentIndex(std::max(0, m_size->findData(defaults.scene.outputSize)));
+    m_fps->setCurrentIndex(std::max(0, m_fps->findData(defaults.fps)));
+    m_quality->setCurrentIndex(std::max(0, m_quality->findData(defaults.crf)));
+    m_rate->setObjectName(QStringLiteral("videoExportRate"));
+    m_fps->setObjectName(QStringLiteral("videoExportFps"));
+    m_tail->setObjectName(QStringLiteral("videoExportTail"));
+    auto* right = new QWidget(this);
+    auto* rightLayout = new QVBoxLayout(right);
+    rightLayout->setContentsMargins(4, 0, 4, 0);
+    m_introEditor = new IntroTextPanel(defaults.introText, right);
+    rightLayout->addWidget(m_introEditor);
+    m_introSummary = new QLabel(right);
+    m_introSummary->setObjectName(QStringLiteral("introTextTimeSummary"));
+    m_introSummary->setWordWrap(true);
+    rightLayout->addWidget(m_introSummary);
+    m_introError = new QLabel(right);
+    m_introError->setObjectName(QStringLiteral("exportWarning"));
+    m_introError->setWordWrap(true);
+    rightLayout->addWidget(m_introError);
+    rightLayout->addStretch();
+    auto* rightScroll = new QScrollArea(this);
+    rightScroll->setWidgetResizable(true);
+    rightScroll->setFrameShape(QFrame::NoFrame);
+    rightScroll->setWidget(right);
+    rightScroll->setMinimumWidth(320);
+    rightScroll->setObjectName(QStringLiteral("introTextPanel"));
+    m_introPanel = rightScroll;
+    root->addWidget(rightScroll, 1);
+
+    m_renderer = new VideoExportPreviewRenderer(this);
+    m_previewTimer = new QTimer(this);
+    m_previewTimer->setInterval(33);
+    m_textDebounce = new QTimer(this);
+    m_textDebounce->setSingleShot(true);
+    m_textDebounce->setInterval(150);
+    connect(m_textDebounce, &QTimer::timeout, this, [this] {
+        updateIntroText();
+        if (!m_layoutMode) setPreviewFrame(m_previewFrame, true);
+    });
+    connect(m_renderer, &VideoExportPreviewRenderer::frameReady, this,
+        [this](const QImage& frame, qint64 outputTimeUs) {
+            m_previewStatus->hide();
+            m_preview->setBaseFrame(frame, outputTimeUs);
+        });
+    connect(m_renderer, &VideoExportPreviewRenderer::failed, this, [this](const QString& error) {
+        stopPreviewPlayback();
+        m_previewStatus->setText(QStringLiteral("预览未更新：%1").arg(error));
+        m_previewStatus->show();
+    });
     connect(browse, &QPushButton::clicked, this, [this] {
-        const QString path = QFileDialog::getSaveFileName(
-            this, QStringLiteral("导出视频"), m_path->text(), QStringLiteral("MP4 视频 (*.mp4)"));
+        const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出视频"),
+            m_path->text(), QStringLiteral("MP4 视频 (*.mp4)"));
         if (!path.isEmpty()) m_path->setText(path);
     });
-    connect(m_size, &QComboBox::currentIndexChanged, this, [this] { updatePreview(); });
-    connect(m_retainMeasureGutter, &QCheckBox::toggled, this, [this] { updatePreview(); });
-    updatePreview();
+    connect(m_size, &QComboBox::currentIndexChanged, this, &VideoExportPage::updateScene);
+    connect(m_retainMeasureGutter, &QCheckBox::toggled, this, &VideoExportPage::updateScene);
+    connect(m_introEnabled, &QCheckBox::toggled, this, &VideoExportPage::updateIntroTextVisibility);
+    connect(m_introEditor, &IntroTextPanel::configurationChanged, this, [this](bool layoutChanged) {
+        stopPreviewPlayback();
+        if (layoutChanged) enterLayoutMode();
+        m_textDebounce->start();
+    });
+    connect(m_preview, &IntroTextPreviewWidget::positionDragged, this, [this](int x, int y) {
+        m_introEditor->setPositionFromDrag(x, y);
+        m_textDebounce->stop();
+        updateIntroText();
+    });
+    const auto timelineChanged = [this] {
+        stopPreviewPlayback();
+        updatePreviewRange();
+        setPreviewFrame(m_previewFrame, true);
+    };
+    connect(m_rate, &QSpinBox::valueChanged, this, timelineChanged);
+    connect(m_tail, &QSpinBox::valueChanged, this, timelineChanged);
+    connect(m_fps, &QComboBox::currentIndexChanged, this, timelineChanged);
+    connect(layoutButton, &QPushButton::clicked, this, &VideoExportPage::enterLayoutMode);
+    connect(m_previewPlayButton, &QPushButton::clicked, this, [this] {
+        if (m_playing) stopPreviewPlayback();
+        else startPreviewPlayback();
+    });
+    const auto seek = [this](qint64 frame) {
+        stopPreviewPlayback();
+        m_layoutMode = false;
+        m_preview->setLayoutMode(false);
+        setPreviewFrame(frame, true);
+    };
+    connect(start, &QPushButton::clicked, this, [seek] { seek(0); });
+    connect(m_previewMiddleButton, &QPushButton::clicked, this, [this, seek] {
+        const auto config = introTextConfig();
+        seek(frameAtOrAfter(config.displayMilliseconds + config.exitMilliseconds / 2));
+    });
+    connect(m_previewEndButton, &QPushButton::clicked, this, [this, seek] {
+        const auto config = introTextConfig();
+        seek(frameAtOrAfter(config.displayMilliseconds + config.exitMilliseconds));
+    });
+    connect(m_previewSlider, &QSlider::valueChanged, this, [seek](int frame) { seek(frame); });
+    connect(m_previewTimer, &QTimer::timeout, this, [this] {
+        const qint64 frame = m_playbackStartFrame + m_playbackClock.elapsed() * m_fps->currentData().toInt() / 1000;
+        setPreviewFrame(frame, false);
+        if (frame >= m_lastPreviewFrame) stopPreviewPlayback();
+    });
+    m_introPanel->setVisible(defaults.introText.enabled);
+    m_previewTransport->setVisible(defaults.introText.enabled);
+    updateIntroText();
+    // The dialog calls setAvailability before scheduling any GPU work.
 }
 
-VideoExportPage::~VideoExportPage()
+bool VideoExportPage::introTextEnabled() const { return m_introEnabled->isChecked(); }
+
+app::IntroTextConfig VideoExportPage::introTextConfig() const
 {
-    if (m_previewCancel) m_previewCancel->store(true);
+    auto config = m_introEditor->config();
+    config.enabled = introTextEnabled();
+    return config;
 }
 
 app::VideoExportOptions VideoExportPage::options() const
 {
-    // 保留场景图表、主题等默认值，仅替换页面实际开放的参数。
     auto result = m_defaults;
     result.scene.outputSize = m_size->currentData().toSize();
     result.scene.retainMeasureGutter = m_retainMeasureGutter->isChecked();
@@ -140,75 +301,161 @@ app::VideoExportOptions VideoExportPage::options() const
     result.includeAudio = m_audio->isChecked();
     result.includeMetronome = result.includeAudio && m_metronome->isChecked();
     result.outputPath = outputPath();
+    result.introText = introTextConfig();
     return result;
 }
 
-QString VideoExportPage::outputPath() const
-{
-    return m_path ? m_path->text().trimmed() : QString();
-}
-
-void VideoExportPage::setAvailability(bool available, const QString& reason)
-{
-    // 不可用时停止旧预览并禁用整个表单，恢复时重新请求预览。
-    m_available = available;
-    m_unavailableReason = reason;
-    m_controls->setEnabled(available);
-    m_availabilityLabel->setText(available ? QString() : reason);
-    m_availabilityLabel->setVisible(!available && !reason.isEmpty());
-    if (!available) {
-        if (m_previewCancel) m_previewCancel->store(true);
-        m_preview->setText(reason);
-    } else {
-        updatePreview();
-    }
-}
+QString VideoExportPage::outputPath() const { return m_path->text().trimmed(); }
 
 QString VideoExportPage::validationError() const
 {
     if (!m_available) return m_unavailableReason;
     if (outputPath().isEmpty()
-        || QFileInfo(outputPath()).suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0) {
+        || QFileInfo(outputPath()).suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0)
         return QStringLiteral("输出文件扩展名需要为 .mp4。");
-    }
-    return {};
+    return visualization::IntroTextAsset::validationError(introTextConfig());
 }
 
-void VideoExportPage::updatePreview()
+void VideoExportPage::setAvailability(bool available, const QString& reason)
 {
-#if MIDI_PLAY_HAS_VULKAN
-    if (!m_available) return;
-    // 取消是协作式请求；版本检查同时防止较早任务覆盖较新的预览。
-    if (m_previewCancel) m_previewCancel->store(true);
-    m_previewCancel = std::make_shared<std::atomic_bool>(false);
-    const auto cancel = m_previewCancel;
-    const auto revision = ++m_previewRevision;
-    m_preview->setText(QStringLiteral("正在生成预览"));
-    auto config = options().scene;
-    // 预览固定按 1024×576 渲染，再缩放到标签；最终导出采用表单分辨率。
-    config.outputSize = {1024, 576};
-    const qint64 position = m_previewPosition;
-    auto* watcher = new QFutureWatcher<QPair<QImage, QString>>(this);
-    connect(watcher, &QFutureWatcher<QPair<QImage, QString>>::finished, this,
-            [this, watcher, revision] {
-        const auto result = watcher->result();
-        watcher->deleteLater();
-        if (revision != m_previewRevision) return;
-        if (result.first.isNull()) m_preview->setText(result.second);
-        else m_preview->setPixmap(QPixmap::fromImage(result.first).scaled(
-            m_preview->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    });
-    // 工作线程持有独立渲染器和场景副本；带接收者的连接随页面销毁自动断开。
-    watcher->setFuture(QtConcurrent::run([config, cancel, position] {
-        visualization::VulkanOffscreenRenderer renderer;
-        QImage frame;
-        QString error;
-        if (renderer.initialize(config, &error, cancel.get())) renderer.render(position, frame, cancel.get(), &error);
-        return qMakePair(frame, error);
-    }));
-#else
-    m_preview->setText(QStringLiteral("当前构建未启用 Vulkan 视频预览"));
-#endif
+    m_available = available;
+    m_unavailableReason = reason;
+    m_controls->setEnabled(available);
+    m_introPanel->setEnabled(available);
+    m_previewTransport->setEnabled(available);
+    m_availabilityLabel->setText(reason);
+    m_availabilityLabel->setVisible(!available && !reason.isEmpty());
+    if (available) updateScene();
+    else {
+        stopPreviewPlayback();
+        m_renderer->cancel();
+    }
 }
 
+void VideoExportPage::updateScene()
+{
+    if (!m_available) return;
+    m_renderer->setScene(options().scene);
+    m_previewStatus->setText(QStringLiteral("正在生成预览…"));
+    m_previewStatus->show();
+    setPreviewFrame(m_previewFrame, true);
+}
+
+void VideoExportPage::updateIntroText()
+{
+    const QString error = m_preview->setConfig(introTextConfig());
+    m_introError->setText(error);
+    m_introError->setVisible(!error.isEmpty());
+    m_previewPlayButton->setEnabled(error.isEmpty());
+    updatePreviewRange();
+}
+
+qint64 VideoExportPage::frameAtOrAfter(qint64 milliseconds) const
+{
+    return (milliseconds * m_fps->currentData().toInt() + 999) / 1000;
+}
+
+void VideoExportPage::updatePreviewRange()
+{
+    const auto config = introTextConfig();
+    const int fps = m_fps->currentData().toInt();
+    const app::ExportTimeline timeline(m_defaults.scene.state.durationUs, fps, m_rate->value(), m_tail->value());
+    const qint64 exitEndFrame = frameAtOrAfter(config.displayMilliseconds + config.exitMilliseconds);
+    const qint64 lastVideoFrame = timeline.valid() ? timeline.frameCount() - 1 : 0;
+    m_lastPreviewFrame = std::min(lastVideoFrame, exitEndFrame + (fps + 1) / 2);
+    const QSignalBlocker blocker(m_previewSlider);
+    m_previewSlider->setRange(0, int(m_lastPreviewFrame));
+    m_previewFrame = std::min(m_previewFrame, m_lastPreviewFrame);
+    m_previewSlider->setValue(int(m_previewFrame));
+    m_previewTimeLabel->setText(QStringLiteral("%1 / %2 · %3 · 无声预览")
+        .arg(formattedTime(m_previewFrame * 1'000'000 / fps),
+             formattedTime(m_lastPreviewFrame * 1'000'000 / fps),
+             m_layoutMode ? QStringLiteral("布局") : QStringLiteral("时间")));
+    m_previewMiddleButton->setEnabled(frameAtOrAfter(config.displayMilliseconds + config.exitMilliseconds / 2) <= lastVideoFrame);
+    m_previewEndButton->setEnabled(exitEndFrame <= lastVideoFrame);
+    const QString unavailable = QStringLiteral("该时点超出成品视频的最后一帧。");
+    m_previewMiddleButton->setToolTip(m_previewMiddleButton->isEnabled() ? QString() : unavailable);
+    m_previewEndButton->setToolTip(m_previewEndButton->isEnabled() ? QString() : unavailable);
+    QString summary = QStringLiteral("从视频开头显示，%1 秒开始退场，%2 秒完全消失。")
+        .arg(config.displayMilliseconds / 1000.0, 0, 'f', 2)
+        .arg((config.displayMilliseconds + config.exitMilliseconds) / 1000.0, 0, 'f', 2);
+    if (timeline.valid() && exitEndFrame > lastVideoFrame)
+        summary += QStringLiteral("\n视频将在 %1 秒结束，退场动画会被截断。")
+            .arg(timeline.videoDurationUs() / 1'000'000.0, 0, 'f', 2);
+    m_introSummary->setText(summary);
+}
+
+void VideoExportPage::updateIntroTextVisibility(bool enabled)
+{
+    stopPreviewPlayback();
+    m_introPanel->setVisible(enabled && m_pageActive);
+    m_previewTransport->setVisible(enabled);
+    m_layoutMode = true;
+    m_preview->setLayoutMode(true);
+    updateIntroText();
+    setPreviewFrame(0, true);
+    emit introTextPanelVisibilityChanged(enabled);
+}
+
+void VideoExportPage::enterLayoutMode()
+{
+    stopPreviewPlayback();
+    const bool needsFrame = !m_layoutMode || m_previewFrame != 0;
+    m_layoutMode = true;
+    m_preview->setLayoutMode(true);
+    if (needsFrame) setPreviewFrame(0, true);
+    else updatePreviewRange();
+}
+
+void VideoExportPage::startPreviewPlayback()
+{
+    if (!introTextEnabled() || !m_available || !validationError().isEmpty()) return;
+    m_textDebounce->stop();
+    updateIntroText();
+    m_layoutMode = false;
+    m_preview->setLayoutMode(false);
+    if (m_previewFrame >= m_lastPreviewFrame) setPreviewFrame(0, true);
+    m_playbackStartFrame = m_previewFrame;
+    m_playbackClock.start();
+    m_playing = true;
+    m_previewPlayButton->setText(QStringLiteral("暂停"));
+    m_previewTimer->start();
+}
+
+void VideoExportPage::stopPreviewPlayback()
+{
+    m_previewTimer->stop();
+    m_playing = false;
+    m_previewPlayButton->setText(QStringLiteral("播放预览"));
+}
+
+void VideoExportPage::setPreviewFrame(qint64 frame, bool discontinuity)
+{
+    m_previewFrame = std::clamp<qint64>(frame, 0, m_lastPreviewFrame);
+    const int fps = m_fps->currentData().toInt();
+    const qint64 outputUs = m_previewFrame * 1'000'000 / fps;
+    const app::ExportTimeline timeline(m_defaults.scene.state.durationUs, fps, m_rate->value(), m_tail->value());
+    const qint64 musicUs = introTextEnabled() ? timeline.musicPositionUs(m_previewFrame) : m_originalMusicPosition;
+    {
+        const QSignalBlocker blocker(m_previewSlider);
+        m_previewSlider->setValue(int(m_previewFrame));
+    }
+    m_previewTimeLabel->setText(QStringLiteral("%1 / %2 · %3 · 无声预览")
+        .arg(formattedTime(outputUs), formattedTime(m_lastPreviewFrame * 1'000'000 / fps),
+             m_layoutMode ? QStringLiteral("布局") : QStringLiteral("时间")));
+    if (m_available) m_renderer->request(outputUs, musicUs, discontinuity);
+}
+
+void VideoExportPage::hideEvent(QHideEvent* event)
+{
+    stopPreviewPlayback();
+    QWidget::hideEvent(event);
+}
+
+void VideoExportPage::setPageActive(bool active)
+{
+    m_pageActive = active;
+    m_introPanel->setVisible(active && introTextEnabled());
+    if (!active) stopPreviewPlayback();
+}
 } // namespace midi_play::presentation
